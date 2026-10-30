@@ -177,7 +177,7 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
       const response = await accountFetch('/api/v1/categories', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, projectId: categoryProjectId }),
       });
       const data = await response.json();
       if (!response.ok || !data.data?.id && !data.category?.id) {
@@ -592,16 +592,16 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
                 <div className="mt-4 space-y-2 flex-1">
                   <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">Últimas coletas</p>
                   <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                    {Array.from(new Set(project.jobs.map((job) => job.category_id || 'Sem categoria'))).map((categoryName) => (
+                    {Array.from(new Set(project.jobs.map((job) => categories.find((cat) => cat.id === job.category_id)?.name || 'Sem categoria'))).map((categoryName) => (
                       <section key={categoryName} className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 p-2.5 space-y-2">
                         <div className="flex items-center gap-2 px-1 text-xs font-semibold text-emerald-300">
                           <FolderOpen className="h-3.5 w-3.5" />
                           <span>{categoryName}</span>
                           <span className="ml-auto text-zinc-500 font-normal">
-                            {project.jobs.filter((job) => (job.category_id || 'Sem categoria') === categoryName).length} raspagem(ns)
+                            {project.jobs.filter((job) => (categories.find((cat) => cat.id === job.category_id)?.name || 'Sem categoria') === categoryName).length} raspagem(ns)
                           </span>
                         </div>
-                        {project.jobs.filter((job) => (job.category_id || 'Sem categoria') === categoryName).map((job) => (
+                        {project.jobs.filter((job) => (categories.find((cat) => cat.id === job.category_id)?.name || 'Sem categoria') === categoryName).map((job) => (
                           <div
                             key={job.id}
                             className="flex items-center justify-between gap-3 rounded-xl bg-zinc-950/80 border border-zinc-800/60 px-3.5 py-2.5"
