@@ -106,7 +106,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
         rawCategories.map((c: any, i: number) =>
           typeof c === 'string'
             ? { id: `cat_${i}_${c}`, name: c }
-            : { id: c?.id || `cat_${i}`, name: c?.name || '' }
+            : { id: c?.id || `cat_${i}`, name: c?.name || '', project_id: c?.project_id || '' }
         )
       );
       setCatalogMessage('');
@@ -143,6 +143,10 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     const name = categoryName.trim();
     if (!name) {
       setCatalogMessage('Digite o nome da categoria antes de clicar em Criar categoria.');
+      return;
+    }
+    if (!projectName.trim()) {
+      setCatalogMessage('Selecione ou informe um projeto antes de criar a categoria.');
       return;
     }
     if (!apiReady) {
@@ -255,7 +259,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             <label htmlFor="category-name" className="block text-base sm:text-lg font-semibold text-zinc-100">2. Categoria da pesquisa <span className="text-emerald-400">*</span></label>
             <div className="flex flex-col gap-2 sm:flex-row">
               <input id="category-name" list="mapscrape-categories" value={categoryName} onChange={(e) => { setCategoryName(e.target.value); if (!segment.trim()) setSegment(e.target.value); }} maxLength={120} placeholder="Selecione ou digite uma categoria" className="min-w-0 flex-1 rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm sm:text-base text-zinc-100 outline-none focus:border-emerald-500" />
-              <datalist id="mapscrape-categories">{categories.map((category) => <option key={category.id} value={category.name} />)}</datalist>
+              <datalist id="mapscrape-categories">{categories.filter((category) => category.project_id === projects.find((project) => project.name.toLocaleLowerCase('pt-BR') === projectName.trim().toLocaleLowerCase('pt-BR'))?.id).map((category) => <option key={category.id} value={category.name} />)}</datalist>
               <button type="button" onClick={() => void createCategory()} className="rounded-xl border border-emerald-500/40 px-4 py-3 text-sm font-semibold text-emerald-300 disabled:opacity-40">Criar categoria</button>
             </div>
             <p className="text-xs text-zinc-500">A categoria é salva separadamente da categoria extraída de cada ficha do Google Maps.</p>
