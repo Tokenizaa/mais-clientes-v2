@@ -10,7 +10,7 @@ import {
 test('parses Brazilian street, neighborhood, city, state and CEP without using neighborhood as city', () => {
   assert.deepEqual(
     parseAddressComponents('Alameda Joaquim Eugênio de Lima, 1756 - Jardim Paulista, São Paulo - SP, 01403-002'),
-    { postal_code: '01403-002', country: '', city: 'São Paulo', state: 'SP' },
+    { postal_code: '01403-002', country: '', city: 'São Paulo', state: 'SP', neighborhood: 'Jardim Paulista' },
   );
 });
 
@@ -24,14 +24,14 @@ test('preserves leading zeroes in Brazilian postal codes', () => {
 test('extracts explicit country and city when country is displayed', () => {
   assert.deepEqual(
     parseAddressComponents('123 Main Street, Toronto, Canada'),
-    { postal_code: '', country: 'Canada', city: 'Toronto', state: '' },
+    { postal_code: '', country: 'Canada', city: 'Toronto', state: '', neighborhood: '' },
   );
 });
 
 test('does not invent city or state from an address without explicit components', () => {
   assert.deepEqual(
     parseAddressComponents('Pinheiros, São Paulo'),
-    { postal_code: '', country: '', city: '', state: '' },
+    { postal_code: '', country: '', city: '', state: '', neighborhood: '' },
   );
 });
 
