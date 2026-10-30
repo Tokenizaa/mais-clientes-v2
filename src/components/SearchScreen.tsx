@@ -125,61 +125,6 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     return () => { active = false; };
   }, [apiReady]);
 
-  const createProject = async () => {
-    const name = projectName.trim();
-    if (!name) {
-      setCatalogMessage('Digite o nome do projeto antes de clicar em Criar projeto.');
-      return;
-    }
-    if (!apiReady) {
-      setCatalogMessage('Para salvar o projeto, conecte primeiro uma chave em “Conectar à API do MapScrape”, no início da página.');
-      return;
-    }
-    try {
-      const response = await accountFetch('/api/v1/projects', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-      const project = data.data ?? data.project;
-      setProjects((current) => current.some((item) => item.id === project.id) ? current : [...current, project].sort((a,b) => a.name.localeCompare(b.name, 'pt-BR')));
-      setProjectName(project.name);
-      setCatalogMessage(`Projeto “${project.name}” pronto para uso.`);
-    } catch (error) { setCatalogMessage(error instanceof Error ? error.message : 'Falha ao criar projeto.'); }
-  };
-
-  const createCategory = async () => {
-    const name = categoryName.trim();
-    if (!name) {
-      setCatalogMessage('Digite o nome da categoria antes de clicar em Criar categoria.');
-      return;
-    }
-    if (!projectName.trim()) {
-      setCatalogMessage('Selecione ou informe um projeto antes de criar a categoria.');
-      return;
-    }
-    if (!apiReady) {
-      setCatalogMessage('Para salvar a categoria, conecte primeiro uma chave em “Conectar à API do MapScrape”, no início da página.');
-      return;
-    }
-    try {
-      const response = await accountFetch('/api/v1/categories', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, projectName: projectName.trim() }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-      const category = data.data ?? data.category;
-      if (data.project?.id) {
-        setProjects((current) => current.some((item) => item.id === data.project.id) ? current : [...current, data.project].sort((a,b) => a.name.localeCompare(b.name, 'pt-BR')));
-      }
-      setCategories((current) => current.some((item) => item.id === category.id) ? current : [...current, category].sort((a,b) => a.name.localeCompare(b.name, 'pt-BR')));
-      setCategoryName(category.name);
-      if (!segment.trim()) setSegment(category.name);
-      setCatalogMessage(`Categoria “${category.name}” pronta para uso.`);
-    } catch (error) { setCatalogMessage(error instanceof Error ? error.message : 'Falha ao criar categoria.'); }
-  };
-
-
   useEffect(() => {
     if (isScraping && currentJob) {
       const frame = window.requestAnimationFrame(() => {
