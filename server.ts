@@ -878,27 +878,33 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
     job.current_step = 'Buscando fichas comerciais na página de resultados do Maps...';
     store.persist();
 
-    while (placeUrls.size < limit && stagnantRounds < 6) {
+    // Keep scrolling until we have a full batch of NEW places, not merely
+    // 20 links from the first viewport. Otherwise every new job starts at
+    // Google's first results and spends its limit on records already stored.
+    const countNewPlaces = () =>
+      Array.from(placeUrls).filter((url) =>
+        !state.places.some((p) => p.maps_url === url || p.source_url === url)
+      ).length;
+
+    while (countNewPlaces() < limit && stagnantRounds < 12) {
       if (isCancelled) break;
 
       const links: string[] = await searchPage
-        .$$eval('a[href*="/maps/place/"]', (anchors) =>
+        .$eval('a[href*="/maps/place/"]', (anchors) =>
           anchors
             .map((a) => (a as HTMLAnchorElement)?.href)
             .filter((href): href is string => Boolean(href) && href.includes('/maps/place/'))
         )
         .catch(() => []);
 
-      for (const url of links) {
-        if (placeUrls.size >= limit) break;
-        placeUrls.add(url);
-      }
+      for (const url of links) placeUrls.add(url);
 
+      const newCount = countNewPlaces();
       job.total_found = placeUrls.size;
-      job.current_step = `Identificados ${placeUrls.size} estabelecimentos no Google Maps...`;
+      job.current_step = `Encontrados ${placeUrls.size} (${newCount} ainda não coletados); avançando resultados do Maps...`;
       store.persist();
 
-      if (placeUrls.size >= limit) break;
+      if (newCount >= limit) break;
 
       // Scroll results container or window
       await searchPage.evaluate(() => {
