@@ -144,20 +144,10 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
       .then((response) => { if (!response.ok) throw new Error('Falha ao carregar categorias'); return response.json(); })
       .then((data) => {
         if (!cancelled) {
-          const list: string[] = [];
-          if (Array.isArray(data.categories)) {
-            for (const item of data.categories) {
-              const name = typeof item === 'string' ? item : item?.name;
-              if (name && !list.includes(name)) list.push(name);
-            }
-          }
-          if (Array.isArray(data.data)) {
-            for (const item of data.data) {
-              const name = typeof item === 'string' ? item : item?.name;
-              if (name && !list.includes(name)) list.push(name);
-            }
-          }
-          setCategories(list);
+          const list: string[] = Array.isArray(data.placeCategories)
+            ? data.placeCategories.filter((name: unknown): name is string => typeof name === 'string' && Boolean(name.trim()))
+            : [];
+          setCategories(Array.from(new Set(list)));
         }
       })
       .catch(() => { if (!cancelled) setCategories([]); });
