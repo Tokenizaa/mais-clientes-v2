@@ -95,11 +95,7 @@ function hashApiKey(key: string): string {
   return crypto.createHash('sha256').update(key.trim()).digest('hex');
 }
 
-function isProvisioningAuthorized(req: Request): boolean {
-  // The in-app credential manager is restricted to authenticated platform admins.
-  if (resolveUserFromRequest(req)?.role === 'admin') return true;
-
-  // Infrastructure automation may use a dedicated server-side provisioning token.
+function isProvisioningTokenValid(req: Request): boolean {
   const expected = process.env.MAPSCRAPE_PROVISIONING_TOKEN?.trim();
   const supplied = req.header('X-MapScrape-Provisioning-Token')?.trim();
   if (!expected || !supplied) return false;
@@ -107,6 +103,11 @@ function isProvisioningAuthorized(req: Request): boolean {
   const suppliedBuffer = Buffer.from(supplied);
   return expectedBuffer.length === suppliedBuffer.length
     && crypto.timingSafeEqual(expectedBuffer, suppliedBuffer);
+}
+
+function isProvisioningAuthorized(req: Request): boolean {
+  // The in-app credential manager is restricted to authenticated platform admins.
+  return resolveUserFromRequest(req)?.role === 'admin' || isProvisioningTokenValid(req);
 }
 
 // Generate realistic Brazilian sample places
@@ -1173,7 +1174,8 @@ export async function createApp() {
 
   // Protect all application endpoints. Auth and registration remain public.
   app.use('/api/v1', (req: Request, res: Response, next: NextFunction) => {
-    if (!resolveUserFromRequest(req)) {
+    const isProvisioningRoute = req.path.startsWith('/provisioning/credentials');
+    if (!resolveUserFromRequest(req) && !(isProvisioningRoute && isProvisioningTokenValid(req))) {
       return res.status(401).json({ error: 'Autenticação necessária.' });
     }
     next();
