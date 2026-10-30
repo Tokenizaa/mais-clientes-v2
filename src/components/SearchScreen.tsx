@@ -12,7 +12,7 @@ import {
   Sparkles,
   Compass,
 } from 'lucide-react';
-import { ScrapeJob } from '../shared/types';
+import { PlaceRecord, ScrapeJob } from '../shared/types';
 import { BRAZILIAN_STATES, POPULAR_CATEGORIES } from '../shared/brazilLocations';
 
 // Requisições internas usam a sessão da conta; API keys ficam reservadas a integrações externas.
@@ -35,6 +35,8 @@ interface SearchScreenProps {
   onGoToResults: () => void;
   initialProjectName?: string;
   initialCategoryName?: string;
+  places: PlaceRecord[];
+  totalPlaces: number;
 }
 
 export const SearchScreen: React.FC<SearchScreenProps> = ({
@@ -46,6 +48,8 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   onGoToResults,
   initialProjectName,
   initialCategoryName,
+  places,
+  totalPlaces,
 }) => {
   const [segment, setSegment] = useState(initialCategoryName || '');
   const [projectName, setProjectName] = useState(initialProjectName || '');
@@ -170,6 +174,15 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     } catch (error) { setCatalogMessage(error instanceof Error ? error.message : 'Falha ao criar categoria.'); }
   };
 
+
+  useEffect(() => {
+    if (isScraping && currentJob) {
+      const frame = window.requestAnimationFrame(() => {
+        progressRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }
+  }, [isScraping, currentJob?.id]);
 
   // Find current state
   const currentState = BRAZILIAN_STATES.find((s) => s.uf === selectedUf) || BRAZILIAN_STATES[0];
@@ -574,7 +587,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
 
       {/* Real-time Progress & Metrics Panel with Large Numbers */}
       {currentJob && (
-        <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl shadow-xl shadow-black/40 p-6 sm:p-9 space-y-6 backdrop-blur-sm">
+        <div ref={progressRef} className="scroll-mt-6 bg-zinc-900/90 border border-zinc-800 rounded-2xl shadow-xl shadow-black/40 p-6 sm:p-9 space-y-6 backdrop-blur-sm">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-zinc-800 pb-4">
             <div className="flex items-center gap-3">
               <h2 className="text-lg sm:text-xl font-bold text-zinc-100">Progresso da Coleta</h2>
@@ -714,6 +727,53 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             </div>
           )}
         </div>
+      )}
+
+      {currentJob && currentJob.status !== 'running' && (
+        <section className="space-y-4" aria-live="polite">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-bold text-zinc-100">Resultado desta pesquisa</h2>
+              <p className="mt-1 text-sm text-zinc-400">
+                {totalPlaces.toLocaleString('pt-BR')} estabelecimento(s) encontrados nesta coleta
+              </p>
+            </div>
+            {places.length > 0 && (
+              <button type="button" onClick={onGoToResults} className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-sm font-semibold text-emerald-300 hover:bg-emerald-500/15">
+                Ver base completa <ArrowRight className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          {places.length === 0 ? (
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 text-sm text-zinc-400">
+              {currentJob.status === 'completed' || currentJob.status === 'partial'
+                ? 'A coleta terminou, mas nenhum estabelecimento foi retornado para exibição.'
+                : 'Esta coleta não gerou resultados.'}
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/80 divide-y divide-zinc-800">
+              {places.slice(0, 25).map((place) => (
+                <article key={place.id} className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <h3 className="truncate font-semibold text-zinc-100">{place.name || 'Estabelecimento sem nome'}</h3>
+                    <p className="mt-0.5 truncate text-sm text-zinc-400">{place.category || 'Categoria não informada'}{place.address ? ` · ${place.address}` : ''}</p>
+                    <p className="mt-1 text-xs text-zinc-500">{place.phone || place.website || 'Sem telefone ou site informado'}</p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-3">
+                    {place.rating && <span className="text-sm font-medium text-amber-300">★ {place.rating}</span>}
+                    {place.maps_url && <a href={place.maps_url} target="_blank" rel="noreferrer" className="text-sm font-semibold text-emerald-400 hover:text-emerald-300">Abrir mapa ↗</a>}
+                  </div>
+                </article>
+              ))}
+              {totalPlaces > places.length && (
+                <div className="flex flex-wrap items-center justify-between gap-3 bg-zinc-950/60 px-4 py-3 text-xs text-zinc-400">
+                  <span>Exibindo {places.length} de {totalPlaces} resultados.</span>
+                  <button type="button" onClick={onGoToResults} className="font-semibold text-emerald-400 hover:text-emerald-300">Abrir todos os resultados</button>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
       )}
     </div>
   );
