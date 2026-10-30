@@ -1306,9 +1306,11 @@ export async function createApp() {
       const placeCats = state.places.map((p) => p.category).filter(Boolean);
       const savedCats = state.categories.map((c) => c.name);
       const allDistinct = Array.from(new Set([...savedCats, ...placeCats]));
+      const extractedPlaceCategories = Array.from(new Set(placeCats));
       return res.json({
         data: state.categories,
         categories: allDistinct,
+        placeCategories: extractedPlaceCategories,
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
