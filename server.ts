@@ -1045,7 +1045,9 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
         let navigationError: any = null;
         for (let attempt = 0; attempt < 2; attempt += 1) {
           try {
-            if (!activeBrowser?.isConnected()) activeBrowser = await connectScraperBrowser();
+            // Puppeteer 25 Browser does not expose the legacy isConnected() method.
+            // Keep the current remote session and reconnect only when newPage/navigation fails.
+            if (!activeBrowser) activeBrowser = await connectScraperBrowser();
             detailPage = await activeBrowser.newPage();
             await detailPage.setUserAgent(
               'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
