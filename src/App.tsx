@@ -588,6 +588,8 @@ export default function App() {
               jobs={jobs}
               selectedJobId={selectedJobId}
               onSelectJobId={setSelectedJobId}
+              searchQuery={searchQuery}
+              selectedCategory={categoryFilter}
             />
           )}
 
