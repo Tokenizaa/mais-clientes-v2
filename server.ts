@@ -521,6 +521,25 @@ class Store {
     return this.state;
   }
 
+  /**
+   * Read job progress from the relational source of truth first.
+   * Serverless instances can hold stale in-memory snapshots.
+   */
+  async findJobForUser(id: string, userId: string): Promise<ScrapeJob | null> {
+    await this.flush();
+    if (this.supabase) {
+      const { data, error } = await this.supabase
+        .from('scrape_jobs')
+        .select('*')
+        .eq('id', id)
+        .eq('user_id', userId)
+        .maybeSingle();
+      if (error) throw new Error('Falha ao consultar coleta no Supabase: ' + error.message);
+      if (data) return data as unknown as ScrapeJob;
+    }
+    return this.state.jobs.find((job) => job.id === id && job.user_id === userId) ?? null;
+  }
+
   async deleteCategoryFromDatabase(categoryId: string): Promise<void> {
     await this.flush();
     if (!this.supabase) return;
@@ -1288,17 +1307,20 @@ export async function createApp() {
     }
   });
 
-  app.get('/api/v1/jobs/:id', (req: Request, res: Response) => {
+  app.get('/api/v1/jobs/:id', async (req: Request, res: Response) => {
     try {
-      const state = store.getState();
       const user = resolveUserFromRequest(req);
-      const job = state.jobs.find((j) => j.id === req.params.id && j.user_id === user?.id);
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+      // Read durable job state instead of trusting this function instance's snapshot.
+      const job = await store.findJobForUser(req.params.id, user.id);
       if (!job) {
+        console.warn('[Jobs] Job lookup miss', { jobId: req.params.id, userId: user.id, snapshotContainsId: store.getState().jobs.some((item) => item.id === req.params.id) });
         return res.status(404).json({ error: 'Coleta não encontrada.' });
       }
-      return res.json({ data: job, ...job });
+      return res.setHeader('Cache-Control', 'no-store').json({ data: job, ...job });
     } catch (err: any) {
-      return res.status(500).json({ error: err.message });
+      console.error('[Jobs] Failed to read job progress:', err?.message || err);
+      return res.status(500).json({ error: 'Falha ao consultar progresso da coleta.' });
     }
   });
 
