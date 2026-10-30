@@ -454,6 +454,17 @@ class Store {
     if (data?.state && typeof data.state === 'object') {
       this.state = { ...getInitialStore(), ...(data.state as StoreState) };
     } else {
+      // A new production database starts empty; never publish demo accounts or fake lead records.
+      this.state = {
+        users: [],
+        jobs: [],
+        places: [],
+        projects: [],
+        categories: [],
+        credentials: [],
+        logs: [],
+        settings: {},
+      };
       this.persist();
       await this.flush();
     }
@@ -552,7 +563,8 @@ function resolveUserFromRequest(req: Request): UserProfile | null {
     }
   }
 
-  // Fallback: Default to admin if in local dev
+  // Only local development may use the seeded demo administrator.
+  if (process.env.VERCEL === '1' || process.env.NODE_ENV === 'production') return null;
   const admin = state.users.find((u) => u.role === 'admin') || state.users[0];
   return admin || null;
 }
@@ -1019,35 +1031,14 @@ export async function createApp() {
       const state = store.getState();
       const user = state.users.find((u) => u.email.toLowerCase() === String(email).trim().toLowerCase());
 
-      // If user does not exist, auto-create admin or user if credentials match defaults
       if (!user) {
-        // Auto-provision requested admin
-        const newUser: UserProfile = {
-          id: `usr_${Date.now()}`,
-          email: String(email).trim().toLowerCase(),
-          name: email.split('@')[0],
-          passwordHash: hashPassword(password),
-          role: email.toLowerCase().includes('admin') || email.toLowerCase() === 'olfnetto@gmail.com' ? 'admin' : 'user',
-          createdAt: new Date().toISOString(),
-        };
-        state.users.push(newUser);
-        store.persist();
-        const token = `sess_${newUser.id}`;
-        return res.json({
-          token,
-          user: { id: newUser.id, email: newUser.email, name: newUser.name, role: newUser.role },
-        });
+        return res.status(401).json({ error: 'Conta não encontrada. Faça seu cadastro antes de entrar.' });
       }
 
       // Check password
       const pHash = hashPassword(password);
-      if (user.passwordHash && user.passwordHash !== pHash) {
-        // For convenience in testing if default user
-        if (password === 'admin12345678' || password === 'Netto@964212$') {
-          // allow
-        } else {
-          return res.status(401).json({ error: 'Senha incorreta.' });
-        }
+      if (!user.passwordHash || user.passwordHash !== pHash) {
+        return res.status(401).json({ error: 'Senha incorreta.' });
       }
 
       const token = `sess_${user.id}`;
@@ -1072,6 +1063,14 @@ export async function createApp() {
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
+  });
+
+  // Protect all application endpoints. Auth and registration remain public.
+  app.use('/api/v1', (req: Request, res: Response, next: NextFunction) => {
+    if (!resolveUserFromRequest(req)) {
+      return res.status(401).json({ error: 'Autenticação necessária.' });
+    }
+    next();
   });
 
   // =========================================================================
