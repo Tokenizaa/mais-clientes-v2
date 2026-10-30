@@ -436,10 +436,10 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
                     </div>
                   ) : (
                     <>
-                      <span className="font-medium">{cat.name}</span>
+                      <span className="font-medium">{cat.name}</span><span className="text-zinc-500">· {catalog.find((project) => project.id === cat.project_id)?.name || "Projeto"}</span>
                       <button
                         type="button"
-                        onClick={() => onNewScrape(undefined, cat.name)}
+                        onClick={() => onNewScrape(catalog.find((project) => project.id === cat.project_id)?.name, cat.name)}
                         className="text-emerald-400 hover:text-emerald-300 ml-1 p-0.5"
                         title="Pesquisar nesta categoria"
                       >
