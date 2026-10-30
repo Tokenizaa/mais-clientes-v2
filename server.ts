@@ -382,11 +382,11 @@ function getInitialStore(): StoreState {
       { id: 'prj_imobiliarias_sul', name: 'Imobiliárias & Corretores Sul', user_id: initialUserId, created_at: new Date().toISOString() },
     ],
     categories: [
-      { id: 'cat_saude', name: 'Clínicas & Saúde', user_id: initialUserId, created_at: new Date().toISOString() },
-      { id: 'cat_odontologia', name: 'Odontologia & Ortodontia', user_id: initialUserId, created_at: new Date().toISOString() },
-      { id: 'cat_gastronomia', name: 'Restaurantes & Gastronomia', user_id: initialUserId, created_at: new Date().toISOString() },
-      { id: 'cat_imobiliario', name: 'Imobiliárias & Corretores', user_id: initialUserId, created_at: new Date().toISOString() },
-      { id: 'cat_estetica', name: 'Estética & Beleza', user_id: initialUserId, created_at: new Date().toISOString() },
+      { id: 'cat_saude', name: 'Clínicas & Saúde', user_id: initialUserId, project_id: 'prj_medica_sp', created_at: new Date().toISOString() },
+      { id: 'cat_odontologia', name: 'Odontologia & Ortodontia', user_id: initialUserId, project_id: 'prj_medica_sp', created_at: new Date().toISOString() },
+      { id: 'cat_gastronomia', name: 'Restaurantes & Gastronomia', user_id: initialUserId, project_id: 'prj_gastronomia_rj', created_at: new Date().toISOString() },
+      { id: 'cat_imobiliario', name: 'Imobiliárias & Corretores', user_id: initialUserId, project_id: 'prj_imobiliarias_sul', created_at: new Date().toISOString() },
+      { id: 'cat_estetica', name: 'Estética & Beleza', user_id: initialUserId, project_id: 'prj_medica_sp', created_at: new Date().toISOString() },
     ],
     credentials: [
       {
