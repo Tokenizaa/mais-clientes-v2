@@ -136,7 +136,7 @@ export function parseAddressComponents(raw: string | null | undefined): AddressC
     city = parts[parts.length - 1] || '';
     const areaSegment = parts[parts.length - 2] || '';
     const hyphenArea = areaSegment.match(/\\s+-\\s+([^,]+)$/);
-    if (hyphenArea?.[1]) neighborhood = hyphenArea[1].trim();
+    if (hyphenArea?.[1]) neighborhood = hyphenArea[1].replace(/^(?:n[ºo.]?\\s*)?\\d+[A-Za-z]?\\s*-\\s*/i, '').trim();
     else if (areaSegment && !/\\d/.test(areaSegment)) neighborhood = areaSegment;
   } else if (country && !state) {
     const parts = withoutPostal.split(',').map((part) => part.trim()).filter(Boolean);
