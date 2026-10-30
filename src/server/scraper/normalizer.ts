@@ -103,29 +103,59 @@ export interface AddressComponents {
   state: string;
 }
 
-/** Parse only address components supported by explicit patterns in the displayed address. */
+const BRAZIL_STATES = new Set([
+  'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS',
+  'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC',
+  'SP', 'SE', 'TO',
+]);
+
+/** Parse address components only when the displayed address contains explicit evidence. */
 export function parseAddressComponents(raw: string | null | undefined): AddressComponents {
-  const address = normalizeAddress(raw);
+  const address = normalizeAddress(raw).replace(/\\s+/g, ' ').trim();
   const postal_code =
-    address.match(/\b\d{5}-\d{3}\b/)?.[0] ||
-    address.match(/\b\d{5}\b/)?.[0] ||
-    address.match(/\b[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2}\b/i)?.[0] ||
+    address.match(/\\b\\d{5}-\\d{3}\\b/)?.[0] ||
+    address.match(/\\b\\d{5}\\b/)?.[0] ||
+    address.match(/\\b[A-Z]{1,2}\\d[A-Z\\d]? ?\\d[A-Z]{2}\\b/i)?.[0] ||
     '';
-  const stateMatch = address.match(/(?:-|,)\s*([A-Z]{2})(?=\s*(?:\d{5}(?:-\d{3})?|,|$))/);
-  const state = stateMatch?.[1] || '';
-  const countryMatch = address.match(/,\s*(Brazil|Brasil|United States|United Kingdom|Canada|Australia|Portugal|España|Spain|France|Deutschland|Germany|Italy|México|Mexico)\s*$/i);
+  const countryMatch = /,\\s*(Brazil|Brasil|United States|United Kingdom|Canada|Australia|Portugal|España|Spain|France|Deutschland|Germany|Italy|México|Mexico)\\s*$/i.exec(address);
   const country = countryMatch?.[1] || '';
+  const beforeCountry = countryMatch ? address.slice(0, countryMatch.index) : address;
+  const withoutPostal = postal_code
+    ? beforeCountry.replace(new RegExp(`[ ,\\s-]*${postal_code.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\s*$`), '').trim()
+    : beforeCountry.trim();
+  const stateMatch = /(?:-|,)\\s*([A-Z]{2})(?=\\s*$)/.exec(withoutPostal);
+  const stateCandidate = stateMatch?.[1]?.toUpperCase() || '';
+  const state = BRAZIL_STATES.has(stateCandidate) ? stateCandidate : '';
   let city = '';
-  if (stateMatch && typeof stateMatch.index === 'number') {
-    const beforeState = address.slice(0, stateMatch.index).split(',').map((part) => part.trim()).filter(Boolean);
-    city = (beforeState[beforeState.length - 1] || '').split(/\s+-\s+/).pop()?.trim() || '';
-  } else if (country && address.split(',').length >= 2) {
-    const parts = address.split(',').map((part) => part.trim()).filter(Boolean);
-    city = parts[parts.length - 2] || '';
+  if (state && stateMatch) {
+    const prefix = withoutPostal.slice(0, stateMatch.index).replace(/[ ,\\s-]+$/, '').trim();
+    const parts = prefix.split(',').map((part) => part.trim()).filter(Boolean);
+    city = parts[parts.length - 1] || '';
+  } else if (country && !state) {
+    const parts = withoutPostal.split(',').map((part) => part.trim()).filter(Boolean);
+    city = parts[parts.length - 1] || '';
   }
   return { postal_code, country, city, state };
 }
 
+/**
+ * Parse a search-location string only when its structure makes city/state unambiguous.
+ * Accepted forms: City, UF; Neighborhood, City, UF; and City, UF, Brasil.
+ * A lone token or arbitrary multi-part phrase is never promoted to city/state.
+ */
+export function parseSearchLocationFallback(raw: string | null | undefined): { city: string; state: string } {
+  const parts = String(raw || '').split(',').map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2) return { city: '', state: '' };
+  const last = parts[parts.length - 1];
+  const penultimate = parts[parts.length - 2];
+  if (/^(Brasil|Brazil)$/i.test(last) && BRAZIL_STATES.has(penultimate.toUpperCase())) {
+    return { city: parts[parts.length - 3] || '', state: penultimate.toUpperCase() };
+  }
+  if (BRAZIL_STATES.has(last.toUpperCase())) {
+    return { city: penultimate, state: last.toUpperCase() };
+  }
+  return { city: '', state: '' };
+}
 /** Extract Google's stable place identifier when the URL actually contains one. */
 export function extractSourcePlaceId(url: string | null | undefined): string {
   const value = String(url || '');
