@@ -541,6 +541,55 @@ class Store {
     return this.state.jobs.find((job) => job.id === id && job.user_id === userId) ?? null;
   }
 
+  async isJobCancellationRequested(id: string, userId: string): Promise<boolean> {
+    if (this.supabase) {
+      const { data, error } = await this.supabase
+        .from('scrape_jobs')
+        .select('cancel_requested')
+        .eq('id', id)
+        .eq('user_id', userId)
+        .maybeSingle();
+      if (error) throw new Error('Falha ao verificar interrupção da coleta: ' + error.message);
+      return data?.cancel_requested === true;
+    }
+    const job = this.state.jobs.find((item) => item.id === id && item.user_id === userId);
+    return job?.status === 'stopped';
+  }
+
+  async requestJobCancellation(id: string, userId: string): Promise<ScrapeJob | null> {
+    if (this.supabase) {
+      const { data, error } = await this.supabase
+        .from('scrape_jobs')
+        .update({
+          cancel_requested: true,
+          status: 'stopped',
+          status_message: 'Coleta interrompida pelo usuário.',
+          current_step: 'Interrompendo...',
+        })
+        .eq('id', id)
+        .eq('user_id', userId)
+        .select('*')
+        .maybeSingle();
+      if (error) throw new Error('Falha ao solicitar interrupção no banco: ' + error.message);
+      if (!data) return null;
+      const localJob = this.state.jobs.find((item) => item.id === id && item.user_id === userId);
+      if (localJob) {
+        localJob.status = 'stopped';
+        localJob.status_message = 'Coleta interrompida pelo usuário.';
+        localJob.current_step = 'Interrompendo...';
+      }
+      return data as unknown as ScrapeJob;
+    }
+
+    const job = this.state.jobs.find((item) => item.id === id && item.user_id === userId);
+    if (!job) return null;
+    job.status = 'stopped';
+    job.status_message = 'Coleta interrompida pelo usuário.';
+    job.current_step = 'Interrompendo...';
+    store.persist();
+    return job;
+  }
+
   async deleteCategoryFromDatabase(categoryId: string): Promise<void> {
     await this.flush();
     if (!this.supabase) return;
@@ -812,11 +861,22 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
   activeScrapeJobs.set(jobId, {
     cancel: () => {
       isCancelled = true;
-      if (activeBrowser) {
-        activeBrowser.close().catch(() => {});
-      }
+      if (activeBrowser) activeBrowser.close().catch(() => {});
     },
   });
+
+  // A stop request must reach the worker even when Vercel routes it to another instance.
+  const cancellationPoll = setInterval(async () => {
+    if (isCancelled) return;
+    try {
+      if (await store.isJobCancellationRequested(jobId, userId)) {
+        isCancelled = true;
+        if (activeBrowser) await activeBrowser.close().catch(() => {});
+      }
+    } catch (error: any) {
+      console.error('[Scraper] Falha ao consultar pedido de interrupção:', error?.message || error);
+    }
+  }, 1500);
 
   const searchQuery = `${segment} ${location}`.trim();
   const searchUrl = `https://www.google.com/maps/search/${encodeURIComponent(searchQuery)}`;
@@ -1086,6 +1146,15 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
 
     store.persist();
   } catch (error: any) {
+    const cancellationWasRequested = isCancelled || await store.isJobCancellationRequested(jobId, userId).catch(() => false);
+    if (cancellationWasRequested) {
+      job.status = 'stopped';
+      job.status_message = 'Coleta interrompida pelo usuário.';
+      job.current_step = 'Interrompido';
+      store.persist();
+      return;
+    }
+
     job.status = 'failed';
     job.status_message = `Erro durante a execução da coleta: ${error?.message || 'Falha desconhecida'}`;
     job.total_errors += 1;
@@ -1104,6 +1173,7 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
     });
     store.persist();
   } finally {
+    clearInterval(cancellationPoll);
     if (activeBrowser) {
       await activeBrowser.close().catch(() => {});
     }
@@ -1375,27 +1445,26 @@ export async function createApp() {
     }
   });
 
-  app.post('/api/v1/jobs/:id/stop', (req: Request, res: Response) => {
+  app.post('/api/v1/jobs/:id/stop', async (req: Request, res: Response) => {
     try {
-      const state = store.getState();
-      const job = state.jobs.find((j) => j.id === req.params.id);
-      if (!job) {
-        return res.status(404).json({ error: 'Coleta não encontrada.' });
-      }
+      const user = resolveUserFromRequest(req);
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
 
-      const active = activeScrapeJobs.get(job.id);
-      if (active) {
-        active.cancel();
-      }
+      const job = await store.requestJobCancellation(req.params.id, user.id);
+      if (!job) return res.status(404).json({ error: 'Coleta não encontrada.' });
 
-      job.status = 'stopped';
-      job.status_message = 'Coleta interrompida pelo usuário.';
-      job.current_step = 'Parado';
-      store.persist();
+      // Fast path when this request and the worker happen to share an instance.
+      activeScrapeJobs.get(req.params.id)?.cancel();
 
-      return res.json({ success: true, message: 'Coleta parada com sucesso.', job });
+      return res.setHeader('Cache-Control', 'no-store').json({
+        success: true,
+        message: 'Pedido de interrupção recebido. A coleta está sendo encerrada.',
+        data: job,
+        job,
+      });
     } catch (err: any) {
-      return res.status(500).json({ error: err.message });
+      console.error('[Jobs] Failed to stop job:', err?.message || err);
+      return res.status(500).json({ error: 'Não foi possível interromper a coleta.' });
     }
   });
 
