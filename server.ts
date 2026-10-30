@@ -1347,15 +1347,20 @@ export async function createApp() {
   // 4. CATEGORIES (/api/v1/categories)
   // =========================================================================
 
-  app.get('/api/v1/categories', (_req: Request, res: Response) => {
+  app.get('/api/v1/categories', (req: Request, res: Response) => {
     try {
       const state = store.getState();
-      const placeCats = state.places.map((p) => p.category).filter(Boolean);
-      const savedCats = state.categories.map((c) => c.name);
+      const user = resolveUserFromRequest(req);
+      const userId = user ? user.id : 'usr_default';
+      const userCategories = state.categories.filter((item) => item.user_id === userId);
+      const userJobs = state.jobs.filter((item) => item.user_id === userId);
+      const userJobIds = new Set(userJobs.map((item) => item.id));
+      const placeCats = state.places.filter((place) => userJobIds.has(place.job_id)).map((place) => place.category).filter(Boolean);
+      const savedCats = userCategories.map((item) => item.name);
       const allDistinct = Array.from(new Set([...savedCats, ...placeCats]));
       const extractedPlaceCategories = Array.from(new Set(placeCats));
       return res.json({
-        data: state.categories,
+        data: userCategories,
         categories: allDistinct,
         placeCategories: extractedPlaceCategories,
       });
@@ -1422,9 +1427,12 @@ export async function createApp() {
   app.delete('/api/v1/categories/:id', (req: Request, res: Response) => {
     try {
       const state = store.getState();
-      const idx = state.categories.findIndex((c) => c.id === req.params.id);
+      const user = resolveUserFromRequest(req);
+      const userId = user ? user.id : 'usr_default';
+      const idx = state.categories.findIndex((c) => c.id === req.params.id && c.user_id === userId);
       if (idx === -1) return res.status(404).json({ error: 'Categoria não encontrada.' });
-      state.categories.splice(idx, 1);
+      const [removed] = state.categories.splice(idx, 1);
+      for (const job of state.jobs) if (job.category_id === removed.id) job.category_id = undefined;
       store.persist();
       return res.json({ success: true });
     } catch (err: any) {
@@ -1436,10 +1444,13 @@ export async function createApp() {
   // 5. PROJECTS (/api/v1/projects)
   // =========================================================================
 
-  app.get('/api/v1/projects', (_req: Request, res: Response) => {
+  app.get('/api/v1/projects', (req: Request, res: Response) => {
     try {
       const state = store.getState();
-      return res.json({ data: state.projects, projects: state.projects });
+      const user = resolveUserFromRequest(req);
+      const userId = user ? user.id : 'usr_default';
+      const projects = state.projects.filter((item) => item.user_id === userId);
+      return res.json({ data: projects, projects });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -1452,11 +1463,15 @@ export async function createApp() {
         return res.status(400).json({ error: 'Nome do projeto é obrigatório.' });
       }
       const user = resolveUserFromRequest(req);
+      const userId = user ? user.id : 'usr_default';
       const state = store.getState();
+      const normalizedName = String(name).trim();
+      const existing = state.projects.find((item) => item.user_id === userId && item.name.toLocaleLowerCase('pt-BR') === normalizedName.toLocaleLowerCase('pt-BR'));
+      if (existing) return res.json({ data: existing, project: existing, reused: true });
       const newProj: ProjectRecord = {
         id: `prj_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        name: String(name).trim(),
-        user_id: user ? user.id : 'usr_default',
+        name: normalizedName,
+        user_id: userId,
         created_at: new Date().toISOString(),
       };
       state.projects.unshift(newProj);
