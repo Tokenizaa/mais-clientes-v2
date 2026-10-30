@@ -165,19 +165,21 @@ export function extractSourcePlaceId(url: string | null | undefined): string {
 
 export function extractCoordinates(url: string | null | undefined): { latitude: string; longitude: string } {
   if (!url) return { latitude: '', longitude: '' };
-  
-  // Format 1: !3d-23.5634722!4d-46.6845054
-  const match3d = url.match(/!3d(-?\d+(?:\.\d+)?)/);
-  const match4d = url.match(/!4d(-?\d+(?:\.\d+)?)/);
-  if (match3d && match4d) {
+  const isValidPair = (latitude: string, longitude: string): boolean => {
+    const lat = Number(latitude);
+    const lng = Number(longitude);
+    return Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+  };
+  // Google Maps place URLs commonly expose coordinates as !3dLAT!4dLNG.
+  const match3d = url.match(/!3d(-?\\d+(?:\\.\\d+)?)/);
+  const match4d = url.match(/!4d(-?\\d+(?:\\.\\d+)?)/);
+  if (match3d && match4d && isValidPair(match3d[1], match4d[1])) {
     return { latitude: match3d[1], longitude: match4d[1] };
   }
-
-  // Format 2: @-23.5634722,-46.6845054
-  const matchAt = url.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
-  if (matchAt) {
+  // Search/map URLs may instead expose the viewport center as @LAT,LNG.
+  const matchAt = url.match(/@(-?\\d+(?:\\.\\d+)?),(-?\\d+(?:\\.\\d+)?)/);
+  if (matchAt && isValidPair(matchAt[1], matchAt[2])) {
     return { latitude: matchAt[1], longitude: matchAt[2] };
   }
-
   return { latitude: '', longitude: '' };
 }
