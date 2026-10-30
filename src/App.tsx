@@ -387,11 +387,28 @@ export default function App() {
   };
 
   const handleStopScrape = async () => {
-    if (!currentJob) return;
+    if (!currentJob || currentJob.status !== 'running') return;
     try {
-      await apiFetch(`/api/v1/jobs/${currentJob.id}/stop`, { method: 'POST' });
+      const response = await apiFetch(`/api/v1/jobs/${encodeURIComponent(currentJob.id)}/stop`, {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+        cache: 'no-store',
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || body?.success !== true) {
+        throw new Error(body?.error || `Falha ao solicitar interrupção (HTTP ${response.status}).`);
+      }
+
+      // Keep polling until the worker confirms it has actually stopped.
+      setCurrentJob((job) => job && job.id === currentJob.id ? {
+        ...job,
+        status_message: 'Pedido recebido. Encerrando a coleta com segurança...',
+        current_step: 'Interrompendo...',
+      } : job);
+      await loadHistory();
     } catch (err: any) {
       console.error('Stop error:', err);
+      alert(err instanceof Error ? err.message : 'Não foi possível interromper a coleta.');
     }
   };
 
