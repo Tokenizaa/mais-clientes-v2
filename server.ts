@@ -96,6 +96,10 @@ function hashApiKey(key: string): string {
 }
 
 function isProvisioningAuthorized(req: Request): boolean {
+  // The in-app credential manager is restricted to authenticated platform admins.
+  if (resolveUserFromRequest(req)?.role === 'admin') return true;
+
+  // Infrastructure automation may use a dedicated server-side provisioning token.
   const expected = process.env.MAPSCRAPE_PROVISIONING_TOKEN?.trim();
   const supplied = req.header('X-MapScrape-Provisioning-Token')?.trim();
   if (!expected || !supplied) return false;
