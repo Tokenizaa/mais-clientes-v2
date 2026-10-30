@@ -510,7 +510,7 @@ class Store {
     }
 
     const snapshot = JSON.parse(JSON.stringify(this.state)) as StoreState;
-    this.pendingWrite = this.pendingWrite.then(async () => {
+    this.pendingWrite = this.pendingWrite.catch(() => undefined).then(async () => {
       const { error } = await this.supabase!
         .from('app_state')
         .upsert({ id: 'main', state: snapshot, updated_at: new Date().toISOString() });
@@ -964,7 +964,13 @@ export async function createApp() {
       ending = true;
       void store.flush().then(() => originalEnd(...args)).catch((error) => {
         console.error('[Store] Supabase persistence failed:', error);
-        originalEnd(...args);
+        if (!res.headersSent) {
+          res.statusCode = 503;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          originalEnd(JSON.stringify({ error: 'Não foi possível salvar os dados no banco. Tente novamente.' }));
+        } else {
+          originalEnd(...args);
+        }
       });
       return res;
     };
