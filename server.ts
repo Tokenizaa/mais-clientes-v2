@@ -950,16 +950,14 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
     while (countNewPlaces() < limit && stagnantRounds < 12) {
       if (isCancelled) break;
 
-      const links: string[] = await searchPage
-        .$eval('a[href*="/maps/place/"]', (anchors) =>
-          anchors
-            .map((a) => (a as HTMLAnchorElement)?.href)
-            .filter((href): href is string => Boolean(href) && href.includes('/maps/place/'))
-        )
-        .catch((error) => {
-          console.warn('[Scraper] Falha ao ler links das fichas no Google Maps:', error?.message || error);
-          return [];
-        });
+      const links: string[] = await searchPage.evaluate(() =>
+        Array.from(document.querySelectorAll('a[href*="/maps/place/"]'))
+          .map((anchor) => (anchor as HTMLAnchorElement).href)
+          .filter((href): href is string => Boolean(href) && href.includes('/maps/place/'))
+      ).catch((error) => {
+        console.warn('[Scraper] Falha ao ler links das fichas no Google Maps:', error?.message || error);
+        return [];
+      });
 
       for (const url of links) placeUrls.add(url);
 
