@@ -1487,7 +1487,7 @@ export async function createApp() {
 
   app.post('/api/v1/export/csv', (req: Request, res: Response) => {
     try {
-      const { fields = [], filename, placeIds, jobId } = req.body;
+      const { fields = [], filename, placeIds, jobId, query, category } = req.body;
       const state = store.getState();
       let targetPlaces = state.places;
 
@@ -1496,6 +1496,20 @@ export async function createApp() {
         targetPlaces = targetPlaces.filter((p) => idSet.has(p.id));
       } else if (jobId && typeof jobId === 'string' && jobId.trim()) {
         targetPlaces = targetPlaces.filter((p) => p.job_id === jobId.trim());
+      }
+
+      // Apply the same text/category filters used in Results. Filtering happens
+      // server-side across the full matching dataset, not only the current page.
+      if (typeof query === 'string' && query.trim()) {
+        const q = query.trim().toLocaleLowerCase('pt-BR');
+        targetPlaces = targetPlaces.filter((p) =>
+          [p.name, p.category, p.address, p.phone, p.website, p.city, p.description]
+            .some((value) => String(value || '').toLocaleLowerCase('pt-BR').includes(q))
+        );
+      }
+      if (typeof category === 'string' && category.trim()) {
+        const cat = category.trim().toLocaleLowerCase('pt-BR');
+        targetPlaces = targetPlaces.filter((p) => String(p.category || '').toLocaleLowerCase('pt-BR').includes(cat));
       }
 
       const user = resolveUserFromRequest(req);
