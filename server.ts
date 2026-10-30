@@ -1,4 +1,5 @@
 import express, { type Request, type Response, type NextFunction } from 'express';
+import { waitUntil } from '@vercel/functions';
 // Load Vite only in development. Importing it at module scope loads Rolldown's native binding,
 // which is not required by production serverless API functions.
 
@@ -624,6 +625,33 @@ class Store {
         })), { onConflict: 'id' });
         if (error) throw new Error(`Falha ao sincronizar raspagens: ${error.message}`);
       }
+      // Keep relational places synchronized with app_state; without this, the UI
+      // showed leads from JSON while public.places stayed empty.
+      if (snapshot.places.length) {
+        const rows = snapshot.places.map((p) => ({
+          id: p.id, job_id: p.job_id, name: p.name || '', category: p.category || '',
+          address: p.address || '', phone: p.phone || '', website: p.website || '',
+          rating: p.rating || '', review_count: p.review_count || '', price_range: p.price_range || '',
+          opening_hours: p.opening_hours || '', business_status: p.business_status || '',
+          latitude: p.latitude || '', longitude: p.longitude || '', maps_url: p.maps_url || '',
+          description: p.description || '', services_attributes: p.services_attributes || '',
+          photos: p.photos ?? null, videos: p.videos ?? null, logo_url: p.logo_url ?? null,
+          booking_url: p.booking_url ?? null, social_links: p.social_links ?? null, reviews: p.reviews ?? null,
+          review_topics: p.review_topics ?? null, additional_attributes: p.additional_attributes ?? null,
+          media_items: p.media_items ?? null, plus_code: p.plus_code ?? null, postal_code: p.postal_code ?? null,
+          country: p.country ?? null, city: p.city ?? null, state: p.state ?? null,
+          source_place_id: p.source_place_id ?? null, source_url: p.source_url ?? null,
+          attributes: p.attributes ?? null, accessibility_attributes: p.accessibility_attributes ?? null,
+          next_opening_text: p.next_opening_text ?? null, next_open_day: p.next_open_day ?? null,
+          next_open_time: p.next_open_time ?? null, visible_photos_count: p.visible_photos_count ?? null,
+          popular_times: p.popular_times ?? null, rating_distribution: p.rating_distribution ?? null,
+          review_highlights: p.review_highlights ?? null, field_status: p.field_status ?? null,
+          collected_at: p.collected_at || new Date().toISOString(),
+        }));
+        const { error } = await client.from('places').upsert(rows, { onConflict: 'id' });
+        if (error) throw new Error('Falha ao sincronizar estabelecimentos: ' + error.message);
+      }
+
       if (snapshot.credentials.length) {
         const { error } = await client.from('api_credentials').upsert(snapshot.credentials.map((item) => ({
           id: item.id,
@@ -1289,10 +1317,10 @@ export async function createApp() {
       store.persist();
       await store.flush();
 
-      // Vercel must keep the request open while the serverless scrape runs.
-      // Local development keeps the existing background-job behavior.
+      // Respond immediately; Vercel waitUntil keeps the scrape alive after response.
+      // Awaiting Puppeteer here made the Start button block for the whole scrape.
       if (process.env.VERCEL === '1') {
-        await executeScrapeJob(jobId, newJob.segment, newJob.location, numLimit, userId);
+        waitUntil(executeScrapeJob(jobId, newJob.segment, newJob.location, numLimit, userId));
       } else {
         void executeScrapeJob(jobId, newJob.segment, newJob.location, numLimit, userId);
       }
