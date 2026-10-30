@@ -639,7 +639,7 @@ export async function extractPlaceDetails(page: Page, jobId: string, targetUrl: 
   const sourceUrl = targetUrl || finalUrl;
   const collectedAt = new Date().toISOString();
   const fieldValues: Record<string, unknown> = {
-    name: raw.name, category: raw.category, address, phone: raw.phone, website: raw.website,
+    name: raw.name, category: raw.category, address, neighborhood: addressComponents.neighborhood, phone: raw.phone, website: raw.website,
     rating: raw.rating, review_count: raw.review_count, price_range: raw.price_range,
     opening_hours: raw.opening_hours, business_status: raw.business_status,
     latitude: coords.latitude, longitude: coords.longitude, maps_url: finalUrl,
