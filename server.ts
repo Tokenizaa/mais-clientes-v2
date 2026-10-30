@@ -1,10 +1,12 @@
 import express, { Request, Response, NextFunction } from 'express';
-import { createServer as createViteServer } from 'vite';
+// Load Vite only in development. Importing it at module scope loads Rolldown's native binding,
+// which is not required by production serverless API functions.
+
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { PlaceRecord, ScrapeJob, EXPORTABLE_FIELDS } from './src/shared/types.js';
+import { EXPORTABLE_FIELDS, type PlaceRecord, type ScrapeJob } from './src/shared/types.js';
 import { BRAZILIAN_STATES, POPULAR_CATEGORIES } from './src/shared/brazilLocations.js';
 import puppeteer from 'puppeteer-core';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
@@ -1711,6 +1713,7 @@ export async function createApp() {
       res.sendFile(path.resolve(__dirname, 'dist/index.html'));
     });
   } else {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
