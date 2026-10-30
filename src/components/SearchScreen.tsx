@@ -128,7 +128,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     }
     try {
       const response = await accountFetch('/api/v1/projects', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, projectName: projectName.trim() }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
@@ -151,7 +151,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     }
     try {
       const response = await accountFetch('/api/v1/categories', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, projectName: projectName.trim() }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
