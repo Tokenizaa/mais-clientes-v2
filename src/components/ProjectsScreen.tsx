@@ -211,7 +211,7 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
       const response = await accountFetch(`/api/v1/categories/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, projectId: categoryProjectId }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
