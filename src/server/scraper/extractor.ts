@@ -1,11 +1,11 @@
 import { Page } from 'puppeteer';
-import { PlaceRecord } from '../../shared/types';
+import { PlaceRecord } from '../../shared/types.js';
 import {
   cleanText, normalizeAddress, normalizePhone, normalizeWebsite, normalizeCategory,
   normalizeRating, normalizeReviewCount, normalizePriceRange, normalizeBusinessStatus,
   extractCoordinates, parseAddressComponents, extractSourcePlaceId,
-} from './normalizer';
-import { SELECTORS } from './selectors';
+} from './normalizer.js';
+import { SELECTORS } from './selectors.js';
 
 /**
  * Extract only values actually rendered on the public Maps place sheet.
