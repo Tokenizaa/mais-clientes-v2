@@ -1,4 +1,4 @@
-import express, { Request, Response, NextFunction } from 'express';
+import express, { type Request, type Response, type NextFunction } from 'express';
 // Load Vite only in development. Importing it at module scope loads Rolldown's native binding,
 // which is not required by production serverless API functions.
 
