@@ -120,8 +120,9 @@ export function parseAddressComponents(raw: string | null | undefined): AddressC
   const countryMatch = /,\\s*(Brazil|Brasil|United States|United Kingdom|Canada|Australia|Portugal|España|Spain|France|Deutschland|Germany|Italy|México|Mexico)\\s*$/i.exec(address);
   const country = countryMatch?.[1] || '';
   const beforeCountry = countryMatch ? address.slice(0, countryMatch.index) : address;
-  const withoutPostal = postal_code
-    ? beforeCountry.replace(new RegExp(`[ ,\\s-]*${postal_code.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\s*$`), '').trim()
+  const postalIndex = postal_code ? beforeCountry.lastIndexOf(postal_code) : -1;
+  const withoutPostal = postalIndex >= 0
+    ? beforeCountry.slice(0, postalIndex).replace(/[ ,\\s-]+$/, '').trim()
     : beforeCountry.trim();
   const stateMatch = /(?:-|,)\\s*([A-Z]{2})(?=\\s*$)/.exec(withoutPostal);
   const stateCandidate = stateMatch?.[1]?.toUpperCase() || '';
