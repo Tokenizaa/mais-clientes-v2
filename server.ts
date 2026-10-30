@@ -1134,28 +1134,10 @@ export async function createApp() {
   await store.initialize();
   const app = express();
 
-  // Flush queued database writes before sending any API response.
-  app.use((_req, res, next) => {
-    const originalEnd = res.end.bind(res);
-    let ending = false;
-    (res as any).end = (...args: any[]) => {
-      if (ending) return res;
-      ending = true;
-      void store.flush().then(() => originalEnd(...args)).catch((error) => {
-        console.error('[Store] Supabase persistence failed:', error);
-        if (!res.headersSent) {
-          res.statusCode = 503;
-          res.setHeader('Content-Type', 'application/json; charset=utf-8');
-          originalEnd(JSON.stringify({ error: 'Não foi possível salvar os dados no banco. Tente novamente.' }));
-        } else {
-          originalEnd(...args);
-        }
-      });
-      return res;
-    };
-    next();
-  });
-
+  // Do not gate every HTTP response on the shared persistence queue.
+  // A failed background write must not turn unrelated requests (including auth,
+  // health and read-only calls) into 503s. Mutating routes explicitly await flush().
+  
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
