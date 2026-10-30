@@ -170,6 +170,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
           <a
             href="/docs/"
+            target="_blank"
+            rel="noopener noreferrer"
             aria-label="Abrir API e documentação"
             className="w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-base font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/50 transition-all group"
             onClick={onCloseMobile}
