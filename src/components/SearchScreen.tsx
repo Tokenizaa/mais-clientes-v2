@@ -236,10 +236,19 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
 
   const calculateProgressPercent = (): number => {
     if (!currentJob) return 0;
-    if (currentJob.status === 'completed') return 100;
-    const target = currentJob.limit_requested || 20;
-    const current = (currentJob.total_collected || 0) + (currentJob.total_duplicates || 0);
-    return Math.min(Math.round((current / target) * 100), 99);
+
+    // The bar measures work completed, not only successful saves.
+    // Duplicates and extraction failures are processed records too; they must
+    // not disappear from the progress calculation.
+    if (currentJob.status !== 'running') return 100;
+
+    const processed =
+      (currentJob.total_collected || 0) +
+      (currentJob.total_duplicates || 0) +
+      (currentJob.total_errors || 0);
+    const totalToProcess = currentJob.total_found || currentJob.limit_requested || 20;
+
+    return Math.min(Math.round((processed / totalToProcess) * 100), 99);
   };
 
   return (
