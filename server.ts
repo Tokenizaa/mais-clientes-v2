@@ -6,7 +6,9 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { PlaceRecord, ScrapeJob, EXPORTABLE_FIELDS } from './src/shared/types';
 import { BRAZILIAN_STATES, POPULAR_CATEGORIES } from './src/shared/brazilLocations';
-import puppeteer, { Browser, Page } from 'puppeteer';
+import puppeteer from 'puppeteer-core';
+import type { Browser, Page } from 'puppeteer-core';
+import { waitUntil } from '@vercel/functions';
 import { extractPlaceDetails } from './src/server/scraper/extractor.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -518,23 +520,36 @@ const activeScrapeJobs = new Map<string, { cancel: () => void }>();
 
 async function connectScraperBrowser(): Promise<Browser> {
   const state = store.getState();
-  const wsEndpoint = (state.settings?.browserWsEndpoint || process.env.BROWSER_WS_ENDPOINT || '').trim();
+  const browserlessToken = process.env.BROWSERLESS_TOKEN?.trim();
+  const legacyEndpoint = (state.settings?.browserWsEndpoint || process.env.BROWSER_WS_ENDPOINT || '').trim();
+  const wsEndpoint = browserlessToken
+    ? `wss://production-sfo.browserless.io?token=${encodeURIComponent(browserlessToken)}`
+    : legacyEndpoint;
 
   if (wsEndpoint) {
     try {
-      console.log(`[Scraper] Conectando ao Chromium remoto / Cloudflare Browser Rendering: ${wsEndpoint.replace(/:[^:]*@/, ':***@')}`);
+      console.log(`[Scraper] Conectando ao Browserless / Chromium remoto (${browserlessToken ? 'Browserless' : 'endpoint legado'})...`);
       return await puppeteer.connect({
         browserWSEndpoint: wsEndpoint,
-        protocolTimeout: 45000,
+        protocolTimeout: 60000,
       });
     } catch (err: any) {
-      console.warn(`[Scraper] Falha ao conectar ao Chromium remoto (${err?.message}). Usando Chromium local headless.`);
+      const message = err?.message || 'erro desconhecido';
+      console.error(`[Scraper] Falha na conexão com o navegador remoto: ${message}`);
+      if (process.env.VERCEL === '1' || process.env.NODE_ENV === 'production') {
+        throw new Error(`Não foi possível conectar ao Browserless. Verifique BROWSERLESS_TOKEN e a região da conta. Detalhe: ${message}`);
+      }
     }
   }
 
-  // Local headless Chromium via Puppeteer with sandbox bypass for containerized environments
-  console.log('[Scraper] Iniciando Puppeteer Chromium headless local com flags anti-sandbox...');
-  return await puppeteer.launch({
+  if (process.env.VERCEL === '1' || process.env.NODE_ENV === 'production') {
+    throw new Error('Browser remoto obrigatório em produção. Configure BROWSERLESS_TOKEN nas variáveis de ambiente da Vercel.');
+  }
+
+  // Chromium local somente no desenvolvimento.
+  console.log('[Scraper] Iniciando Chromium local para desenvolvimento...');
+  const localPuppeteer = await import('puppeteer');
+  return await localPuppeteer.default.launch({
     headless: true,
     args: [
       '--no-sandbox',
@@ -543,7 +558,7 @@ async function connectScraperBrowser(): Promise<Browser> {
       '--disable-gpu',
       '--lang=pt-BR,pt',
     ],
-  });
+  }) as unknown as Browser;
 }
 
 async function executeScrapeJob(jobId: string, segment: string, location: string, limit: number, userId: string) {
@@ -580,7 +595,7 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
       event: 'job_started',
       message: `Iniciada coleta real de "${segment}" em "${location}" (limite: ${limit})`,
       job_id: jobId,
-      metadata: JSON.stringify({ segment, location, limit, remoteBrowser: Boolean(process.env.BROWSER_WS_ENDPOINT) }),
+      metadata: JSON.stringify({ segment, location, limit, remoteBrowser: Boolean(process.env.BROWSERLESS_TOKEN || process.env.BROWSER_WS_ENDPOINT || state.settings?.browserWsEndpoint) }),
       user_id: userId,
     });
     store.persist();
@@ -1067,8 +1082,13 @@ async function startServer() {
 
       store.persist();
 
-      // Launch async collector
-      void executeScrapeJob(jobId, newJob.segment, newJob.location, numLimit, userId);
+      // Keep the scrape alive after the HTTP response on Vercel, within the function's maxDuration.
+      const scrapeTask = executeScrapeJob(jobId, newJob.segment, newJob.location, numLimit, userId);
+      if (process.env.VERCEL === '1') {
+        waitUntil(scrapeTask);
+      } else {
+        void scrapeTask;
+      }
 
       return res.status(201).json({
         data: { jobId, job: newJob },
@@ -1571,15 +1591,17 @@ async function startServer() {
   app.get('/api/v1/scraper/settings', (_req: Request, res: Response) => {
     try {
       const state = store.getState();
-      const ws = state.settings?.browserWsEndpoint || process.env.BROWSER_WS_ENDPOINT || '';
+      const hasRemoteEndpoint = Boolean(process.env.BROWSERLESS_TOKEN || state.settings?.browserWsEndpoint || process.env.BROWSER_WS_ENDPOINT);
+      const engine = process.env.BROWSERLESS_TOKEN ? 'browserless' : hasRemoteEndpoint ? 'remote_chromium' : 'local_puppeteer';
       return res.json({
-        engine: ws ? 'cloudflare_remote' : 'local_puppeteer',
-        browserWsEndpoint: ws,
-        hasRemoteEndpoint: Boolean(ws),
+        engine,
+        hasRemoteEndpoint,
         status: 'ready',
-        description: ws
-          ? 'Conectado a Chromium remoto / Cloudflare Browser Rendering via WebSocket'
-          : 'Utilizando Chromium Headless Local via Puppeteer com isolamento seguro',
+        description: engine === 'browserless'
+          ? 'Browserless remoto configurado por variável de ambiente'
+          : hasRemoteEndpoint
+            ? 'Chromium remoto configurado'
+            : 'Chromium local disponível somente em desenvolvimento',
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -1603,7 +1625,10 @@ async function startServer() {
       return res.json({
         success: true,
         message: 'Configurações de navegador atualizadas.',
-        settings: state.settings,
+        settings: {
+          preferredEngine: state.settings.preferredEngine,
+          hasRemoteEndpoint: Boolean(process.env.BROWSERLESS_TOKEN || state.settings.browserWsEndpoint || process.env.BROWSER_WS_ENDPOINT),
+        },
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
