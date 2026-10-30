@@ -582,39 +582,50 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
                 <div className="mt-4 space-y-2 flex-1">
                   <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">Últimas coletas</p>
                   <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                    {project.jobs.map((job) => (
-                      <div
-                        key={job.id}
-                        className="flex items-center justify-between gap-3 rounded-xl bg-zinc-950/80 border border-zinc-800/60 px-3.5 py-2.5"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate text-xs font-medium text-zinc-200">{job.segment}</p>
-                          <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-zinc-400">
-                            <MapPin className="h-3 w-3 shrink-0" />
-                            {job.location}
-                          </p>
-                          <p className="mt-0.5 text-xs text-zinc-400">
-                            <span
-                              className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${
-                                job.status === 'completed'
-                                  ? 'bg-emerald-400'
-                                  : job.status === 'running'
-                                  ? 'bg-amber-400 animate-ping'
-                                  : 'bg-zinc-500'
-                              }`}
-                            />
-                            {job.status === 'completed' ? 'Concluída' : job.status} · {job.total_collected} salvos
-                          </p>
+                    {Array.from(new Set(project.jobs.map((job) => job.category_id || 'Sem categoria'))).map((categoryName) => (
+                      <section key={categoryName} className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 p-2.5 space-y-2">
+                        <div className="flex items-center gap-2 px-1 text-xs font-semibold text-emerald-300">
+                          <FolderOpen className="h-3.5 w-3.5" />
+                          <span>{categoryName}</span>
+                          <span className="ml-auto text-zinc-500 font-normal">
+                            {project.jobs.filter((job) => (job.category_id || 'Sem categoria') === categoryName).length} raspagem(ns)
+                          </span>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => onOpenJob(job.id)}
-                          className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-zinc-700 hover:border-emerald-500 hover:text-emerald-300 px-2.5 py-1.5 text-xs font-semibold text-zinc-300 transition-colors"
-                        >
-                          <span>Abrir</span>
-                          <ArrowRight className="h-3 w-3" />
-                        </button>
-                      </div>
+                        {project.jobs.filter((job) => (job.category_id || 'Sem categoria') === categoryName).map((job) => (
+                          <div
+                            key={job.id}
+                            className="flex items-center justify-between gap-3 rounded-xl bg-zinc-950/80 border border-zinc-800/60 px-3.5 py-2.5"
+                          >
+                            <div className="min-w-0">
+                              <p className="truncate text-xs font-medium text-zinc-200">{job.segment}</p>
+                              <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-zinc-400">
+                                <MapPin className="h-3 w-3 shrink-0" />
+                                {job.location}
+                              </p>
+                              <p className="mt-0.5 text-xs text-zinc-400">
+                                <span
+                                  className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${
+                                    job.status === 'completed'
+                                      ? 'bg-emerald-400'
+                                      : job.status === 'running'
+                                      ? 'bg-amber-400 animate-ping'
+                                      : 'bg-zinc-500'
+                                  }`}
+                                />
+                                {job.status === 'completed' ? 'Concluída' : job.status} · {job.total_collected} salvos
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => onOpenJob(job.id)}
+                              className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-zinc-700 hover:border-emerald-500 hover:text-emerald-300 px-2.5 py-1.5 text-xs font-semibold text-zinc-300 transition-colors"
+                            >
+                              <span>Ver resultados</span>
+                              <ArrowRight className="h-3 w-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </section>
                     ))}
                   </div>
                 </div>
