@@ -265,7 +265,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="min-w-0 space-y-3">
               <label htmlFor="project-name" className="block text-base sm:text-lg font-semibold text-zinc-100">1. Projeto <span className="text-emerald-400">*</span></label>
-              <div className="grid grid-cols-1 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_auto] gap-2">
                 <select
                   aria-label="Selecionar projeto existente"
                   value={projects.some((project) => project.name === projectName) ? projectName : ''}
@@ -276,17 +276,15 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                   <option value="">Selecionar projeto existente</option>
                   {projects.map((project) => <option key={project.id} value={project.name}>{project.name}</option>)}
                 </select>
-                <div className="flex min-w-0 gap-2">
-                  <input id="project-name" value={projectName} onChange={(e) => { setProjectName(e.target.value); setCategoryName(''); }} maxLength={120} placeholder="Ou digite um novo projeto" disabled={isScraping} className="min-w-0 flex-1 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50" />
-                  <button type="button" onClick={() => void createProject()} disabled={isScraping || !projectName.trim()} className="shrink-0 rounded-xl border border-emerald-500/40 px-3 py-3 text-xs sm:text-sm font-semibold text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40">Criar projeto</button>
-                </div>
+                <input id="project-name" value={projectName} onChange={(e) => { setProjectName(e.target.value); setCategoryName(''); }} maxLength={120} placeholder="Ou digite um novo projeto" disabled={isScraping} className="min-w-0 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50" />
+                <button type="button" onClick={() => void createProject()} disabled={isScraping || !projectName.trim()} className="rounded-xl border border-emerald-500/40 px-3 py-3 text-xs sm:text-sm font-semibold text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40">Criar projeto</button>
               </div>
               <p className="text-xs text-zinc-500">Projetos existentes são reutilizados; você também pode cadastrar um novo.</p>
             </div>
 
             <div className="min-w-0 space-y-3">
               <label htmlFor="category-name" className="block text-base sm:text-lg font-semibold text-zinc-100">2. Categoria da pesquisa <span className="text-emerald-400">*</span></label>
-              <div className="grid grid-cols-1 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_auto] gap-2">
                 <select
                   aria-label="Selecionar categoria do projeto"
                   value={categories.some((category) => category.project_id === projects.find((project) => project.name.trim().toLocaleLowerCase('pt-BR') === projectName.trim().toLocaleLowerCase('pt-BR'))?.id && category.name === categoryName) ? categoryName : ''}
@@ -297,10 +295,8 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                   <option value="">Selecionar categoria existente</option>
                   {categories.filter((category) => category.project_id === projects.find((project) => project.name.trim().toLocaleLowerCase('pt-BR') === projectName.trim().toLocaleLowerCase('pt-BR'))?.id).map((category) => <option key={category.id} value={category.name}>{category.name}</option>)}
                 </select>
-                <div className="flex min-w-0 gap-2">
-                  <input id="category-name" value={categoryName} onChange={(e) => { setCategoryName(e.target.value); if (!segment.trim()) setSegment(e.target.value); }} maxLength={120} placeholder="Ou digite uma nova categoria" disabled={isScraping || !projectName.trim()} className="min-w-0 flex-1 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50" />
-                  <button type="button" onClick={() => void createCategory()} disabled={isScraping || !categoryName.trim() || !projectName.trim()} className="shrink-0 rounded-xl border border-emerald-500/40 px-3 py-3 text-xs sm:text-sm font-semibold text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40">Criar categoria</button>
-                </div>
+                <input id="category-name" value={categoryName} onChange={(e) => { setCategoryName(e.target.value); if (!segment.trim()) setSegment(e.target.value); }} maxLength={120} placeholder="Ou digite uma nova categoria" disabled={isScraping || !projectName.trim()} className="min-w-0 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50" />
+                <button type="button" onClick={() => void createCategory()} disabled={isScraping || !categoryName.trim() || !projectName.trim()} className="rounded-xl border border-emerald-500/40 px-3 py-3 text-xs sm:text-sm font-semibold text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40">Criar categoria</button>
               </div>
               <p className="text-xs text-zinc-500">A categoria é vinculada ao projeto selecionado.</p>
               {catalogMessage && <p role="status" aria-live="polite" className="text-sm text-amber-300">{catalogMessage}</p>}
