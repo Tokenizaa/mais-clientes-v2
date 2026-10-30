@@ -1,6 +1,6 @@
 # MapScrape REST API v1 — contrato de integração
 
-Este documento descreve o contrato implementado em `server.ts` para consumidores humanos, agentes de programação e integrações server-to-server. A documentação pública é https://mapscrape-v2.vercel.app/docs/ e o OpenAPI é https://mapscrape-v2.vercel.app/openapi.yaml.
+Este documento descreve o contrato implementado em `server.ts` para consumidores humanos, agentes de programação e integrações server-to-server. A documentação pública é https://mais-clientes-v2.vercel.app/docs/ e o OpenAPI é https://mais-clientes-v2.vercel.app/openapi.yaml.
 
 ## 1. Arquitetura e limites
 
@@ -27,7 +27,7 @@ Para cadastrar um sistema externo, o operador informa **nome do cliente** e **no
 MapScrape é um serviço central de coleta. O projeto consumidor faz chamadas HTTPS para a API; não clona este repositório, não instala Puppeteer, não cria um scraper paralelo e não acessa o banco central diretamente. Fluxo de coleta: criar/selecionar projeto e categoria → iniciar job → guardar `jobId` → consultar status → buscar resultados paginados.
 
 Configure no **backend** do consumidor:
-- `MAPSCRAPE_API_BASE_URL`: origem HTTPS do serviço implantado, sem sufixo de endpoint. Produção atual: `https://mapscrape-v2.vercel.app`.
+- `MAPSCRAPE_API_BASE_URL`: origem HTTPS do serviço implantado, sem sufixo de endpoint. Produção atual: `https://mais-clientes-v2.vercel.app`.
 - `MAPSCRAPE_API_KEY`: chave individual emitida para esse consumidor.
 
 Não use prefixo `VITE_`, `NEXT_PUBLIC_` ou outra variável pública para a chave. Não coloque segredos em URLs, prompts, HTML, repositório ou logs. Não use a chave bootstrap de provisionamento nas chamadas normais.
@@ -50,23 +50,23 @@ Content-Type: application/json
 
 ## 3. Provisionamento administrativo (infraestrutura autorizada apenas)
 
-Estas rotas usam `X-MapScrape-Provisioning-Token: <MAPSCRAPE_PROVISIONING_TOKEN>`, não Bearer de consumidor. Nunca as chame no navegador nem entregue o token a agentes consumidores.
+Estas rotas aceitam a sessão Bearer da plataforma de um usuário com papel `admin` (usada pela tela Credenciais) ou, para automação de infraestrutura server-to-server, `X-MapScrape-Provisioning-Token: <MAPSCRAPE_PROVISIONING_TOKEN>`. Nunca entregue o token administrativo de provisionamento a consumidores. O Bearer de consumidor não autoriza provisionamento.
 
 ### POST /api/v1/provisioning/credentials
 Request JSON:
 ```json
 {"consumerName":"Beleza Digital","consumerProject":"beleza-digital"}
 ```
-`consumerName` (rótulo da interface: **Nome do cliente**): string não vazia, máximo 120 caracteres. `consumerProject` (rótulo da interface: **Nome do projeto**): string não vazia, máximo 200. Retorna `201` com `data.credentialId`, `data.apiKey`, `data.consumerName`, `data.consumerProject` e `data.revealOnce: true`. A chave completa aparece uma única vez; guarde-a diretamente no secret manager. Um projeto com credencial ativa retorna `409 credential_already_exists`.
+`consumerName` (rótulo da interface: **Nome do cliente**): string não vazia, máximo 120 caracteres. `consumerProject` (rótulo da interface: **Nome do projeto**): string não vazia, máximo 200. Retorna `201` com `data.credentialId`, `data.apiKey`, `data.consumerName`, `data.consumerProject` e `data.revealOnce: true`. A chave é persistida como hash SHA-256 na tabela `api_credentials`; a escrita no Supabase é aguardada antes da resposta. A chave completa aparece uma única vez; guarde-a diretamente no secret manager. Um projeto com credencial ativa retorna `409 credential_already_exists`.
 
 ### GET /api/v1/provisioning/credentials
-Lista metadados de credenciais; não retorna chaves em texto claro.
+Lista metadados (`id`, `consumer_name`, `consumer_project`, `status`, `created_at`); não retorna chave em texto claro nem hash. Resposta usa `Cache-Control: no-store`.
 
 ### DELETE /api/v1/provisioning/credentials/{id}
-Revoga a credencial ativa. Retorna `200 {"data":{"credentialId":"...","status":"revoked"}}`; não encontrada/ativa: `404 active_credential_not_found`.
+Revoga a credencial ativa. Retorna `200 {"data":{"credentialId":"...","status":"revoked"}}`; não encontrada/ativa: `404 active_credential_not_found`. A alteração é persistida no Supabase antes da resposta.
 
 ### POST /api/v1/provisioning/credentials/{id}/rotate
-Revoga a chave anterior e emite uma nova, retornada uma única vez. Retorna `201` com `data.apiKey`, `data.credentialId`, `data.previousCredentialId`, `data.consumerName`, `data.consumerProject` e `data.revealOnce`. A chave anterior deixa de funcionar imediatamente. Se a criação da nova falhar após a revogação, a chave antiga continua revogada; faça nova emissão. Armazene a substituta diretamente no secret manager.
+Revoga a credencial anterior e cria uma nova credencial (novo ID) para o mesmo cliente/projeto. Retorna `201` com `data.apiKey`, `data.credentialId`, `data.previousCredentialId`, `data.consumerName`, `data.consumerProject` e `data.revealOnce`. A chave é revelada uma única vez e armazenada somente como hash. A chave anterior deixa de funcionar imediatamente. Se a criação da nova falhar após a revogação, a chave antiga continua revogada; faça nova emissão. Armazene a substituta diretamente no secret manager.
 
 ## 4. Projetos e categorias de pesquisa
 
@@ -224,7 +224,7 @@ Não há quota por consumidor nem endpoint separado para avaliações/mídias im
 ## 8. Exemplo ponta a ponta com cURL
 
 ```bash
-export MAPSCRAPE_API_BASE_URL="https://mapscrape-v2.vercel.app"
+export MAPSCRAPE_API_BASE_URL="https://mais-clientes-v2.vercel.app"
 # Defina MAPSCRAPE_API_KEY no ambiente seguro; não grave a chave em um arquivo versionado.
 curl -fsS "$MAPSCRAPE_API_BASE_URL/api/v1/projects" -H "Authorization: Bearer $MAPSCRAPE_API_KEY"
 curl -fsS -X POST "$MAPSCRAPE_API_BASE_URL/api/v1/jobs" \
@@ -240,4 +240,4 @@ curl -fsS "$MAPSCRAPE_API_BASE_URL/api/v1/jobs/JOB_ID/results?limit=50&offset=0"
 
 O health check valida serviço/banco, não a conexão com navegador nem a raspagem ponta a ponta. Um `202` comprova aceitação da solicitação, não a coleta. Uma validação real deve usar credencial autorizada, uma busca pequena, polling até estado terminal, confirmar contadores e consultar resultados persistidos. Não use registros de teste criados diretamente no banco como prova de integração pela API.
 
-Fontes: [portal](https://mapscrape-v2.vercel.app/docs/), [OpenAPI](https://mapscrape-v2.vercel.app/openapi.yaml), [documentação de projetos/categorias](./PROJECTS-CATEGORIES-API.md).
+Fontes: [portal](https://mais-clientes-v2.vercel.app/docs/), [OpenAPI](https://mais-clientes-v2.vercel.app/openapi.yaml), [documentação de projetos/categorias](./PROJECTS-CATEGORIES-API.md).
