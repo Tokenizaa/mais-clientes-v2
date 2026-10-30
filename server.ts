@@ -8,7 +8,6 @@ import { PlaceRecord, ScrapeJob, EXPORTABLE_FIELDS } from './src/shared/types';
 import { BRAZILIAN_STATES, POPULAR_CATEGORIES } from './src/shared/brazilLocations';
 import puppeteer from 'puppeteer-core';
 import type { Browser, Page } from 'puppeteer-core';
-import { waitUntil } from '@vercel/functions';
 import { extractPlaceDetails } from './src/server/scraper/extractor.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1082,12 +1081,12 @@ async function startServer() {
 
       store.persist();
 
-      // Keep the scrape alive after the HTTP response on Vercel, within the function's maxDuration.
-      const scrapeTask = executeScrapeJob(jobId, newJob.segment, newJob.location, numLimit, userId);
+      // Vercel must keep the request open while the serverless scrape runs.
+      // Local development keeps the existing background-job behavior.
       if (process.env.VERCEL === '1') {
-        waitUntil(scrapeTask);
+        await executeScrapeJob(jobId, newJob.segment, newJob.location, numLimit, userId);
       } else {
-        void scrapeTask;
+        void executeScrapeJob(jobId, newJob.segment, newJob.location, numLimit, userId);
       }
 
       return res.status(201).json({
