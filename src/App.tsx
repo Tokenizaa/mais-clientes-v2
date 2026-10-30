@@ -287,7 +287,23 @@ export default function App() {
         });
         if (!res.ok) {
           const body = await res.text();
-          throw new Error(`HTTP ${res.status}: ${body.slice(0, 160)}`);
+          const message = `HTTP ${res.status}: ${body.slice(0, 160)}`;
+          if (res.status === 404 || res.status === 401 || res.status === 403) {
+            if (progressPollRef.current) clearInterval(progressPollRef.current);
+            progressPollRef.current = null;
+            setIsScraping(false);
+            setCurrentJob((current) => current ? {
+              ...current, status: 'failed',
+              status_message: res.status === 404
+                ? 'A API não encontrou esta coleta. Atualize o histórico e tente novamente.'
+                : 'Sua sessão expirou ou não tem permissão para consultar esta coleta.',
+              current_step: 'Consulta interrompida',
+            } : current);
+            console.error('Consulta de progresso encerrada:', message);
+            await loadHistory();
+            return;
+          }
+          throw new Error(message);
         }
 
         const body = await res.json();
