@@ -101,6 +101,7 @@ export interface AddressComponents {
   country: string;
   city: string;
   state: string;
+  neighborhood: string;
 }
 
 const BRAZIL_STATES = new Set([
@@ -128,15 +129,20 @@ export function parseAddressComponents(raw: string | null | undefined): AddressC
   const stateCandidate = stateMatch?.[1]?.toUpperCase() || '';
   const state = BRAZIL_STATES.has(stateCandidate) ? stateCandidate : '';
   let city = '';
+  let neighborhood = '';
   if (state && stateMatch) {
     const prefix = withoutPostal.slice(0, stateMatch.index).replace(/[ ,\s-]+$/, '').trim();
     const parts = prefix.split(',').map((part) => part.trim()).filter(Boolean);
     city = parts[parts.length - 1] || '';
+    const areaSegment = parts[parts.length - 2] || '';
+    const hyphenArea = areaSegment.match(/\\s+-\\s+([^,]+)$/);
+    if (hyphenArea?.[1]) neighborhood = hyphenArea[1].trim();
+    else if (areaSegment && !/\\d/.test(areaSegment)) neighborhood = areaSegment;
   } else if (country && !state) {
     const parts = withoutPostal.split(',').map((part) => part.trim()).filter(Boolean);
     city = parts[parts.length - 1] || '';
   }
-  return { postal_code, country, city, state };
+  return { postal_code, country, city, state, neighborhood };
 }
 
 /**
