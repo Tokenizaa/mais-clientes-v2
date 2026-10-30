@@ -95,6 +95,16 @@ function hashApiKey(key: string): string {
   return crypto.createHash('sha256').update(key.trim()).digest('hex');
 }
 
+function isProvisioningAuthorized(req: Request): boolean {
+  const expected = process.env.MAPSCRAPE_PROVISIONING_TOKEN?.trim();
+  const supplied = req.header('X-MapScrape-Provisioning-Token')?.trim();
+  if (!expected || !supplied) return false;
+  const expectedBuffer = Buffer.from(expected);
+  const suppliedBuffer = Buffer.from(supplied);
+  return expectedBuffer.length === suppliedBuffer.length
+    && crypto.timingSafeEqual(expectedBuffer, suppliedBuffer);
+}
+
 // Generate realistic Brazilian sample places
 function generateInitialPlaces(jobId: string, segment: string, location: string): PlaceRecord[] {
   const samples = [
@@ -589,6 +599,17 @@ class Store {
           created_at: item.created_at, completed_at: item.completed_at ?? null,
         })), { onConflict: 'id' });
         if (error) throw new Error(`Falha ao sincronizar raspagens: ${error.message}`);
+      }
+      if (snapshot.credentials.length) {
+        const { error } = await client.from('api_credentials').upsert(snapshot.credentials.map((item) => ({
+          id: item.id,
+          consumer_name: item.consumer_name,
+          consumer_project: item.consumer_project,
+          api_key_hash: item.api_key_hash,
+          status: item.status,
+          created_at: item.created_at,
+        })), { onConflict: 'id' });
+        if (error) throw new Error(`Falha ao sincronizar credenciais de API: ${error.message}`);
       }
     });
   }
@@ -1701,87 +1722,112 @@ export async function createApp() {
   // 9. API CREDENTIALS PROVISIONING (/api/v1/provisioning/credentials)
   // =========================================================================
 
-  app.get('/api/v1/provisioning/credentials', (_req: Request, res: Response) => {
+  app.get('/api/v1/provisioning/credentials', async (req: Request, res: Response) => {
+    if (!isProvisioningAuthorized(req)) {
+      return res.status(401).json({ error: 'provisioning_unauthorized' });
+    }
     try {
-      const state = store.getState();
-      return res.json({ data: state.credentials });
+      await store.flush();
+      const data = store.getState().credentials.map(({ id, consumer_name, consumer_project, status, created_at }) => ({
+        id, consumer_name, consumer_project, status, created_at,
+      }));
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json({ data });
     } catch (err: any) {
-      return res.status(500).json({ error: err.message });
+      return res.status(500).json({ error: 'credential_query_failed', message: err.message });
     }
   });
 
-  app.post('/api/v1/provisioning/credentials', (req: Request, res: Response) => {
+  app.post('/api/v1/provisioning/credentials', async (req: Request, res: Response) => {
+    if (!isProvisioningAuthorized(req)) {
+      return res.status(401).json({ error: 'provisioning_unauthorized' });
+    }
     try {
-      const { consumerName, consumerProject } = req.body;
-      if (!consumerName || !consumerProject) {
-        return res.status(400).json({ error: 'Nome do cliente e Nome do projeto são obrigatórios.' });
+      const consumerName = typeof req.body?.consumerName === 'string' ? req.body.consumerName.trim() : '';
+      const consumerProject = typeof req.body?.consumerProject === 'string' ? req.body.consumerProject.trim() : '';
+      if (!consumerName || consumerName.length > 120 || !consumerProject || consumerProject.length > 200) {
+        return res.status(422).json({ error: 'invalid_request' });
       }
 
-      const credentialId = `cred_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-      const rawSecret = crypto.randomBytes(24).toString('hex');
-      const apiKey = `msk_live_${rawSecret}`;
       const state = store.getState();
+      const existing = state.credentials.find((item) =>
+        item.status === 'active' && item.consumer_project.toLowerCase() === consumerProject.toLowerCase());
+      if (existing) return res.status(409).json({ error: 'credential_already_exists' });
 
-      const newCred: ApiCredentialRecord = {
+      const credentialId = `cred_${crypto.randomUUID()}`;
+      const apiKey = `msk_live_${crypto.randomBytes(32).toString('hex')}`;
+      const credential: ApiCredentialRecord = {
         id: credentialId,
-        consumer_name: String(consumerName).trim(),
-        consumer_project: String(consumerProject).trim(),
+        consumer_name: consumerName,
+        consumer_project: consumerProject,
         api_key_hash: hashApiKey(apiKey),
         status: 'active',
         created_at: new Date().toISOString(),
       };
-
-      state.credentials.unshift(newCred);
+      state.credentials.unshift(credential);
       store.persist();
+      await store.flush();
 
-      return res.status(201).json({
-        data: {
-          credentialId,
-          apiKey,
-          consumerName: newCred.consumer_name,
-          consumerProject: newCred.consumer_project,
-        },
-      });
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(201).json({ data: {
+        credentialId, apiKey, consumerName, consumerProject, revealOnce: true,
+      } });
     } catch (err: any) {
-      return res.status(500).json({ error: err.message });
+      return res.status(500).json({ error: 'credential_create_failed', message: err.message });
     }
   });
 
-  app.delete('/api/v1/provisioning/credentials/:id', (req: Request, res: Response) => {
+  app.delete('/api/v1/provisioning/credentials/:id', async (req: Request, res: Response) => {
+    if (!isProvisioningAuthorized(req)) {
+      return res.status(401).json({ error: 'provisioning_unauthorized' });
+    }
     try {
       const state = store.getState();
-      const cred = state.credentials.find((c) => c.id === req.params.id);
-      if (!cred) return res.status(404).json({ error: 'Credencial não encontrada.' });
-      cred.status = 'revoked';
+      const credential = state.credentials.find((item) => item.id === req.params.id && item.status === 'active');
+      if (!credential) return res.status(404).json({ error: 'active_credential_not_found' });
+      credential.status = 'revoked';
       store.persist();
-      return res.json({ success: true, message: 'Credencial revogada com sucesso.' });
+      await store.flush();
+      return res.status(200).json({ data: { credentialId: credential.id, status: 'revoked' } });
     } catch (err: any) {
-      return res.status(500).json({ error: err.message });
+      return res.status(500).json({ error: 'credential_revoke_failed', message: err.message });
     }
   });
 
-  app.post('/api/v1/provisioning/credentials/:id/rotate', (req: Request, res: Response) => {
+  app.post('/api/v1/provisioning/credentials/:id/rotate', async (req: Request, res: Response) => {
+    if (!isProvisioningAuthorized(req)) {
+      return res.status(401).json({ error: 'provisioning_unauthorized' });
+    }
     try {
       const state = store.getState();
-      const cred = state.credentials.find((c) => c.id === req.params.id);
-      if (!cred) return res.status(404).json({ error: 'Credencial não encontrada.' });
+      const previous = state.credentials.find((item) => item.id === req.params.id && item.status === 'active');
+      if (!previous) return res.status(404).json({ error: 'active_credential_not_found' });
 
-      const rawSecret = crypto.randomBytes(24).toString('hex');
-      const newApiKey = `msk_live_${rawSecret}`;
-      cred.api_key_hash = hashApiKey(newApiKey);
-      cred.status = 'active';
+      const previousCredentialId = previous.id;
+      previous.status = 'revoked';
+      const credentialId = `cred_${crypto.randomUUID()}`;
+      const apiKey = `msk_live_${crypto.randomBytes(32).toString('hex')}`;
+      const replacement: ApiCredentialRecord = {
+        id: credentialId,
+        consumer_name: previous.consumer_name,
+        consumer_project: previous.consumer_project,
+        api_key_hash: hashApiKey(apiKey),
+        status: 'active',
+        created_at: new Date().toISOString(),
+      };
+      state.credentials.unshift(replacement);
       store.persist();
+      await store.flush();
 
-      return res.json({
-        data: {
-          credentialId: cred.id,
-          apiKey: newApiKey,
-          consumerName: cred.consumer_name,
-          consumerProject: cred.consumer_project,
-        },
-      });
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(201).json({ data: {
+        credentialId, previousCredentialId, apiKey,
+        consumerName: replacement.consumer_name,
+        consumerProject: replacement.consumer_project,
+        revealOnce: true,
+      } });
     } catch (err: any) {
-      return res.status(500).json({ error: err.message });
+      return res.status(500).json({ error: 'credential_rotation_failed', message: err.message });
     }
   });
 
