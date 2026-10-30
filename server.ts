@@ -1217,6 +1217,7 @@ export async function createApp() {
       };
       state.jobs.unshift(newJob);
       store.persist();
+      await store.flush();
 
       // Vercel must keep the request open while the serverless scrape runs.
       // Local development keeps the existing background-job behavior.
@@ -1390,7 +1391,7 @@ export async function createApp() {
     }
   });
 
-  app.post('/api/v1/categories', (req: Request, res: Response) => {
+  app.post('/api/v1/categories', async (req: Request, res: Response) => {
     try {
       const { name, projectId, projectName } = req.body;
       if (!name || !String(name).trim()) {
@@ -1423,6 +1424,7 @@ export async function createApp() {
       };
       state.categories.unshift(newCat);
       store.persist();
+      await store.flush();
       return res.status(201).json({ data: newCat, category: newCat, project });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -1478,7 +1480,7 @@ export async function createApp() {
     }
   });
 
-  app.post('/api/v1/projects', (req: Request, res: Response) => {
+  app.post('/api/v1/projects', async (req: Request, res: Response) => {
     try {
       const { name } = req.body;
       if (!name || !String(name).trim()) {
@@ -1498,6 +1500,7 @@ export async function createApp() {
       };
       state.projects.unshift(newProj);
       store.persist();
+      await store.flush();
       return res.status(201).json({ data: newProj, project: newProj });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
