@@ -553,9 +553,10 @@ export async function extractPlaceDetails(page: Page, jobId: string, targetUrl: 
         title: '',
       })),
     ];
-    const plusCodeNode = Array.from(document.querySelectorAll('[aria-label*="Plus code"],[aria-label*="Plus Code"],[data-item-id*="oloc"]'))
-      .find((node) => /plus code/i.test(node.getAttribute('aria-label') || ''));
-    const plus_code = plusCodeNode?.getAttribute('aria-label')?.replace(/^plus code:\s*/i, '') || '';
+    const plusCodeNode = Array.from(document.querySelectorAll('[aria-label*="Plus code"],[aria-label*="Plus Code"],[aria-label*="Código Plus"],[data-item-id*="oloc"]'))
+      .find((node) => /plus code|código plus/i.test([attr(node, 'aria-label'), text(node)].join(' ')));
+    const plusCodeLabel = plusCodeNode ? [attr(plusCodeNode, 'aria-label'), text(plusCodeNode)].filter(Boolean).join(' ') : '';
+    const plus_code = plusCodeLabel.replace(/^(plus code|código plus)\s*:\s*/i, '').trim();
 
     // Extract only visible popular-times labels/bars; do not infer data from graph shape.
     const popularTimesNodes = Array.from(document.querySelectorAll(
