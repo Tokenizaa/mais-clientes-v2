@@ -235,7 +235,7 @@ export default function App() {
   }, []);
 
   // Load places for table
-  const loadPlaces = useCallback(async () => {
+  const loadPlaces = useCallback(async (jobIdOverride?: string) => {
     setIsLoadingPlaces(true);
     try {
       const offset = (currentPage - 1) * pageSize;
@@ -246,7 +246,8 @@ export default function App() {
         sortOrder,
       });
 
-      if (selectedJobId) params.append('jobId', selectedJobId);
+      const effectiveJobId = jobIdOverride || selectedJobId;
+      if (effectiveJobId) params.append('jobId', effectiveJobId);
       if (searchQuery.trim()) params.append('query', searchQuery.trim());
       if (categoryFilter) params.append('category', categoryFilter);
 
@@ -312,7 +313,7 @@ export default function App() {
         setCurrentJob(updatedJob);
         setIsScraping(updatedJob.status === 'running');
         await loadHistory();
-        await loadPlaces();
+        await loadPlaces(jobId);
 
         if (updatedJob.status !== 'running') {
           if (progressPollRef.current) clearInterval(progressPollRef.current);
