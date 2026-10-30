@@ -19,6 +19,8 @@ interface ExportScreenProps {
   jobs: ScrapeJob[];
   selectedJobId: string | undefined;
   onSelectJobId: (id: string | undefined) => void;
+  searchQuery: string;
+  selectedCategory: string;
 }
 
 export const ExportScreen: React.FC<ExportScreenProps> = ({
@@ -28,6 +30,8 @@ export const ExportScreen: React.FC<ExportScreenProps> = ({
   jobs,
   selectedJobId,
   onSelectJobId,
+  searchQuery,
+  selectedCategory,
 }) => {
   // Field selection state (default all selected)
   const [selectedFields, setSelectedFields] = useState<Set<keyof PlaceRecord>>(
@@ -89,6 +93,10 @@ export const ExportScreen: React.FC<ExportScreenProps> = ({
       } else if (scope === 'current_job' && selectedJobId) {
         payload.jobId = selectedJobId;
       }
+      // Keep the active Results filters in the export request so the CSV
+      // contains every matching record, not just the current visible page.
+      if (searchQuery.trim()) payload.query = searchQuery.trim();
+      if (selectedCategory) payload.category = selectedCategory;
 
       const token = window.sessionStorage.getItem('mapscrape_session_token');
       const response = await fetch('/api/v1/export/csv', {
