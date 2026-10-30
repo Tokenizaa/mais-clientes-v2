@@ -4,6 +4,8 @@ export interface PlaceRecord {
   name: string;
   category: string;
   address: string;
+  /** Neighborhood explicitly present in the displayed address, when separable. */
+  neighborhood?: string;
   phone: string;
   website: string;
   rating: string;
@@ -102,7 +104,8 @@ export interface ExportCsvPayload {
 export const EXPORTABLE_FIELDS: { key: keyof PlaceRecord; label: string; description: string }[] = [
   { key: 'name', label: 'Nome do estabelecimento', description: 'Nome exibido na ficha' },
   { key: 'category', label: 'Categoria', description: 'Categoria exibida' },
-  { key: 'address', label: 'Endereço', description: 'Endereço exibido' },
+  { key: 'address', label: 'Endereço', description: 'Endereço completo exibido na ficha' },
+  { key: 'neighborhood', label: 'Bairro', description: 'Bairro separado do endereço quando explicitamente identificável' },
   { key: 'phone', label: 'Telefone', description: 'Telefone exibido' },
   { key: 'website', label: 'Site', description: 'URL apresentada na ficha' },
   { key: 'rating', label: 'Nota', description: 'Avaliação exibida' },
