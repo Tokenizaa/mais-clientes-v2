@@ -1188,7 +1188,9 @@ export async function createApp() {
   app.get('/api/v1/jobs', (req: Request, res: Response) => {
     try {
       const state = store.getState();
-      const sorted = [...state.jobs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      const user = resolveUserFromRequest(req);
+      const ownedJobs = state.jobs.filter((job) => job.user_id === user?.id);
+      const sorted = [...ownedJobs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
       return res.json({ data: sorted, total: sorted.length });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -1267,7 +1269,8 @@ export async function createApp() {
   app.get('/api/v1/jobs/:id', (req: Request, res: Response) => {
     try {
       const state = store.getState();
-      const job = state.jobs.find((j) => j.id === req.params.id);
+      const user = resolveUserFromRequest(req);
+      const job = state.jobs.find((j) => j.id === req.params.id && j.user_id === user?.id);
       if (!job) {
         return res.status(404).json({ error: 'Coleta não encontrada.' });
       }
@@ -1331,9 +1334,11 @@ export async function createApp() {
   app.get('/api/v1/leads', (req: Request, res: Response) => {
     try {
       const state = store.getState();
+      const user = resolveUserFromRequest(req);
+      const ownedJobIds = new Set(state.jobs.filter((job) => job.user_id === user?.id).map((job) => job.id));
       const { jobId, query, category, sortBy = 'collected_at', sortOrder = 'desc', offset = '0', limit = '25' } = req.query;
 
-      let filtered = [...state.places];
+      let filtered = state.places.filter((place) => ownedJobIds.has(place.job_id));
 
       if (jobId && typeof jobId === 'string' && jobId.trim()) {
         filtered = filtered.filter((p) => p.job_id === jobId.trim());
