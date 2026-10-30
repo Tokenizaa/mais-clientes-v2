@@ -628,12 +628,16 @@ class Store {
       // Keep relational places synchronized with app_state; without this, the UI
       // showed leads from JSON while public.places stayed empty.
       if (snapshot.places.length) {
-        // source_url has a unique index; de-duplicate the snapshot before upsert
-        // so one duplicate result cannot abort persistence of every lead.
+        // Deduplicate both natural keys and IDs before writing. The unique source_url
+        // index is independent of the primary key, so onConflict:'id' alone is not enough.
         const uniquePlaces = new Map<string, PlaceRecord>();
+        const seenIds = new Set<string>();
         for (const place of snapshot.places) {
-          const key = (place.source_url || place.maps_url || place.id || '').trim();
-          if (!uniquePlaces.has(key)) uniquePlaces.set(key, place);
+          const sourceKey = (place.source_url || place.maps_url || '').trim();
+          const key = sourceKey ? `source:${sourceKey}` : `id:${place.id}`;
+          if (seenIds.has(place.id) || uniquePlaces.has(key)) continue;
+          seenIds.add(place.id);
+          uniquePlaces.set(key, place);
         }
         const rows = Array.from(uniquePlaces.values()).map((p) => ({
           id: p.id, job_id: p.job_id, name: p.name || '', category: p.category || '',
@@ -655,8 +659,28 @@ class Store {
           review_highlights: p.review_highlights ?? null, field_status: p.field_status ?? null,
           collected_at: p.collected_at || new Date().toISOString(),
         }));
-        const { error } = await client.from('places').upsert(rows, { onConflict: 'id' });
-        if (error) throw new Error('Falha ao sincronizar estabelecimentos: ' + error.message);
+        const rowsWithSource = rows.filter((row) => typeof row.source_url === 'string' && row.source_url.trim());
+        const rowsWithoutSource = rows.filter((row) => !row.source_url || !row.source_url.trim());
+
+        // Reuse the database ID for an already-known source_url. This prevents a
+        // different scrape/job ID for the same business from violating the unique index.
+        if (rowsWithSource.length) {
+          const sourceUrls = rowsWithSource.map((row) => row.source_url as string);
+          const { data: existingBySource, error: lookupError } = await client
+            .from('places').select('id, source_url').in('source_url', sourceUrls);
+          if (lookupError) throw new Error('Falha ao consultar estabelecimentos existentes: ' + lookupError.message);
+          const existingIds = new Map((existingBySource || []).map((row) => [row.source_url, row.id]));
+          const sourceRows = rowsWithSource.map((row) => ({
+            ...row,
+            id: existingIds.get(row.source_url as string) || row.id,
+          }));
+          const { error } = await client.from('places').upsert(sourceRows, { onConflict: 'source_url' });
+          if (error) throw new Error('Falha ao sincronizar estabelecimentos por URL: ' + error.message);
+        }
+        if (rowsWithoutSource.length) {
+          const { error } = await client.from('places').upsert(rowsWithoutSource, { onConflict: 'id' });
+          if (error) throw new Error('Falha ao sincronizar estabelecimentos por ID: ' + error.message);
+        }
       }
 
       if (snapshot.credentials.length) {
