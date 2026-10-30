@@ -14,6 +14,13 @@ test('parses Brazilian street, neighborhood, city, state and CEP without using n
   );
 });
 
+test('extracts a neighborhood separated by commas when the address shows it explicitly', () => {
+  assert.equal(
+    parseAddressComponents('Rua A, 100, Centro, Porto Alegre - RS, 90010-150').neighborhood,
+    'Centro',
+  );
+});
+
 test('preserves leading zeroes in Brazilian postal codes', () => {
   assert.equal(
     parseAddressComponents('Rua A, 10 - Centro, Porto Alegre - RS, 90010-150').postal_code,
