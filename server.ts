@@ -1445,7 +1445,7 @@ export async function createApp() {
     }
   });
 
-  app.delete('/api/v1/categories/:id', (req: Request, res: Response) => {
+  app.delete('/api/v1/categories/:id', async (req: Request, res: Response) => {
     try {
       const state = store.getState();
       const user = resolveUserFromRequest(req);
@@ -1455,7 +1455,7 @@ export async function createApp() {
       const [removed] = state.categories.splice(idx, 1);
       for (const job of state.jobs) if (job.category_id === removed.id) job.category_id = undefined;
       store.persist();
-      void store.deleteCategoryFromDatabase(removed.id);
+      await store.deleteCategoryFromDatabase(removed.id);
       return res.json({ success: true });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -1521,7 +1521,7 @@ export async function createApp() {
     }
   });
 
-  app.delete('/api/v1/projects/:id', (req: Request, res: Response) => {
+  app.delete('/api/v1/projects/:id', async (req: Request, res: Response) => {
     try {
       const state = store.getState();
       const user = resolveUserFromRequest(req);
@@ -1540,7 +1540,7 @@ export async function createApp() {
         }
       }
       store.persist();
-      void store.deleteProjectFromDatabase(removed.id);
+      await store.deleteProjectFromDatabase(removed.id);
       return res.json({ success: true });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
