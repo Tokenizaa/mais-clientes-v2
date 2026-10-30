@@ -105,13 +105,18 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
       setProjects(
         Array.isArray(projectData.data) ? projectData.data : projectData.projects ?? [],
       );
-      const rawCategories = Array.isArray(categoryData.data) ? categoryData.data : categoryData.categories ?? [];
+      // The API's `data` field contains saved categories linked to projects.
+      // `categories` is a separate legacy list of extracted Maps categories (strings),
+      // so it must not replace the project-linked catalog.
+      const rawCategories = Array.isArray(categoryData.data) ? categoryData.data : [];
       setCategories(
-        rawCategories.map((c: any, i: number) =>
-          typeof c === 'string'
-            ? { id: `cat_${i}_${c}`, name: c }
-            : { id: c?.id || `cat_${i}`, name: c?.name || '', project_id: c?.project_id || '' }
-        )
+        rawCategories
+          .filter((category: any) => category && typeof category === 'object' && category.name)
+          .map((category: any, i: number) => ({
+            id: String(category.id || `cat_${i}`),
+            name: String(category.name),
+            project_id: String(category.project_id || category.projectId || ''),
+          }))
       );
       setCatalogMessage('');
     }).catch((error) => {
@@ -261,43 +266,47 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
       <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl shadow-xl shadow-black/40 p-6 sm:p-9 space-y-8 backdrop-blur-sm">
         <form onSubmit={handleStart} className="space-y-8">
           
-          <div className="space-y-3">
-            <label htmlFor="project-name" className="block text-base sm:text-lg font-semibold text-zinc-100">1. Projeto <span className="text-emerald-400">*</span></label>
-            <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_auto] gap-2">
-              <select
-                aria-label="Selecionar projeto existente"
-                value={projects.some((project) => project.name === projectName) ? projectName : ''}
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="min-w-0 space-y-3">
+              <label htmlFor="project-name" className="block text-base sm:text-lg font-semibold text-zinc-100">1. Projeto <span className="text-emerald-400">*</span></label>
+              <input
+                id="project-name"
+                list="project-options"
+                value={projectName}
                 onChange={(e) => { setProjectName(e.target.value); setCategoryName(''); }}
-                disabled={isScraping || projects.length === 0}
+                maxLength={120}
+                placeholder="Selecione ou digite um novo projeto"
+                disabled={isScraping}
+                autoComplete="off"
                 className="min-w-0 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50"
-              >
-                <option value="">Selecionar projeto existente</option>
-                {projects.map((project) => <option key={project.id} value={project.name}>{project.name}</option>)}
-              </select>
-              <input id="project-name" value={projectName} onChange={(e) => { setProjectName(e.target.value); setCategoryName(''); }} maxLength={120} placeholder="Ou digite um novo projeto" disabled={isScraping} className="min-w-0 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50" />
-              <button type="button" onClick={() => void createProject()} disabled={isScraping || !projectName.trim()} className="rounded-xl border border-emerald-500/40 px-4 py-3 text-sm font-semibold text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40">Criar projeto</button>
+              />
+              <datalist id="project-options">
+                {projects.map((project) => <option key={project.id} value={project.name} />)}
+              </datalist>
+              <p className="text-xs text-zinc-500">Escolha um projeto existente ou digite outro nome. Projetos novos são cadastrados ao iniciar a coleta.</p>
             </div>
-            <p className="text-xs text-zinc-500">Projetos existentes são reutilizados; um nome novo é cadastrado automaticamente ao criar ou iniciar a coleta.</p>
-          </div>
 
-          <div className="space-y-3">
-            <label htmlFor="category-name" className="block text-base sm:text-lg font-semibold text-zinc-100">2. Categoria da pesquisa <span className="text-emerald-400">*</span></label>
-            <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_auto] gap-2">
-              <select
-                aria-label="Selecionar categoria do projeto"
-                value={categories.some((category) => category.project_id === projects.find((project) => project.name === projectName)?.id && category.name === categoryName) ? categoryName : ''}
-                onChange={(e) => { setCategoryName(e.target.value); if (e.target.value) setSegment(e.target.value); }}
-                disabled={isScraping || !projects.some((project) => project.name === projectName)}
+            <div className="min-w-0 space-y-3">
+              <label htmlFor="category-name" className="block text-base sm:text-lg font-semibold text-zinc-100">2. Categoria <span className="text-emerald-400">*</span></label>
+              <input
+                id="category-name"
+                list="category-options"
+                value={categoryName}
+                onChange={(e) => setCategoryName(e.target.value)}
+                maxLength={120}
+                placeholder={projectName.trim() ? "Selecione ou digite uma categoria" : "Informe primeiro o projeto"}
+                disabled={isScraping || !projectName.trim()}
+                autoComplete="off"
                 className="min-w-0 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50"
-              >
-                <option value="">Selecionar categoria existente</option>
-                {categories.filter((category) => category.project_id === projects.find((project) => project.name === projectName)?.id).map((category) => <option key={category.id} value={category.name}>{category.name}</option>)}
-              </select>
-              <input id="category-name" value={categoryName} onChange={(e) => { setCategoryName(e.target.value); if (!segment.trim()) setSegment(e.target.value); }} maxLength={120} placeholder="Ou digite uma nova categoria" disabled={isScraping} className="min-w-0 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50" />
-              <button type="button" onClick={() => void createCategory()} disabled={isScraping || !categoryName.trim() || !projectName.trim()} className="rounded-xl border border-emerald-500/40 px-4 py-3 text-sm font-semibold text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40">Criar categoria</button>
+              />
+              <datalist id="category-options">
+                {categories
+                  .filter((category) => category.project_id === projects.find((project) => project.name.trim().toLocaleLowerCase('pt-BR') === projectName.trim().toLocaleLowerCase('pt-BR'))?.id)
+                  .map((category) => <option key={category.id} value={category.name} />)}
+              </datalist>
+              <p className="text-xs text-zinc-500">As opções exibidas pertencem ao projeto selecionado; também é possível digitar uma nova categoria.</p>
+              {catalogMessage && <p role="status" aria-live="polite" className="text-sm text-amber-300">{catalogMessage}</p>}
             </div>
-            <p className="text-xs text-zinc-500">A categoria é salva separadamente da categoria extraída de cada ficha do Google Maps.</p>
-            {catalogMessage && <p role="status" aria-live="polite" className="text-sm text-amber-300">{catalogMessage}</p>}
           </div>
 
           {/* Seção 1: Segmento do Estabelecimento */}
