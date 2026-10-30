@@ -98,7 +98,7 @@ export const LogsScreen: React.FC = () => {
       log.job_id ? `Job: ${log.job_id}` : '',
       `ID: ${log.id}`,
       `Metadados: ${metadata}`,
-    ].filter(Boolean).join('\\n');
+    ].filter(Boolean).join('\n');
   };
 
   const copyText = async (text: string, id: string | null = null) => {
@@ -237,10 +237,10 @@ export const LogsScreen: React.FC = () => {
           <button onClick={toggleAllVisible} disabled={!logs.length} className="rounded-lg border border-zinc-700 px-3 py-2 text-xs font-semibold text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">
             {logs.length > 0 && logs.every((log) => selectedIds.includes(log.id)) ? 'Desmarcar exibidos' : 'Selecionar exibidos'}
           </button>
-          <button onClick={() => void copyText(visibleSelectedLogs.map(formatLogForCopy).join('\\n\\n'))} disabled={!visibleSelectedLogs.length} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-40">
+          <button onClick={() => void copyText(visibleSelectedLogs.map(formatLogForCopy).join('\n\n'))} disabled={!visibleSelectedLogs.length} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-40">
             <ClipboardCopy className="h-3.5 w-3.5" /> Copiar selecionados
           </button>
-          <button onClick={() => void copyText(logs.map(formatLogForCopy).join('\\n\\n'))} disabled={!logs.length} className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs font-semibold text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">
+          <button onClick={() => void copyText(logs.map(formatLogForCopy).join('\n\n'))} disabled={!logs.length} className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs font-semibold text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">
             <Copy className="h-3.5 w-3.5" /> Copiar exibidos
           </button>
         </div>
