@@ -529,6 +529,7 @@ paths:
     post:
       tags: [Provisioning]
       security:
+        - platformAdminBearer: []
         - provisioningToken: []
       summary: Emitir credencial individual de consumidor
       description: Somente infraestrutura autorizada. apiKey é retornada uma única vez; não exponha a resposta em logs.
@@ -596,6 +597,7 @@ paths:
     get:
       tags: [Provisioning]
       security:
+        - platformAdminBearer: []
         - provisioningToken: []
       summary: Listar metadados de credenciais
       description: Não retorna chaves em texto claro.
@@ -620,6 +622,7 @@ paths:
     delete:
       tags: [Provisioning]
       security:
+        - platformAdminBearer: []
         - provisioningToken: []
       summary: Revogar credencial ativa
       parameters:
@@ -654,6 +657,7 @@ paths:
     post:
       tags: [Provisioning]
       security:
+        - platformAdminBearer: []
         - provisioningToken: []
       summary: Rotacionar credencial ativa
       description: Revoga a chave anterior antes de criar a substituta. Se a criação falhar, a anterior permanece revogada.
@@ -709,11 +713,16 @@ components:
       scheme: bearer
       bearerFormat: API key
       description: Credencial individual de consumidor. Não é o token de provisionamento.
+    platformAdminBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: Session JWT
+      description: Sessão autenticada da plataforma; exige papel admin.
     provisioningToken:
       type: apiKey
       in: header
       name: X-MapScrape-Provisioning-Token
-      description: Segredo administrativo para infraestrutura autorizada; nunca usar no browser.
+      description: Segredo administrativo para automação server-to-server; nunca entregar a consumidores.
   parameters:
     Id:
       in: path
