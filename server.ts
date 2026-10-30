@@ -1040,17 +1040,33 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
 
       let detailPage: Page | null = null;
       try {
-        detailPage = await activeBrowser.newPage();
-        await detailPage.setUserAgent(
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        );
-        await detailPage.setViewport({ width: 1280, height: 900 });
-        await detailPage.setExtraHTTPHeaders({
-          'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-        });
-
-        await detailPage.goto(placeUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
-        await new Promise((resolve) => setTimeout(resolve, 1200));
+        let navigationError: any = null;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          try {
+            if (!activeBrowser?.isConnected()) activeBrowser = await connectScraperBrowser();
+            detailPage = await activeBrowser.newPage();
+            await detailPage.setUserAgent(
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            );
+            await detailPage.setViewport({ width: 1280, height: 900 });
+            await detailPage.setExtraHTTPHeaders({
+              'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+            });
+            await detailPage.goto(placeUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            navigationError = null;
+            break;
+          } catch (error) {
+            navigationError = error;
+            if (detailPage) await detailPage.close().catch(() => {});
+            detailPage = null;
+            if (attempt === 0) {
+              await activeBrowser?.close().catch(() => {});
+              activeBrowser = await connectScraperBrowser();
+            }
+          }
+        }
+        if (navigationError) throw navigationError;
+        await new Promise((resolve) => setTimeout(resolve, 900));
 
         const place = await extractPlaceDetails(detailPage, jobId, placeUrl);
 
