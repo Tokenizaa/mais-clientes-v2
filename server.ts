@@ -46,6 +46,7 @@ interface CategoryRecord {
   id: string;
   name: string;
   user_id: string;
+  project_id: string;
   created_at: string;
 }
 
@@ -513,10 +514,61 @@ class Store {
 
     const snapshot = JSON.parse(JSON.stringify(this.state)) as StoreState;
     this.pendingWrite = this.pendingWrite.catch(() => undefined).then(async () => {
-      const { error } = await this.supabase!
+      const client = this.supabase!;
+      const { error: stateError } = await client
         .from('app_state')
         .upsert({ id: 'main', state: snapshot, updated_at: new Date().toISOString() });
-      if (error) throw new Error(`Falha ao persistir dados no Supabase: ${error.message}`);
+      if (stateError) throw new Error(`Falha ao persistir dados no Supabase: ${stateError.message}`);
+
+      // Keep the relational catalog in sync with the compatibility snapshot.
+      const owners = new Map<string, UserProfile>();
+      for (const user of snapshot.users) owners.set(user.id, user);
+      const ownerIds = new Set([
+        ...snapshot.projects.map((item) => item.user_id),
+        ...snapshot.categories.map((item) => item.user_id),
+        ...snapshot.jobs.map((item) => item.user_id),
+      ]);
+      for (const id of ownerIds) {
+        if (!owners.has(id)) owners.set(id, {
+          id, email: `${id}@internal.mapscrape.invalid`, name: id,
+          passwordHash: '', role: 'user', createdAt: new Date().toISOString(),
+        });
+      }
+      const userRows = Array.from(owners.values()).map((user) => ({
+        id: user.id, email: user.email, name: user.name,
+        password_hash: user.passwordHash, role: user.role, created_at: user.createdAt,
+      }));
+      if (userRows.length) {
+        const { error } = await client.from('app_users').upsert(userRows, { onConflict: 'id' });
+        if (error) throw new Error(`Falha ao sincronizar usuários: ${error.message}`);
+      }
+      if (snapshot.projects.length) {
+        const { error } = await client.from('projects').upsert(snapshot.projects.map((item) => ({
+          id: item.id, name: item.name, user_id: item.user_id,
+          created_at: item.created_at, updated_at: item.updated_at ?? null,
+        })), { onConflict: 'id' });
+        if (error) throw new Error(`Falha ao sincronizar projetos: ${error.message}`);
+      }
+      if (snapshot.categories.length) {
+        const { error } = await client.from('categories').upsert(snapshot.categories.map((item) => ({
+          id: item.id, name: item.name, user_id: item.user_id,
+          project_id: item.project_id, created_at: item.created_at,
+        })), { onConflict: 'id' });
+        if (error) throw new Error(`Falha ao sincronizar categorias: ${error.message}`);
+      }
+      if (snapshot.jobs.length) {
+        const { error } = await client.from('scrape_jobs').upsert(snapshot.jobs.map((item) => ({
+          id: item.id, user_id: item.user_id, segment: item.segment,
+          project_name: item.project_name ?? null, project_id: item.project_id ?? null,
+          category_id: item.category_id ?? null, location: item.location,
+          limit_requested: item.limit_requested, status: item.status,
+          status_message: item.status_message, total_found: item.total_found,
+          total_collected: item.total_collected, total_duplicates: item.total_duplicates,
+          total_errors: item.total_errors, current_step: item.current_step ?? null,
+          created_at: item.created_at, completed_at: item.completed_at ?? null,
+        })), { onConflict: 'id' });
+        if (error) throw new Error(`Falha ao sincronizar raspagens: ${error.message}`);
+      }
     });
   }
 }
@@ -1107,47 +1159,42 @@ export async function createApp() {
       const numLimit = Math.max(1, Math.min(200, parseInt(limit, 10) || 20));
       const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
+      const state = store.getState();
+      const normalizedProjectName = String(projectName || `${segment} · ${location}`).trim();
+      let project = state.projects.find((item) =>
+        item.user_id === userId && item.name.toLocaleLowerCase('pt-BR') === normalizedProjectName.toLocaleLowerCase('pt-BR')
+      );
+      if (!project) {
+        project = {
+          id: `prj_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name: normalizedProjectName, user_id: userId, created_at: new Date().toISOString(),
+        };
+        state.projects.unshift(project);
+      }
+      const normalizedCategoryName = String(categoryName || segment).trim();
+      let category = state.categories.find((item) =>
+        item.user_id === userId && item.project_id === project!.id &&
+        item.name.toLocaleLowerCase('pt-BR') === normalizedCategoryName.toLocaleLowerCase('pt-BR')
+      );
+      if (!category) {
+        category = {
+          id: `cat_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name: normalizedCategoryName, user_id: userId, project_id: project.id,
+          created_at: new Date().toISOString(),
+        };
+        state.categories.unshift(category);
+      }
       const newJob: ScrapeJob = {
-        id: jobId,
-        user_id: userId,
-        segment: String(segment).trim(),
-        project_name: projectName ? String(projectName).trim() : undefined,
-        category_id: categoryName ? String(categoryName).trim() : undefined,
-        location: String(location).trim(),
-        limit_requested: numLimit,
+        id: jobId, user_id: userId, segment: String(segment).trim(),
+        project_name: project.name, project_id: project.id, category_id: category.id,
+        location: String(location).trim(), limit_requested: numLimit,
         status: 'running',
         status_message: `Iniciando coleta para "${segment}" em "${location}"...`,
-        total_found: 0,
-        total_collected: 0,
-        total_duplicates: 0,
-        total_errors: 0,
+        total_found: 0, total_collected: 0, total_duplicates: 0, total_errors: 0,
         current_step: 'Conectando ao mecanismo de busca...',
         created_at: new Date().toISOString(),
       };
-
-      const state = store.getState();
       state.jobs.unshift(newJob);
-
-      // If projectName provided and doesn't exist, auto create project
-      if (projectName && !state.projects.some((p) => p.name.toLowerCase() === projectName.toLowerCase())) {
-        state.projects.unshift({
-          id: `prj_${Date.now()}`,
-          name: projectName,
-          user_id: userId,
-          created_at: new Date().toISOString(),
-        });
-      }
-
-      // If categoryName provided and doesn't exist, auto create category
-      if (categoryName && !state.categories.some((c) => c.name.toLowerCase() === categoryName.toLowerCase())) {
-        state.categories.unshift({
-          id: `cat_${Date.now()}`,
-          name: categoryName,
-          user_id: userId,
-          created_at: new Date().toISOString(),
-        });
-      }
-
       store.persist();
 
       // Vercel must keep the request open while the serverless scrape runs.
@@ -1319,16 +1366,33 @@ export async function createApp() {
 
   app.post('/api/v1/categories', (req: Request, res: Response) => {
     try {
-      const { name } = req.body;
+      const { name, projectId, projectName } = req.body;
       if (!name || !String(name).trim()) {
         return res.status(400).json({ error: 'Nome da categoria é obrigatório.' });
       }
       const user = resolveUserFromRequest(req);
+      const userId = user ? user.id : 'usr_default';
       const state = store.getState();
+      let project = projectId
+        ? state.projects.find((item) => item.id === String(projectId) && item.user_id === userId)
+        : state.projects.find((item) => item.user_id === userId && item.name.toLocaleLowerCase('pt-BR') === String(projectName || '').trim().toLocaleLowerCase('pt-BR'));
+      if (!project && projectName && String(projectName).trim()) {
+        project = {
+          id: `prj_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name: String(projectName).trim(), user_id: userId, created_at: new Date().toISOString(),
+        };
+        state.projects.unshift(project);
+      }
+      if (!project) return res.status(400).json({ error: 'Selecione ou crie um projeto antes de cadastrar a categoria.' });
+      const normalizedName = String(name).trim();
+      const existing = state.categories.find((item) =>
+        item.user_id === userId && item.project_id === project!.id &&
+        item.name.toLocaleLowerCase('pt-BR') === normalizedName.toLocaleLowerCase('pt-BR')
+      );
+      if (existing) return res.json({ data: existing, category: existing, reused: true });
       const newCat: CategoryRecord = {
         id: `cat_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        name: String(name).trim(),
-        user_id: user ? user.id : 'usr_default',
+        name: normalizedName, user_id: userId, project_id: project.id,
         created_at: new Date().toISOString(),
       };
       state.categories.unshift(newCat);
