@@ -1,5 +1,5 @@
-import { Page } from 'puppeteer';
-import { PlaceRecord } from '../../shared/types.js';
+import type { Page } from 'puppeteer-core';
+import type { PlaceRecord } from '../../shared/types.js';
 import {
   cleanText, normalizeAddress, normalizePhone, normalizeWebsite, normalizeCategory,
   normalizeRating, normalizeReviewCount, normalizePriceRange, normalizeBusinessStatus,
