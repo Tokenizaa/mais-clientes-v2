@@ -506,6 +506,27 @@ class Store {
     return this.state;
   }
 
+  async deleteCategoryFromDatabase(categoryId: string): Promise<void> {
+    await this.flush();
+    if (!this.supabase) return;
+    const { error } = await this.supabase.from('categories').delete().eq('id', categoryId);
+    if (error) throw new Error(`Falha ao excluir categoria relacional: ${error.message}`);
+  }
+
+  async deleteProjectFromDatabase(projectId: string): Promise<void> {
+    await this.flush();
+    if (!this.supabase) return;
+    const { error: jobsError } = await this.supabase
+      .from('scrape_jobs')
+      .update({ project_id: null, category_id: null })
+      .eq('project_id', projectId);
+    if (jobsError) throw new Error(`Falha ao desvincular raspagens: ${jobsError.message}`);
+    const { error: categoriesError } = await this.supabase.from('categories').delete().eq('project_id', projectId);
+    if (categoriesError) throw new Error(`Falha ao excluir categorias do projeto: ${categoriesError.message}`);
+    const { error: projectError } = await this.supabase.from('projects').delete().eq('id', projectId);
+    if (projectError) throw new Error(`Falha ao excluir projeto relacional: ${projectError.message}`);
+  }
+
   persist(): void {
     if (!this.supabase) {
       this.save(this.state);
@@ -1434,6 +1455,7 @@ export async function createApp() {
       const [removed] = state.categories.splice(idx, 1);
       for (const job of state.jobs) if (job.category_id === removed.id) job.category_id = undefined;
       store.persist();
+      void store.deleteCategoryFromDatabase(removed.id);
       return res.json({ success: true });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -1502,10 +1524,23 @@ export async function createApp() {
   app.delete('/api/v1/projects/:id', (req: Request, res: Response) => {
     try {
       const state = store.getState();
-      const idx = state.projects.findIndex((p) => p.id === req.params.id);
+      const user = resolveUserFromRequest(req);
+      const userId = user ? user.id : 'usr_default';
+      const idx = state.projects.findIndex((p) => p.id === req.params.id && p.user_id === userId);
       if (idx === -1) return res.status(404).json({ error: 'Projeto não encontrado.' });
-      state.projects.splice(idx, 1);
+      const [removed] = state.projects.splice(idx, 1);
+      const removedCategoryIds = new Set(state.categories.filter((cat) => cat.project_id === removed.id).map((cat) => cat.id));
+      state.categories = state.categories.filter((cat) => cat.project_id !== removed.id);
+      for (const job of state.jobs) {
+        if (job.project_id === removed.id) {
+          job.project_id = undefined;
+          job.category_id = undefined;
+        } else if (job.category_id && removedCategoryIds.has(job.category_id)) {
+          job.category_id = undefined;
+        }
+      }
       store.persist();
+      void store.deleteProjectFromDatabase(removed.id);
       return res.json({ success: true });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
