@@ -105,13 +105,18 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
       setProjects(
         Array.isArray(projectData.data) ? projectData.data : projectData.projects ?? [],
       );
-      const rawCategories = Array.isArray(categoryData.data) ? categoryData.data : categoryData.categories ?? [];
+      // The API's `data` field contains saved categories linked to projects.
+      // `categories` is a separate legacy list of extracted Maps categories (strings),
+      // so it must not replace the project-linked catalog.
+      const rawCategories = Array.isArray(categoryData.data) ? categoryData.data : [];
       setCategories(
-        rawCategories.map((c: any, i: number) =>
-          typeof c === 'string'
-            ? { id: `cat_${i}_${c}`, name: c }
-            : { id: c?.id || `cat_${i}`, name: c?.name || '', project_id: c?.project_id || '' }
-        )
+        rawCategories
+          .filter((category: any) => category && typeof category === 'object' && category.name)
+          .map((category: any, i: number) => ({
+            id: String(category.id || `cat_${i}`),
+            name: String(category.name),
+            project_id: String(category.project_id || category.projectId || ''),
+          }))
       );
       setCatalogMessage('');
     }).catch((error) => {
@@ -119,61 +124,6 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     });
     return () => { active = false; };
   }, [apiReady]);
-
-  const createProject = async () => {
-    const name = projectName.trim();
-    if (!name) {
-      setCatalogMessage('Digite o nome do projeto antes de clicar em Criar projeto.');
-      return;
-    }
-    if (!apiReady) {
-      setCatalogMessage('Para salvar o projeto, conecte primeiro uma chave em “Conectar à API do MapScrape”, no início da página.');
-      return;
-    }
-    try {
-      const response = await accountFetch('/api/v1/projects', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-      const project = data.data ?? data.project;
-      setProjects((current) => current.some((item) => item.id === project.id) ? current : [...current, project].sort((a,b) => a.name.localeCompare(b.name, 'pt-BR')));
-      setProjectName(project.name);
-      setCatalogMessage(`Projeto “${project.name}” pronto para uso.`);
-    } catch (error) { setCatalogMessage(error instanceof Error ? error.message : 'Falha ao criar projeto.'); }
-  };
-
-  const createCategory = async () => {
-    const name = categoryName.trim();
-    if (!name) {
-      setCatalogMessage('Digite o nome da categoria antes de clicar em Criar categoria.');
-      return;
-    }
-    if (!projectName.trim()) {
-      setCatalogMessage('Selecione ou informe um projeto antes de criar a categoria.');
-      return;
-    }
-    if (!apiReady) {
-      setCatalogMessage('Para salvar a categoria, conecte primeiro uma chave em “Conectar à API do MapScrape”, no início da página.');
-      return;
-    }
-    try {
-      const response = await accountFetch('/api/v1/categories', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, projectName: projectName.trim() }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-      const category = data.data ?? data.category;
-      if (data.project?.id) {
-        setProjects((current) => current.some((item) => item.id === data.project.id) ? current : [...current, data.project].sort((a,b) => a.name.localeCompare(b.name, 'pt-BR')));
-      }
-      setCategories((current) => current.some((item) => item.id === category.id) ? current : [...current, category].sort((a,b) => a.name.localeCompare(b.name, 'pt-BR')));
-      setCategoryName(category.name);
-      if (!segment.trim()) setSegment(category.name);
-      setCatalogMessage(`Categoria “${category.name}” pronta para uso.`);
-    } catch (error) { setCatalogMessage(error instanceof Error ? error.message : 'Falha ao criar categoria.'); }
-  };
-
 
   useEffect(() => {
     if (isScraping && currentJob) {
@@ -212,6 +162,57 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
       parts.push(selectedUf);
     }
     return parts.join(', ');
+  };
+
+  const createProject = async () => {
+    const name = projectName.trim();
+    if (!name) return;
+    try {
+      const response = await accountFetch('/api/v1/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Não foi possível criar o projeto.');
+      const project = payload.data || payload.project;
+      if (project) {
+        setProjects((current) => [project, ...current.filter((item) => item.id !== project.id)]);
+        setProjectName(project.name);
+        setCatalogMessage('Projeto criado e selecionado.');
+      }
+    } catch (error) {
+      setCatalogMessage(error instanceof Error ? error.message : 'Falha ao criar projeto.');
+    }
+  };
+
+  const createCategory = async () => {
+    const name = categoryName.trim();
+    const project = projects.find((item) => item.name.trim().toLocaleLowerCase('pt-BR') === projectName.trim().toLocaleLowerCase('pt-BR'));
+    if (!name || !projectName.trim()) return;
+    try {
+      const response = await accountFetch('/api/v1/categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, projectId: project?.id, projectName: projectName.trim() }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Não foi possível criar a categoria.');
+      const category = payload.data || payload.category;
+      const resolvedProject = payload.project || project;
+      if (resolvedProject) {
+        setProjects((current) => [resolvedProject, ...current.filter((item) => item.id !== resolvedProject.id)]);
+        setProjectName(resolvedProject.name);
+      }
+      if (category) {
+        setCategories((current) => [category, ...current.filter((item) => item.id !== category.id)]);
+        setCategoryName(category.name);
+        setSegment(category.name);
+        setCatalogMessage('Categoria criada e selecionada.');
+      }
+    } catch (error) {
+      setCatalogMessage(error instanceof Error ? error.message : 'Falha ao criar categoria.');
+    }
   };
 
   const handleStart = async (e: React.FormEvent) => {
@@ -261,43 +262,45 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
       <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl shadow-xl shadow-black/40 p-6 sm:p-9 space-y-8 backdrop-blur-sm">
         <form onSubmit={handleStart} className="space-y-8">
           
-          <div className="space-y-3">
-            <label htmlFor="project-name" className="block text-base sm:text-lg font-semibold text-zinc-100">1. Projeto <span className="text-emerald-400">*</span></label>
-            <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_auto] gap-2">
-              <select
-                aria-label="Selecionar projeto existente"
-                value={projects.some((project) => project.name === projectName) ? projectName : ''}
-                onChange={(e) => { setProjectName(e.target.value); setCategoryName(''); }}
-                disabled={isScraping || projects.length === 0}
-                className="min-w-0 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50"
-              >
-                <option value="">Selecionar projeto existente</option>
-                {projects.map((project) => <option key={project.id} value={project.name}>{project.name}</option>)}
-              </select>
-              <input id="project-name" value={projectName} onChange={(e) => { setProjectName(e.target.value); setCategoryName(''); }} maxLength={120} placeholder="Ou digite um novo projeto" disabled={isScraping} className="min-w-0 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50" />
-              <button type="button" onClick={() => void createProject()} disabled={isScraping || !projectName.trim()} className="rounded-xl border border-emerald-500/40 px-4 py-3 text-sm font-semibold text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40">Criar projeto</button>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="min-w-0 space-y-3">
+              <label htmlFor="project-name" className="block text-base sm:text-lg font-semibold text-zinc-100">1. Projeto <span className="text-emerald-400">*</span></label>
+              <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_auto] gap-2">
+                <select
+                  aria-label="Selecionar projeto existente"
+                  value={projects.some((project) => project.name === projectName) ? projectName : ''}
+                  onChange={(e) => { setProjectName(e.target.value); setCategoryName(''); }}
+                  disabled={isScraping || projects.length === 0}
+                  className="min-w-0 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50"
+                >
+                  <option value="">Selecionar projeto existente</option>
+                  {projects.map((project) => <option key={project.id} value={project.name}>{project.name}</option>)}
+                </select>
+                <input id="project-name" value={projectName} onChange={(e) => { setProjectName(e.target.value); setCategoryName(''); }} maxLength={120} placeholder="Ou digite um novo projeto" disabled={isScraping} className="min-w-0 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50" />
+                <button type="button" onClick={() => void createProject()} disabled={isScraping || !projectName.trim()} className="rounded-xl border border-emerald-500/40 px-3 py-3 text-xs sm:text-sm font-semibold text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40">Criar projeto</button>
+              </div>
+              <p className="text-xs text-zinc-500">Projetos existentes são reutilizados; você também pode cadastrar um novo.</p>
             </div>
-            <p className="text-xs text-zinc-500">Projetos existentes são reutilizados; um nome novo é cadastrado automaticamente ao criar ou iniciar a coleta.</p>
-          </div>
 
-          <div className="space-y-3">
-            <label htmlFor="category-name" className="block text-base sm:text-lg font-semibold text-zinc-100">2. Categoria da pesquisa <span className="text-emerald-400">*</span></label>
-            <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_auto] gap-2">
-              <select
-                aria-label="Selecionar categoria do projeto"
-                value={categories.some((category) => category.project_id === projects.find((project) => project.name === projectName)?.id && category.name === categoryName) ? categoryName : ''}
-                onChange={(e) => { setCategoryName(e.target.value); if (e.target.value) setSegment(e.target.value); }}
-                disabled={isScraping || !projects.some((project) => project.name === projectName)}
-                className="min-w-0 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50"
-              >
-                <option value="">Selecionar categoria existente</option>
-                {categories.filter((category) => category.project_id === projects.find((project) => project.name === projectName)?.id).map((category) => <option key={category.id} value={category.name}>{category.name}</option>)}
-              </select>
-              <input id="category-name" value={categoryName} onChange={(e) => { setCategoryName(e.target.value); if (!segment.trim()) setSegment(e.target.value); }} maxLength={120} placeholder="Ou digite uma nova categoria" disabled={isScraping} className="min-w-0 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50" />
-              <button type="button" onClick={() => void createCategory()} disabled={isScraping || !categoryName.trim() || !projectName.trim()} className="rounded-xl border border-emerald-500/40 px-4 py-3 text-sm font-semibold text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40">Criar categoria</button>
+            <div className="min-w-0 space-y-3">
+              <label htmlFor="category-name" className="block text-base sm:text-lg font-semibold text-zinc-100">2. Categoria da pesquisa <span className="text-emerald-400">*</span></label>
+              <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_auto] gap-2">
+                <select
+                  aria-label="Selecionar categoria do projeto"
+                  value={categories.some((category) => category.project_id === projects.find((project) => project.name.trim().toLocaleLowerCase('pt-BR') === projectName.trim().toLocaleLowerCase('pt-BR'))?.id && category.name === categoryName) ? categoryName : ''}
+                  onChange={(e) => { setCategoryName(e.target.value); if (e.target.value) setSegment(e.target.value); }}
+                  disabled={isScraping || !projects.some((project) => project.name.trim().toLocaleLowerCase('pt-BR') === projectName.trim().toLocaleLowerCase('pt-BR'))}
+                  className="min-w-0 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50"
+                >
+                  <option value="">Selecionar categoria existente</option>
+                  {categories.filter((category) => category.project_id === projects.find((project) => project.name.trim().toLocaleLowerCase('pt-BR') === projectName.trim().toLocaleLowerCase('pt-BR'))?.id).map((category) => <option key={category.id} value={category.name}>{category.name}</option>)}
+                </select>
+                <input id="category-name" value={categoryName} onChange={(e) => { setCategoryName(e.target.value); if (!segment.trim()) setSegment(e.target.value); }} maxLength={120} placeholder="Ou digite uma nova categoria" disabled={isScraping || !projectName.trim()} className="min-w-0 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50" />
+                <button type="button" onClick={() => void createCategory()} disabled={isScraping || !categoryName.trim() || !projectName.trim()} className="rounded-xl border border-emerald-500/40 px-3 py-3 text-xs sm:text-sm font-semibold text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40">Criar categoria</button>
+              </div>
+              <p className="text-xs text-zinc-500">A categoria é vinculada ao projeto selecionado.</p>
+              {catalogMessage && <p role="status" aria-live="polite" className="text-sm text-amber-300">{catalogMessage}</p>}
             </div>
-            <p className="text-xs text-zinc-500">A categoria é salva separadamente da categoria extraída de cada ficha do Google Maps.</p>
-            {catalogMessage && <p role="status" aria-live="polite" className="text-sm text-amber-300">{catalogMessage}</p>}
           </div>
 
           {/* Seção 1: Segmento do Estabelecimento */}

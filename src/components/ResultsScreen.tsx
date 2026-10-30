@@ -81,6 +81,7 @@ const detailFields: { key: keyof PlaceRecord; label: string }[] = [
   { key: 'next_open_day', label: 'Próximo dia de abertura' },
   { key: 'next_open_time', label: 'Próximo horário de abertura' },
   { key: 'visible_photos_count', label: 'Total de fotos informado' },
+  { key: 'neighborhood', label: 'Bairro' },
   { key: 'postal_code', label: 'CEP / código postal' },
   { key: 'country', label: 'País' },
   { key: 'city', label: 'Cidade' },

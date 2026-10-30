@@ -13,6 +13,7 @@ import puppeteer from 'puppeteer-core';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Browser, Page } from 'puppeteer-core';
 import { extractPlaceDetails } from './src/server/scraper/extractor.ts';
+import { parseSearchLocationFallback } from './src/server/scraper/normalizer.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -690,7 +691,7 @@ class Store {
         }
         const rows = Array.from(uniquePlaces.values()).map((p) => ({
           id: p.id, job_id: p.job_id, name: p.name || '', category: p.category || '',
-          address: p.address || '', phone: p.phone || '', website: p.website || '',
+          address: p.address || '', neighborhood: p.neighborhood || null, phone: p.phone || '', website: p.website || '',
           rating: p.rating || '', review_count: p.review_count || '', price_range: p.price_range || '',
           opening_hours: p.opening_hours || '', business_status: p.business_status || '',
           latitude: p.latitude || '', longitude: p.longitude || '', maps_url: p.maps_url || '',
@@ -1070,14 +1071,33 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
 
         const place = await extractPlaceDetails(detailPage, jobId, placeUrl);
 
-        // Enrich city/state if missing from place components
-        if (!place.city && location.includes(',')) {
-          const parts = location.split(',');
-          place.city = parts[0].trim();
-          if (parts[1]) place.state = parts[1].trim();
-        } else if (!place.city) {
-          place.city = location;
+        // Search-area enrichment is allowed only for an unambiguous Brazilian
+        // city/state pattern. Never promote a lone neighborhood or search phrase to city.
+        const locationFallback = parseSearchLocationFallback(location);
+        let fieldStatus: Record<string, any> = {};
+        try {
+          fieldStatus = place.field_status ? JSON.parse(place.field_status) : {};
+        } catch {
+          fieldStatus = {};
         }
+        const enrichedAt = new Date().toISOString();
+        if (!place.city && locationFallback.city) {
+          place.city = locationFallback.city;
+          fieldStatus.city = {
+            status: 'enriched_from_search_location',
+            source: 'scrape_job.location',
+            observed_at: enrichedAt,
+          };
+        }
+        if (!place.state && locationFallback.state) {
+          place.state = locationFallback.state;
+          fieldStatus.state = {
+            status: 'enriched_from_search_location',
+            source: 'scrape_job.location',
+            observed_at: enrichedAt,
+          };
+        }
+        place.field_status = JSON.stringify(fieldStatus);
 
         // Save real place
         state.places.push(place);

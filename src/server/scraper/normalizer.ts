@@ -101,31 +101,68 @@ export interface AddressComponents {
   country: string;
   city: string;
   state: string;
+  neighborhood: string;
 }
 
-/** Parse only address components supported by explicit patterns in the displayed address. */
+const BRAZIL_STATES = new Set([
+  'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS',
+  'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC',
+  'SP', 'SE', 'TO',
+]);
+
+/** Parse address components only when the displayed address contains explicit evidence. */
 export function parseAddressComponents(raw: string | null | undefined): AddressComponents {
-  const address = normalizeAddress(raw);
+  const address = normalizeAddress(raw).replace(/\s+/g, ' ').trim();
   const postal_code =
     address.match(/\b\d{5}-\d{3}\b/)?.[0] ||
     address.match(/\b\d{5}\b/)?.[0] ||
     address.match(/\b[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2}\b/i)?.[0] ||
     '';
-  const stateMatch = address.match(/(?:-|,)\s*([A-Z]{2})(?=\s*(?:\d{5}(?:-\d{3})?|,|$))/);
-  const state = stateMatch?.[1] || '';
-  const countryMatch = address.match(/,\s*(Brazil|Brasil|United States|United Kingdom|Canada|Australia|Portugal|España|Spain|France|Deutschland|Germany|Italy|México|Mexico)\s*$/i);
+  const countryMatch = /,\s*(Brazil|Brasil|United States|United Kingdom|Canada|Australia|Portugal|España|Spain|France|Deutschland|Germany|Italy|México|Mexico)\s*$/i.exec(address);
   const country = countryMatch?.[1] || '';
+  const beforeCountry = countryMatch ? address.slice(0, countryMatch.index) : address;
+  const postalIndex = postal_code ? beforeCountry.lastIndexOf(postal_code) : -1;
+  const withoutPostal = postalIndex >= 0
+    ? beforeCountry.slice(0, postalIndex).replace(/[ ,\s-]+$/, '').trim()
+    : beforeCountry.trim();
+  const stateMatch = /(?:-|,)\s*([A-Z]{2})(?=\s*$)/.exec(withoutPostal);
+  const stateCandidate = stateMatch?.[1]?.toUpperCase() || '';
+  const state = BRAZIL_STATES.has(stateCandidate) ? stateCandidate : '';
   let city = '';
-  if (stateMatch && typeof stateMatch.index === 'number') {
-    const beforeState = address.slice(0, stateMatch.index).split(',').map((part) => part.trim()).filter(Boolean);
-    city = (beforeState[beforeState.length - 1] || '').split(/\s+-\s+/).pop()?.trim() || '';
-  } else if (country && address.split(',').length >= 2) {
-    const parts = address.split(',').map((part) => part.trim()).filter(Boolean);
-    city = parts[parts.length - 2] || '';
+  let neighborhood = '';
+  if (state && stateMatch) {
+    const prefix = withoutPostal.slice(0, stateMatch.index).replace(/[ ,\s-]+$/, '').trim();
+    const parts = prefix.split(',').map((part) => part.trim()).filter(Boolean);
+    city = parts[parts.length - 1] || '';
+    const areaSegment = parts[parts.length - 2] || '';
+    const areaSeparator = areaSegment.lastIndexOf(' - ');
+    if (areaSeparator >= 0) neighborhood = areaSegment.slice(areaSeparator + 3).trim();
+    else if (areaSegment && !/\d/.test(areaSegment)) neighborhood = areaSegment;
+  } else if (country && !state) {
+    const parts = withoutPostal.split(',').map((part) => part.trim()).filter(Boolean);
+    city = parts[parts.length - 1] || '';
   }
-  return { postal_code, country, city, state };
+  return { postal_code, country, city, state, neighborhood };
 }
 
+/**
+ * Parse a search-location string only when its structure makes city/state unambiguous.
+ * Accepted forms: City, UF; Neighborhood, City, UF; and City, UF, Brasil.
+ * A lone token or arbitrary multi-part phrase is never promoted to city/state.
+ */
+export function parseSearchLocationFallback(raw: string | null | undefined): { city: string; state: string } {
+  const parts = String(raw || '').split(',').map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2) return { city: '', state: '' };
+  const last = parts[parts.length - 1];
+  const penultimate = parts[parts.length - 2];
+  if (/^(Brasil|Brazil)$/i.test(last) && BRAZIL_STATES.has(penultimate.toUpperCase())) {
+    return { city: parts[parts.length - 3] || '', state: penultimate.toUpperCase() };
+  }
+  if (BRAZIL_STATES.has(last.toUpperCase())) {
+    return { city: penultimate, state: last.toUpperCase() };
+  }
+  return { city: '', state: '' };
+}
 /** Extract Google's stable place identifier when the URL actually contains one. */
 export function extractSourcePlaceId(url: string | null | undefined): string {
   const value = String(url || '');
@@ -135,19 +172,21 @@ export function extractSourcePlaceId(url: string | null | undefined): string {
 
 export function extractCoordinates(url: string | null | undefined): { latitude: string; longitude: string } {
   if (!url) return { latitude: '', longitude: '' };
-  
-  // Format 1: !3d-23.5634722!4d-46.6845054
+  const isValidPair = (latitude: string, longitude: string): boolean => {
+    const lat = Number(latitude);
+    const lng = Number(longitude);
+    return Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+  };
+  // Google Maps place URLs commonly expose coordinates as !3dLAT!4dLNG.
   const match3d = url.match(/!3d(-?\d+(?:\.\d+)?)/);
   const match4d = url.match(/!4d(-?\d+(?:\.\d+)?)/);
-  if (match3d && match4d) {
+  if (match3d && match4d && isValidPair(match3d[1], match4d[1])) {
     return { latitude: match3d[1], longitude: match4d[1] };
   }
-
-  // Format 2: @-23.5634722,-46.6845054
+  // Search/map URLs may instead expose the viewport center as @LAT,LNG.
   const matchAt = url.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
-  if (matchAt) {
+  if (matchAt && isValidPair(matchAt[1], matchAt[2])) {
     return { latitude: matchAt[1], longitude: matchAt[2] };
   }
-
   return { latitude: '', longitude: '' };
 }
