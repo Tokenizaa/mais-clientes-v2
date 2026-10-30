@@ -628,7 +628,14 @@ class Store {
       // Keep relational places synchronized with app_state; without this, the UI
       // showed leads from JSON while public.places stayed empty.
       if (snapshot.places.length) {
-        const rows = snapshot.places.map((p) => ({
+        // source_url has a unique index; de-duplicate the snapshot before upsert
+        // so one duplicate result cannot abort persistence of every lead.
+        const uniquePlaces = new Map<string, PlaceRecord>();
+        for (const place of snapshot.places) {
+          const key = (place.source_url || place.maps_url || place.id || '').trim();
+          if (!uniquePlaces.has(key)) uniquePlaces.set(key, place);
+        }
+        const rows = Array.from(uniquePlaces.values()).map((p) => ({
           id: p.id, job_id: p.job_id, name: p.name || '', category: p.category || '',
           address: p.address || '', phone: p.phone || '', website: p.website || '',
           rating: p.rating || '', review_count: p.review_count || '', price_range: p.price_range || '',
