@@ -691,7 +691,7 @@ class Store {
         }
         const rows = Array.from(uniquePlaces.values()).map((p) => ({
           id: p.id, job_id: p.job_id, name: p.name || '', category: p.category || '',
-          address: p.address || '', phone: p.phone || '', website: p.website || '',
+          address: p.address || '', neighborhood: p.neighborhood || null, phone: p.phone || '', website: p.website || '',
           rating: p.rating || '', review_count: p.review_count || '', price_range: p.price_range || '',
           opening_hours: p.opening_hours || '', business_status: p.business_status || '',
           latitude: p.latitude || '', longitude: p.longitude || '', maps_url: p.maps_url || '',
