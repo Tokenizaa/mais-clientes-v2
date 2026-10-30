@@ -164,6 +164,57 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     return parts.join(', ');
   };
 
+  const createProject = async () => {
+    const name = projectName.trim();
+    if (!name) return;
+    try {
+      const response = await accountFetch('/api/v1/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Não foi possível criar o projeto.');
+      const project = payload.data || payload.project;
+      if (project) {
+        setProjects((current) => [project, ...current.filter((item) => item.id !== project.id)]);
+        setProjectName(project.name);
+        setCatalogMessage('Projeto criado e selecionado.');
+      }
+    } catch (error) {
+      setCatalogMessage(error instanceof Error ? error.message : 'Falha ao criar projeto.');
+    }
+  };
+
+  const createCategory = async () => {
+    const name = categoryName.trim();
+    const project = projects.find((item) => item.name.trim().toLocaleLowerCase('pt-BR') === projectName.trim().toLocaleLowerCase('pt-BR'));
+    if (!name || !projectName.trim()) return;
+    try {
+      const response = await accountFetch('/api/v1/categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, projectId: project?.id, projectName: projectName.trim() }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Não foi possível criar a categoria.');
+      const category = payload.data || payload.category;
+      const resolvedProject = payload.project || project;
+      if (resolvedProject) {
+        setProjects((current) => [resolvedProject, ...current.filter((item) => item.id !== resolvedProject.id)]);
+        setProjectName(resolvedProject.name);
+      }
+      if (category) {
+        setCategories((current) => [category, ...current.filter((item) => item.id !== category.id)]);
+        setCategoryName(category.name);
+        setSegment(category.name);
+        setCatalogMessage('Categoria criada e selecionada.');
+      }
+    } catch (error) {
+      setCatalogMessage(error instanceof Error ? error.message : 'Falha ao criar categoria.');
+    }
+  };
+
   const handleStart = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!segment.trim()) {
@@ -228,7 +279,10 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
               <datalist id="project-options">
                 {projects.map((project) => <option key={project.id} value={project.name} />)}
               </datalist>
-              <p className="text-xs text-zinc-500">Escolha um projeto existente ou digite outro nome. Projetos novos são cadastrados ao iniciar a coleta.</p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-zinc-500">Escolha um projeto existente ou digite outro nome.</p>
+                <button type="button" onClick={() => void createProject()} disabled={isScraping || !projectName.trim()} className="rounded-lg border border-emerald-500/40 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40">+ Criar projeto</button>
+              </div>
             </div>
 
             <div className="min-w-0 space-y-3">
@@ -249,7 +303,10 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                   .filter((category) => category.project_id === projects.find((project) => project.name.trim().toLocaleLowerCase('pt-BR') === projectName.trim().toLocaleLowerCase('pt-BR'))?.id)
                   .map((category) => <option key={category.id} value={category.name} />)}
               </datalist>
-              <p className="text-xs text-zinc-500">As opções exibidas pertencem ao projeto selecionado; também é possível digitar uma nova categoria.</p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-zinc-500">As opções exibidas pertencem ao projeto selecionado.</p>
+                <button type="button" onClick={() => void createCategory()} disabled={isScraping || !categoryName.trim() || !projectName.trim()} className="rounded-lg border border-emerald-500/40 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40">+ Criar categoria</button>
+              </div>
               {catalogMessage && <p role="status" aria-live="polite" className="text-sm text-amber-300">{catalogMessage}</p>}
             </div>
           </div>
