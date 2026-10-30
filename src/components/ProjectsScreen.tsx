@@ -28,7 +28,7 @@ async function accountFetch(input: RequestInfo | URL, init: RequestInit = {}): P
 }
 
 export type PersistedProject = { id: string; name: string; created_at: string; updated_at?: string };
-export type PersistedCategory = { id: string; name: string; created_at?: string };
+export type PersistedCategory = { id: string; name: string; project_id: string; created_at?: string };
 
 interface Props {
   jobs: ScrapeJob[];
@@ -41,6 +41,7 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
   const [query, setQuery] = useState('');
   const [newProjectName, setNewProjectName] = useState('');
   const [newCategoryName, setNewCategoryName] = useState('');
+  const [categoryProjectId, setCategoryProjectId] = useState('');
   const [catalog, setCatalog] = useState<PersistedProject[]>([]);
   const [categories, setCategories] = useState<PersistedCategory[]>([]);
   const [isSavingCategory, setIsSavingCategory] = useState(false);
@@ -74,7 +75,7 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
         rawCategories.map((c: any, i: number) =>
           typeof c === 'string'
             ? { id: `cat_${i}_${c}`, name: c, created_at: new Date().toISOString() }
-            : { id: c?.id || `cat_${i}`, name: c?.name || '', created_at: c?.created_at || new Date().toISOString() }
+            : { id: c?.id || `cat_${i}`, name: c?.name || '', project_id: c?.project_id || '', created_at: c?.created_at || new Date().toISOString() }
         )
       );
     } catch (error) {
@@ -99,7 +100,7 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
       const response = await accountFetch('/api/v1/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, projectId: categoryProjectId }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
@@ -169,7 +170,7 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
   const createCategory = async (event: React.FormEvent) => {
     event.preventDefault();
     const name = newCategoryName.trim();
-    if (!name || !apiReady || isSavingCategory) return;
+    if (!name || !categoryProjectId || !apiReady || isSavingCategory) return;
     setIsSavingCategory(true);
     setMessage(null);
     try {
@@ -374,6 +375,15 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
           </div>
 
           <form onSubmit={(e) => void createCategory(e)} className="flex flex-col gap-2 sm:flex-row">
+            <select
+              value={categoryProjectId}
+              onChange={(e) => setCategoryProjectId(e.target.value)}
+              aria-label="Projeto da categoria"
+              className="min-w-0 rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-emerald-500"
+            >
+              <option value="">Selecione o projeto</option>
+              {catalog.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+            </select>
             <input
               value={newCategoryName}
               onChange={(e) => setNewCategoryName(e.target.value)}
@@ -384,7 +394,7 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
             />
             <button
               type="submit"
-              disabled={!apiReady || !newCategoryName.trim() || isSavingCategory}
+              disabled={!apiReady || !categoryProjectId || !newCategoryName.trim() || isSavingCategory}
               className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-emerald-500/40 hover:bg-emerald-500/10 px-4 py-2.5 text-sm font-semibold text-emerald-300 disabled:opacity-40 transition-colors"
             >
               <Plus className="h-4 w-4" />
