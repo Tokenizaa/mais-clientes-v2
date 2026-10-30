@@ -1415,7 +1415,7 @@ export async function createApp() {
         item.user_id === userId && item.project_id === project!.id &&
         item.name.toLocaleLowerCase('pt-BR') === normalizedName.toLocaleLowerCase('pt-BR')
       );
-      if (existing) return res.json({ data: existing, category: existing, reused: true });
+      if (existing) return res.json({ data: existing, category: existing, project, reused: true });
       const newCat: CategoryRecord = {
         id: `cat_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
         name: normalizedName, user_id: userId, project_id: project.id,
@@ -1423,7 +1423,7 @@ export async function createApp() {
       };
       state.categories.unshift(newCat);
       store.persist();
-      return res.status(201).json({ data: newCat, category: newCat });
+      return res.status(201).json({ data: newCat, category: newCat, project });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
