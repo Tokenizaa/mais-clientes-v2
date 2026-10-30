@@ -1172,6 +1172,28 @@ export async function createApp() {
     }
   });
 
+  // Public liveness/readiness endpoint. Store initialization fails fast when Supabase is unavailable.
+  app.get('/api/v1/health', async (_req: Request, res: Response) => {
+    try {
+      await store.flush();
+      return res.setHeader('Cache-Control', 'no-store').status(200).json({
+        status: 'ok',
+        service: 'mapscrape-api',
+        apiVersion: 'v1',
+        database: 'connected',
+        timestamp: new Date().toISOString(),
+      });
+    } catch {
+      return res.status(503).json({
+        status: 'degraded',
+        service: 'mapscrape-api',
+        apiVersion: 'v1',
+        database: 'unavailable',
+        timestamp: new Date().toISOString(),
+      });
+    }
+  });
+
   // Protect all application endpoints. Auth and registration remain public.
   app.use('/api/v1', (req: Request, res: Response, next: NextFunction) => {
     const isProvisioningRoute = req.path.startsWith('/provisioning/credentials');
