@@ -100,7 +100,7 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
       const response = await accountFetch('/api/v1/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, projectId: categoryProjectId }),
+        body: JSON.stringify({ name }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
