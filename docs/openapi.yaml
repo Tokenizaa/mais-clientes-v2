@@ -9,9 +9,9 @@ info:
     todos os dados em cada coleta.
   contact:
     name: MapScrape API documentation
-    url: https://mapscrape-v2.vercel.app/docs/
+    url: https://mais-clientes-v2.vercel.app/docs/
 servers:
-  - url: https://mapscrape-v2.vercel.app
+  - url: https://mais-clientes-v2.vercel.app
     description: Produção atual
 security:
   - bearerAuth: []
