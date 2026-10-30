@@ -250,20 +250,38 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           
           <div className="space-y-3">
             <label htmlFor="project-name" className="block text-base sm:text-lg font-semibold text-zinc-100">1. Projeto <span className="text-emerald-400">*</span></label>
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <input id="project-name" list="mapscrape-projects" value={projectName} onChange={(e) => setProjectName(e.target.value)} maxLength={120} placeholder="Selecione ou digite um nome de projeto" className="min-w-0 flex-1 rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm sm:text-base text-zinc-100 outline-none focus:border-emerald-500" />
-              <datalist id="mapscrape-projects">{projects.map((project) => <option key={project.id} value={project.name} />)}</datalist>
-              <button type="button" onClick={() => void createProject()} className="rounded-xl border border-emerald-500/40 px-4 py-3 text-sm font-semibold text-emerald-300 disabled:opacity-40">Criar projeto</button>
+            <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_auto] gap-2">
+              <select
+                aria-label="Selecionar projeto existente"
+                value={projects.some((project) => project.name === projectName) ? projectName : ''}
+                onChange={(e) => { setProjectName(e.target.value); setCategoryName(''); }}
+                disabled={isScraping || projects.length === 0}
+                className="min-w-0 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50"
+              >
+                <option value="">Selecionar projeto existente</option>
+                {projects.map((project) => <option key={project.id} value={project.name}>{project.name}</option>)}
+              </select>
+              <input id="project-name" value={projectName} onChange={(e) => { setProjectName(e.target.value); setCategoryName(''); }} maxLength={120} placeholder="Ou digite um novo projeto" disabled={isScraping} className="min-w-0 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50" />
+              <button type="button" onClick={() => void createProject()} disabled={isScraping || !projectName.trim()} className="rounded-xl border border-emerald-500/40 px-4 py-3 text-sm font-semibold text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40">Criar projeto</button>
             </div>
             <p className="text-xs text-zinc-500">Projetos existentes são reutilizados; um nome novo é cadastrado automaticamente ao criar ou iniciar a coleta.</p>
           </div>
 
           <div className="space-y-3">
             <label htmlFor="category-name" className="block text-base sm:text-lg font-semibold text-zinc-100">2. Categoria da pesquisa <span className="text-emerald-400">*</span></label>
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <input id="category-name" list="mapscrape-categories" value={categoryName} onChange={(e) => { setCategoryName(e.target.value); if (!segment.trim()) setSegment(e.target.value); }} maxLength={120} placeholder="Selecione ou digite uma categoria" className="min-w-0 flex-1 rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm sm:text-base text-zinc-100 outline-none focus:border-emerald-500" />
-              <datalist id="mapscrape-categories">{categories.filter((category) => category.project_id === projects.find((project) => project.name.toLocaleLowerCase('pt-BR') === projectName.trim().toLocaleLowerCase('pt-BR'))?.id).map((category) => <option key={category.id} value={category.name} />)}</datalist>
-              <button type="button" onClick={() => void createCategory()} className="rounded-xl border border-emerald-500/40 px-4 py-3 text-sm font-semibold text-emerald-300 disabled:opacity-40">Criar categoria</button>
+            <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_auto] gap-2">
+              <select
+                aria-label="Selecionar categoria do projeto"
+                value={categories.some((category) => category.project_id === projects.find((project) => project.name === projectName)?.id && category.name === categoryName) ? categoryName : ''}
+                onChange={(e) => { setCategoryName(e.target.value); if (e.target.value) setSegment(e.target.value); }}
+                disabled={isScraping || !projects.some((project) => project.name === projectName)}
+                className="min-w-0 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50"
+              >
+                <option value="">Selecionar categoria existente</option>
+                {categories.filter((category) => category.project_id === projects.find((project) => project.name === projectName)?.id).map((category) => <option key={category.id} value={category.name}>{category.name}</option>)}
+              </select>
+              <input id="category-name" value={categoryName} onChange={(e) => { setCategoryName(e.target.value); if (!segment.trim()) setSegment(e.target.value); }} maxLength={120} placeholder="Ou digite uma nova categoria" disabled={isScraping} className="min-w-0 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50" />
+              <button type="button" onClick={() => void createCategory()} disabled={isScraping || !categoryName.trim() || !projectName.trim()} className="rounded-xl border border-emerald-500/40 px-4 py-3 text-sm font-semibold text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40">Criar categoria</button>
             </div>
             <p className="text-xs text-zinc-500">A categoria é salva separadamente da categoria extraída de cada ficha do Google Maps.</p>
             {catalogMessage && <p role="status" aria-live="polite" className="text-sm text-amber-300">{catalogMessage}</p>}
@@ -595,27 +613,47 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
 
           {/* Progress Bar & Percentage */}
           <div>
-            <div className="flex justify-between items-baseline text-sm sm:text-base text-zinc-400 mb-2 font-medium">
-              <span className="truncate pr-4 text-zinc-200 font-medium">
-                {currentJob.current_step || 'Aguardando inicialização do navegador...'}
-              </span>
-              <span className="font-mono text-xl font-bold text-emerald-400 shrink-0 tabular-nums">
-                {calculateProgressPercent()}%
+            <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2 mb-3">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 mb-1">Etapa atual</p>
+                <p className="truncate text-sm sm:text-base text-zinc-100 font-medium">
+                  {currentJob.current_step || 'Aguardando inicialização do navegador...'}
+                </p>
+              </div>
+              <span className="font-mono text-2xl font-bold text-emerald-400 shrink-0 tabular-nums">
+                {calculateProgressPercent()}<span className="text-sm text-zinc-500">%</span>
               </span>
             </div>
-            <div className="w-full bg-zinc-950 h-3 rounded-full overflow-hidden border border-zinc-800">
+            <div
+              role="progressbar"
+              aria-label="Progresso da coleta"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={calculateProgressPercent()}
+              className="relative w-full h-4 rounded-full overflow-hidden border border-zinc-800 bg-zinc-950 shadow-inner"
+            >
               <div
-                className={`h-full transition-all duration-300 ${
+                className={`relative h-full rounded-full transition-[width] duration-700 ease-out ${
                   currentJob.status === 'failed'
-                    ? 'bg-rose-500'
+                    ? 'bg-gradient-to-r from-rose-700 to-rose-400'
                     : currentJob.status === 'partial'
-                    ? 'bg-amber-500'
+                    ? 'bg-gradient-to-r from-amber-700 to-amber-400'
                     : currentJob.status === 'stopped'
-                    ? 'bg-zinc-600'
-                    : 'bg-emerald-500'
+                    ? 'bg-gradient-to-r from-zinc-700 to-zinc-500'
+                    : 'bg-gradient-to-r from-emerald-700 via-emerald-500 to-teal-300'
                 }`}
                 style={{ width: `${calculateProgressPercent()}%` }}
-              />
+              >
+                {currentJob.status === 'running' && (
+                  <span className="absolute inset-0 overflow-hidden rounded-full">
+                    <span className="absolute inset-y-0 w-1/3 -translate-x-full animate-[progress-shimmer_1.8s_ease-in-out_infinite] bg-gradient-to-r from-transparent via-white/35 to-transparent" />
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="flex justify-between mt-2 text-[11px] text-zinc-500">
+              <span>{currentJob.total_collected.toLocaleString('pt-BR')} coletados</span>
+              <span>Meta: {(currentJob.limit_requested || 20).toLocaleString('pt-BR')}</span>
             </div>
           </div>
 
