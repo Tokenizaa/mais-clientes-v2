@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import { PlaceRecord, ScrapeJob, EXPORTABLE_FIELDS } from './src/shared/types';
 import { BRAZILIAN_STATES, POPULAR_CATEGORIES } from './src/shared/brazilLocations';
 import puppeteer from 'puppeteer-core';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Browser, Page } from 'puppeteer-core';
 import { extractPlaceDetails } from './src/server/scraper/extractor.ts';
 
@@ -17,7 +18,7 @@ const __dirname = path.dirname(__filename);
 const DATA_DIR = path.resolve(__dirname, '.data');
 const STORE_FILE = path.join(DATA_DIR, 'mapscrape_store.json');
 
-if (!fs.existsSync(DATA_DIR)) {
+if (process.env.VERCEL !== '1' && !fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
@@ -423,9 +424,43 @@ function getInitialStore(): StoreState {
 
 class Store {
   private state: StoreState;
+  private supabase: SupabaseClient | null = null;
+  private pendingWrite: Promise<void> = Promise.resolve();
 
   constructor() {
     this.state = this.load();
+  }
+
+  async initialize(): Promise<void> {
+    const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY;
+    if (!url || !key) {
+      if (process.env.VERCEL === '1' || process.env.NODE_ENV === 'production') {
+        throw new Error('Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY na Vercel.');
+      }
+      return;
+    }
+
+    this.supabase = createClient(url, key, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const { data, error } = await this.supabase
+      .from('app_state')
+      .select('state')
+      .eq('id', 'main')
+      .maybeSingle();
+    if (error) throw new Error(`Falha ao carregar dados do Supabase: ${error.message}`);
+
+    if (data?.state && typeof data.state === 'object') {
+      this.state = { ...getInitialStore(), ...(data.state as StoreState) };
+    } else {
+      this.persist();
+      await this.flush();
+    }
+  }
+
+  async flush(): Promise<void> {
+    await this.pendingWrite;
   }
 
   private load(): StoreState {
@@ -458,7 +493,18 @@ class Store {
   }
 
   persist(): void {
-    this.save(this.state);
+    if (!this.supabase) {
+      this.save(this.state);
+      return;
+    }
+
+    const snapshot = JSON.parse(JSON.stringify(this.state)) as StoreState;
+    this.pendingWrite = this.pendingWrite.then(async () => {
+      const { error } = await this.supabase!
+        .from('app_state')
+        .upsert({ id: 'main', state: snapshot, updated_at: new Date().toISOString() });
+      if (error) throw new Error(`Falha ao persistir dados no Supabase: ${error.message}`);
+    });
   }
 }
 
@@ -893,9 +939,25 @@ function buildCsvString(places: PlaceRecord[], fields: (keyof PlaceRecord)[]): s
   return '\uFEFF' + [headerRow, ...rows].join('\r\n');
 }
 
-async function startServer() {
+export async function createApp() {
+  await store.initialize();
   const app = express();
-  const PORT = 3000;
+
+  // Flush queued database writes before sending any API response.
+  app.use((_req, res, next) => {
+    const originalEnd = res.end.bind(res);
+    let ending = false;
+    (res as any).end = (...args: any[]) => {
+      if (ending) return res;
+      ending = true;
+      void store.flush().then(() => originalEnd(...args)).catch((error) => {
+        console.error('[Store] Supabase persistence failed:', error);
+        originalEnd(...args);
+      });
+      return res;
+    };
+    next();
+  });
 
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -1651,15 +1713,5 @@ async function startServer() {
     app.use(vite.middlewares);
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n============================================================`);
-    console.log(`[MapScrape Pro] Servidor Full-Stack rodando na porta ${PORT}`);
-    console.log(`URL Local: http://localhost:${PORT}`);
-    console.log(`============================================================\n`);
-  });
+  return app;
 }
-
-startServer().catch((err) => {
-  console.error('[MapScrape Pro] Falha crítica ao iniciar o servidor:', err);
-  process.exit(1);
-});
