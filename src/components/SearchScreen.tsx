@@ -51,7 +51,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   const [projectName, setProjectName] = useState(initialProjectName || '');
   const [categoryName, setCategoryName] = useState(initialCategoryName || '');
   const [projects, setProjects] = useState<Array<{id:string;name:string}>>([]);
-  const [categories, setCategories] = useState<Array<{id:string;name:string}>>([]);
+  const [categories, setCategories] = useState<Array<{id:string;name:string;project_id?:string}>>([]);
   const [catalogMessage, setCatalogMessage] = useState('');
   const [locationMode, setLocationMode] = useState<'brazil' | 'custom'>('brazil');
 
@@ -128,7 +128,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     }
     try {
       const response = await accountFetch('/api/v1/projects', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, projectName: projectName.trim() }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
