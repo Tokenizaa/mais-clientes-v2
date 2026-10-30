@@ -674,7 +674,11 @@ class Store {
             ...row,
             id: existingIds.get(row.source_url as string) || row.id,
           }));
-          const { error } = await client.from('places').upsert(sourceRows, { onConflict: 'source_url' });
+          // The database enforces source_url with a partial unique index
+          // (source_url IS NOT NULL AND source_url <> ''). PostgREST cannot infer
+          // that partial index from onConflict:'source_url'. We already resolved
+          // existing IDs above, so upsert by the primary key instead.
+          const { error } = await client.from('places').upsert(sourceRows, { onConflict: 'id' });
           if (error) throw new Error('Falha ao sincronizar estabelecimentos por URL: ' + error.message);
         }
         if (rowsWithoutSource.length) {
