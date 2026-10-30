@@ -956,7 +956,10 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
             .map((a) => (a as HTMLAnchorElement)?.href)
             .filter((href): href is string => Boolean(href) && href.includes('/maps/place/'))
         )
-        .catch(() => []);
+        .catch((error) => {
+          console.warn('[Scraper] Falha ao ler links das fichas no Google Maps:', error?.message || error);
+          return [];
+        });
 
       for (const url of links) placeUrls.add(url);
 
