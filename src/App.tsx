@@ -377,6 +377,10 @@ export default function App() {
         return;
       }
 
+      setPlaces([]);
+      setTotalPlaces(0);
+      setCurrentPage(1);
+      setSelectedPlaceIds(new Set());
       setIsScraping(true);
       setSelectedJobId(jobId);
       subscribeToJobStream(jobId);
@@ -584,6 +588,8 @@ export default function App() {
               onGoToResults={() => setCurrentTab('results')}
               initialProjectName={preselectedProject}
               initialCategoryName={preselectedCategory}
+              places={places}
+              totalPlaces={totalPlaces}
             />
           )}
 
