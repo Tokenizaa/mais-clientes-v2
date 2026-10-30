@@ -160,6 +160,9 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
       const category = data.data ?? data.category;
+      if (data.project?.id) {
+        setProjects((current) => current.some((item) => item.id === data.project.id) ? current : [...current, data.project].sort((a,b) => a.name.localeCompare(b.name, 'pt-BR')));
+      }
       setCategories((current) => current.some((item) => item.id === category.id) ? current : [...current, category].sort((a,b) => a.name.localeCompare(b.name, 'pt-BR')));
       setCategoryName(category.name);
       if (!segment.trim()) setSegment(category.name);
