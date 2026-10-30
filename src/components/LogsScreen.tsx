@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Download, RefreshCw, Search, AlertCircle, AlertTriangle, Info, Bug, ChevronDown, ChevronUp } from 'lucide-react';
+import { Download, RefreshCw, Search, AlertCircle, AlertTriangle, Info, Bug, ChevronDown, ChevronUp, ClipboardCopy, Check, Copy } from 'lucide-react';
 
 type AuditLog = {
   id: string;
@@ -30,6 +30,9 @@ export const LogsScreen: React.FC = () => {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copyFeedback, setCopyFeedback] = useState('');
 
   const loadLogs = useCallback(async () => {
     setLoading(true);
@@ -81,6 +84,46 @@ export const LogsScreen: React.FC = () => {
     } catch (err: any) {
       setError(err?.message || 'Falha ao exportar logs.');
     }
+  };
+
+  const formatLogForCopy = (log: AuditLog) => {
+    let metadata = log.metadata || '{}';
+    try { metadata = JSON.stringify(JSON.parse(metadata), null, 2); } catch {}
+    return [
+      `Data: ${formatDate(log.created_at)}`,
+      `Nível: ${levelLabels[log.level] || log.level}`,
+      `Categoria: ${log.category}`,
+      `Evento: ${log.event}`,
+      `Mensagem: ${log.message}`,
+      log.job_id ? `Job: ${log.job_id}` : '',
+      `ID: ${log.id}`,
+      `Metadados: ${metadata}`,
+    ].filter(Boolean).join('\\n');
+  };
+
+  const copyText = async (text: string, id: string | null = null) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(id);
+      setCopyFeedback(id ? 'Log copiado.' : 'Logs copiados.');
+      window.setTimeout(() => {
+        setCopiedId((current) => current === id ? null : current);
+        setCopyFeedback('');
+      }, 1800);
+    } catch {
+      setError('Não foi possível copiar. Verifique a permissão da área de transferência do navegador.');
+    }
+  };
+
+  const visibleSelectedLogs = logs.filter((log) => selectedIds.includes(log.id));
+  const toggleSelected = (id: string) => {
+    setSelectedIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  };
+  const toggleAllVisible = () => {
+    const allVisibleSelected = logs.length > 0 && logs.every((log) => selectedIds.includes(log.id));
+    setSelectedIds((current) => allVisibleSelected
+      ? current.filter((id) => !logs.some((log) => log.id === id))
+      : Array.from(new Set([...current, ...logs.map((log) => log.id)])));
   };
 
   const formatDate = (value: string) => {
@@ -183,9 +226,24 @@ export const LogsScreen: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex items-center justify-between text-xs text-zinc-400 px-1 font-mono">
-        <span>{total.toLocaleString('pt-BR')} eventos encontrados</span>
-        <span>Exibindo até 100 mais recentes</span>
+      <div className="flex flex-col gap-3 rounded-xl border border-zinc-800 bg-zinc-900/70 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-400 font-mono">
+          <span>{total.toLocaleString('pt-BR')} eventos encontrados</span>
+          <span>Exibindo até 100 mais recentes</span>
+          <span>{visibleSelectedLogs.length} selecionado(s)</span>
+          {copyFeedback && <span className="text-emerald-400">{copyFeedback}</span>}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={toggleAllVisible} disabled={!logs.length} className="rounded-lg border border-zinc-700 px-3 py-2 text-xs font-semibold text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">
+            {logs.length > 0 && logs.every((log) => selectedIds.includes(log.id)) ? 'Desmarcar exibidos' : 'Selecionar exibidos'}
+          </button>
+          <button onClick={() => void copyText(visibleSelectedLogs.map(formatLogForCopy).join('\\n\\n'))} disabled={!visibleSelectedLogs.length} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-40">
+            <ClipboardCopy className="h-3.5 w-3.5" /> Copiar selecionados
+          </button>
+          <button onClick={() => void copyText(logs.map(formatLogForCopy).join('\\n\\n'))} disabled={!logs.length} className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs font-semibold text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">
+            <Copy className="h-3.5 w-3.5" /> Copiar exibidos
+          </button>
+        </div>
       </div>
 
       {error && <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm font-medium text-rose-300">{error}</div>}
@@ -201,7 +259,15 @@ export const LogsScreen: React.FC = () => {
               const isExpanded = expanded === log.id;
               return (
                 <div key={log.id} className="px-5 py-4 hover:bg-zinc-850/50 transition-colors">
-                  <button onClick={() => setExpanded(isExpanded ? null : log.id)} className="flex w-full items-start gap-3.5 text-left cursor-pointer">
+                  <div className="flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      aria-label={`Selecionar log ${log.event}`}
+                      checked={selectedIds.includes(log.id)}
+                      onChange={() => toggleSelected(log.id)}
+                      className="mt-2 h-4 w-4 shrink-0 accent-blue-500 cursor-pointer"
+                    />
+                    <button onClick={() => setExpanded(isExpanded ? null : log.id)} className="flex min-w-0 flex-1 items-start gap-3.5 text-left cursor-pointer">
                     <span className={`mt-0.5 inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold ${levelClasses[log.level] || levelClasses.info}`}>
                       {iconForLevel(log.level)} {levelLabels[log.level] || log.level}
                     </span>
@@ -217,7 +283,17 @@ export const LogsScreen: React.FC = () => {
                       </span>
                     </span>
                     {isExpanded ? <ChevronUp className="mt-1 h-4 w-4 shrink-0 text-zinc-400" /> : <ChevronDown className="mt-1 h-4 w-4 shrink-0 text-zinc-400" />}
-                  </button>
+                    </button>
+                    <button
+                      onClick={() => void copyText(formatLogForCopy(log), log.id)}
+                      title="Copiar este log"
+                      aria-label="Copiar este log"
+                      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-700 px-2.5 py-2 text-xs font-semibold text-zinc-300 hover:border-blue-500 hover:text-white"
+                    >
+                      {copiedId === log.id ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                      <span className="hidden sm:inline">{copiedId === log.id ? 'Copiado' : 'Copiar'}</span>
+                    </button>
+                  </div>
                   {isExpanded && (
                     <div className="mt-4 ml-0 sm:ml-24 rounded-xl bg-zinc-950 p-4 border border-zinc-800 text-xs text-zinc-300 font-mono">
                       <div className="mb-2 text-[10px] uppercase tracking-wider text-emerald-400 font-bold">Metadados técnicos</div>
