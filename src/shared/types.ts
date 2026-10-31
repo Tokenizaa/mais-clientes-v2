@@ -84,6 +84,8 @@ export interface ScrapeJob {
   total_duplicates: number;
   total_errors: number;
   current_step?: string;
+  /** Stable user/search-scope session shared by successive jobs. */
+  search_session_id?: string;
   /** Persisted worker phase; discovery and extraction run in separate Vercel invocations. */
   phase?: 'discovering' | 'processing';
   /** Durable navigation checkpoint; URLs are also mirrored to scrape_candidates. */
