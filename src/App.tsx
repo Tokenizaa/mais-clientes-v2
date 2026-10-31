@@ -397,7 +397,6 @@ export default function App() {
       setSelectedPlaceIds(new Set());
       setIsScraping(true);
       setSelectedJobId(jobId);
-      lastStepRequestRef.current = Date.now();
       subscribeToJobStream(jobId);
       loadHistory();
     } catch (err: any) {
