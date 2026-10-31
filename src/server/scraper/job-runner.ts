@@ -236,7 +236,6 @@ async function discoverCandidates(
       setHeartbeat(job);
       await store.persistScrapeProgress(job);
 
-      if (found.size >= maxCandidates) break;
       const scrollState = await page.evaluate(() => {
         const feed = document.querySelector('div[role="feed"]') ||
           document.querySelector('div.m6QErb[aria-label]') ||
