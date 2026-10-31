@@ -725,21 +725,8 @@ class Store {
       const client = this.supabase!;
 
       if (newPlace) {
-        const sourceUrl = String(newPlace.source_url || newPlace.maps_url || '').trim();
-        if (sourceUrl) {
-          const { data: existing, error: lookupError } = await client
-            .from('places')
-            .select('id')
-            .eq('source_url', sourceUrl)
-            .maybeSingle();
-          if (lookupError) throw new Error(`Falha ao verificar URL antes de salvar estabelecimento: ${lookupError.message}`);
-          if (existing && existing.id !== newPlace.id) {
-            placeInserted = false;
-            return;
-          }
-        }
-
         const p = newPlace;
+        const sourceUrl = String(p.source_url || p.maps_url || '').trim();
         const row = {
           id: p.id, job_id: p.job_id, name: p.name || '', category: p.category || '',
           address: p.address || '', neighborhood: p.neighborhood || null, phone: p.phone || '', website: p.website || '',
@@ -752,7 +739,7 @@ class Store {
           review_topics: p.review_topics ?? null, additional_attributes: p.additional_attributes ?? null,
           media_items: p.media_items ?? null, plus_code: p.plus_code ?? null, postal_code: p.postal_code ?? null,
           country: p.country ?? null, city: p.city ?? null, state: p.state ?? null,
-          source_place_id: p.source_place_id ?? null, source_url: p.source_url || p.maps_url || null,
+          source_place_id: p.source_place_id ?? null, source_url: sourceUrl || null,
           attributes: p.attributes ?? null, accessibility_attributes: p.accessibility_attributes ?? null,
           next_opening_text: p.next_opening_text ?? null, next_open_day: p.next_open_day ?? null,
           next_open_time: p.next_open_time ?? null, visible_photos_count: p.visible_photos_count ?? null,
@@ -760,8 +747,17 @@ class Store {
           review_highlights: p.review_highlights ?? null, field_status: p.field_status ?? null,
           collected_at: p.collected_at || new Date().toISOString(),
         };
-        const { error: placeError } = await client.from('places').upsert(row, { onConflict: 'id' });
-        if (placeError) throw new Error(`Falha ao salvar estabelecimento ${p.name}: ${placeError.message}`);
+        // INSERT is atomic against the partial unique source_url index. A prior
+        // SELECT followed by UPSERT still races when two serverless instances scrape
+        // the same Maps listing at the same time.
+        const { error: placeError } = await client.from('places').insert(row);
+        if (placeError) {
+          if (placeError.code === '23505' && /places_source_url_unique_idx|source_url/i.test(placeError.message)) {
+            placeInserted = false;
+            return;
+          }
+          throw new Error(`Falha ao salvar estabelecimento ${p.name}: ${placeError.message}`);
+        }
       }
 
       const { error: stateError } = await client
@@ -1689,8 +1685,7 @@ export async function createApp() {
         created_at: new Date().toISOString(),
       };
       state.jobs.unshift(newJob);
-      store.persist();
-      await store.flush();
+      await store.persistScrapeProgress(newJob);
 
       // Respond immediately; Vercel waitUntil keeps the scrape alive after response.
       // Awaiting Puppeteer here made the Start button block for the whole scrape.
