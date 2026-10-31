@@ -748,17 +748,32 @@ class Store {
     return this.findJobForUser(jobId, userId);
   }
 
-  async loadScrapeCandidates(jobId: string): Promise<string[]> {
+  async loadScrapeCandidates(jobId: string, fromOrdinal = 0, limit = 1): Promise<string[]> {
     if (!this.supabase) {
-      return this.state.jobs.find((job) => job.id === jobId)?.candidate_urls || [];
+      return (this.state.jobs.find((job) => job.id === jobId)?.candidate_urls || [])
+        .slice(fromOrdinal, fromOrdinal + limit);
     }
     const { data, error } = await this.supabase
       .from('scrape_candidates')
       .select('source_url')
       .eq('job_id', jobId)
-      .order('ordinal', { ascending: true });
+      .gte('ordinal', fromOrdinal)
+      .order('ordinal', { ascending: true })
+      .limit(limit);
     if (error) throw new Error('Falha ao recuperar fila de fichas da coleta: ' + error.message);
     return (data || []).map((row: { source_url: string }) => row.source_url).filter(Boolean);
+  }
+
+  async countScrapeCandidates(jobId: string): Promise<number> {
+    if (!this.supabase) {
+      return this.state.jobs.find((job) => job.id === jobId)?.candidate_urls?.length || 0;
+    }
+    const { count, error } = await this.supabase
+      .from('scrape_candidates')
+      .select('id', { count: 'exact', head: true })
+      .eq('job_id', jobId);
+    if (error) throw new Error('Falha ao contar fichas persistidas da coleta: ' + error.message);
+    return count || 0;
   }
 
   async isJobCancellationRequested(id: string, userId: string): Promise<boolean> {
