@@ -681,25 +681,58 @@ class Store {
         // Reuse the database ID for an already-known source_url. This prevents a
         // different scrape/job ID for the same business from violating the unique index.
         if (rowsWithSource.length) {
-          const sourceUrls = rowsWithSource.map((row) => row.source_url as string);
-          const { data: existingBySource, error: lookupError } = await client
-            .from('places').select('id, source_url').in('source_url', sourceUrls);
-          if (lookupError) throw new Error('Falha ao consultar estabelecimentos existentes: ' + lookupError.message);
-          const existingIds = new Map((existingBySource || []).map((row) => [row.source_url, row.id]));
-          const sourceRows = rowsWithSource.map((row) => ({
-            ...row,
-            id: existingIds.get(row.source_url as string) || row.id,
-          }));
-          // The database enforces source_url with a partial unique index
-          // (source_url IS NOT NULL AND source_url <> ''). PostgREST cannot infer
-          // that partial index from onConflict:'source_url'. We already resolved
-          // existing IDs above, so upsert by the primary key instead.
-          const { error } = await client.from('places').upsert(sourceRows, { onConflict: 'id' });
-          if (error) throw new Error('Falha ao sincronizar estabelecimentos por URL: ' + error.message);
+          // Google Maps source URLs are long. Sending hundreds in one PostgREST
+          // "in" filter can exceed request-line limits and return HTTP 400.
+          // Resolve existing IDs in small batches, then upsert in bounded batches.
+          const lookupBatchSize = 20;
+          const writeBatchSize = 50;
+          const existingIds = new Map<string, string>();
+
+          for (let i = 0; i < rowsWithSource.length; i += lookupBatchSize) {
+            const batchUrls = rowsWithSource
+              .slice(i, i + lookupBatchSize)
+              .map((row) => row.source_url as string);
+            const { data: existingBySource, error: lookupError } = await client
+              .from('places')
+              .select('id, source_url')
+              .in('source_url', batchUrls);
+            if (lookupError) {
+              throw new Error(`Falha ao consultar estabelecimentos existentes (lote ${Math.floor(i / lookupBatchSize) + 1}): ${lookupError.message}`);
+            }
+            for (const existing of existingBySource || []) {
+              existingIds.set(existing.source_url, existing.id);
+            }
+          }
+
+          const sourceRowsByUrl = new Map<string, typeof rowsWithSource[number]>();
+          for (const row of rowsWithSource) {
+            sourceRowsByUrl.set(row.source_url as string, {
+              ...row,
+              id: existingIds.get(row.source_url as string) || row.id,
+            });
+          }
+          const sourceRows = Array.from(sourceRowsByUrl.values());
+
+          // The database enforces source_url with a partial unique index.
+          // We resolve existing IDs first and upsert by primary key.
+          for (let i = 0; i < sourceRows.length; i += writeBatchSize) {
+            const { error } = await client
+              .from('places')
+              .upsert(sourceRows.slice(i, i + writeBatchSize), { onConflict: 'id' });
+            if (error) {
+              throw new Error(`Falha ao sincronizar estabelecimentos por URL (lote ${Math.floor(i / writeBatchSize) + 1}): ${error.message}`);
+            }
+          }
         }
         if (rowsWithoutSource.length) {
-          const { error } = await client.from('places').upsert(rowsWithoutSource, { onConflict: 'id' });
-          if (error) throw new Error('Falha ao sincronizar estabelecimentos por ID: ' + error.message);
+          for (let i = 0; i < rowsWithoutSource.length; i += 50) {
+            const { error } = await client
+              .from('places')
+              .upsert(rowsWithoutSource.slice(i, i + 50), { onConflict: 'id' });
+            if (error) {
+              throw new Error(`Falha ao sincronizar estabelecimentos por ID (lote ${Math.floor(i / 50) + 1}): ${error.message}`);
+            }
+          }
         }
       }
 
