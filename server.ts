@@ -744,6 +744,10 @@ class Store {
     if (error) throw new Error('Falha ao persistir fichas recém-descobertas: ' + error.message);
   }
 
+  async findJobForWorker(jobId: string, userId: string): Promise<ScrapeJob | null> {
+    return this.findJobForUser(jobId, userId);
+  }
+
   async loadScrapeCandidates(jobId: string): Promise<string[]> {
     if (!this.supabase) {
       return this.state.jobs.find((job) => job.id === jobId)?.candidate_urls || [];
