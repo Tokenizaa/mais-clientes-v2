@@ -1527,10 +1527,27 @@ export async function createApp() {
       state.jobs.unshift(newJob);
       await store.persistScrapeProgress(newJob);
 
-      // Run one bounded stage now. Further polling requests schedule the next batch.
+      // Start the worker chain on the server. The browser UI only observes progress.
       const firstStep = runScrapeJobStep(store, connectScraperBrowser, jobId, userId);
-      if (process.env.VERCEL === '1') waitUntil(firstStep);
-      else void firstStep;
+      if (process.env.VERCEL === '1') {
+        const token = extractBearerToken(req);
+        const baseUrl = process.env.VERCEL_URL
+          ? 'https://' + process.env.VERCEL_URL
+          : req.protocol + '://' + req.get('host');
+        waitUntil(firstStep.then(async () => {
+          const latest = await store.findJobForWorker(jobId, userId);
+          if (!latest || latest.status !== 'running' || !token) return;
+          const response = await fetch(baseUrl + '/api/v1/jobs/' + encodeURIComponent(jobId) + '/step', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
+          });
+          if (!response.ok) {
+            console.error('[Jobs] Falha ao encadear próxima etapa:', response.status, await response.text());
+          }
+        }).catch((error) => {
+          console.error('[Jobs] Falha no encadeamento do worker:', error instanceof Error ? error.message : error);
+        }));
+      } else void firstStep;
 
       return res.status(201).json({
         data: { jobId, job: newJob },
@@ -1553,8 +1570,25 @@ export async function createApp() {
       }
 
       const nextStep = runScrapeJobStep(store, connectScraperBrowser, job.id, user.id);
-      if (process.env.VERCEL === '1') waitUntil(nextStep);
-      else void nextStep;
+      if (process.env.VERCEL === '1') {
+        const token = extractBearerToken(req);
+        const baseUrl = process.env.VERCEL_URL
+          ? 'https://' + process.env.VERCEL_URL
+          : req.protocol + '://' + req.get('host');
+        waitUntil(nextStep.then(async () => {
+          const latest = await store.findJobForWorker(job.id, user.id);
+          if (!latest || latest.status !== 'running' || !token) return;
+          const response = await fetch(baseUrl + '/api/v1/jobs/' + encodeURIComponent(job.id) + '/step', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
+          });
+          if (!response.ok) {
+            console.error('[Jobs] Falha ao encadear próxima etapa:', response.status, await response.text());
+          }
+        }).catch((error) => {
+          console.error('[Jobs] Falha no encadeamento do worker:', error instanceof Error ? error.message : error);
+        }));
+      } else void nextStep;
 
       return res.status(202).setHeader('Cache-Control', 'no-store').json({
         success: true,
