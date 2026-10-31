@@ -17,8 +17,7 @@ export interface AuditEvent {
  * Sensitive fields that should be redacted from audit logs for LGPD compliance
  */
 const SENSITIVE_FIELDS = new Set([
-  'segment', 'location', 'phone', 'website', 'cpf', 'cnpj', 'email',
-  'password', 'token', 'creditCard', 'bankAccount',
+  'phone', 'email', 'cpf', 'cnpj', 'password', 'token', 'authorization', 'cookie', 'creditcard', 'bankaccount',
 ]);
 
 /**
@@ -29,7 +28,7 @@ function sanitizeMetadata(metadata: Record<string, unknown>): Record<string, unk
   const sanitized: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(metadata)) {
     const lowerKey = key.toLowerCase();
-    if (SENSITIVE_FIELDS.has(lowerKey)) {
+    if (SENSITIVE_FIELDS.has(lowerKey) || /secret|apikey|service.?role|credential/i.test(key)) {
       sanitized[key] = '[REDACIONADO]';
     } else {
       sanitized[key] = value;
@@ -43,10 +42,10 @@ export async function initAuditLog(): Promise<void> {
   try {
     db = getSupabase();
   } catch {
-    console.log('Supabase não configurado: defina SUPABASE_URL e SUPABASE_ANON_KEY para ativar logs de auditoria.');
+    console.log('Supabase não configurado: defina SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY para ativar logs de auditoria.');
     return;
   }
-  const { error } = await db.schema('mapscrape').from('audit_logs').select('*', { count: 'exact', head: true });
+  const { error } = await db.from('audit_logs').select('id', { count: 'exact', head: true });
 
   // Check if table exists, if not, just log
   if (error) {
@@ -66,7 +65,7 @@ export async function writeAuditLog(input: {
   const createdAt = new Date().toISOString();
   const sanitizedMetadata = sanitizeMetadata(input.metadata ?? {});
   const metadata = JSON.stringify(sanitizedMetadata);
-  const { error } = await db.schema('mapscrape').from('audit_logs').insert({
+  const { error } = await db.from('audit_logs').insert({
     id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
     created_at: createdAt,
     level: input.level ?? 'info',
@@ -93,7 +92,7 @@ export async function listAuditLogs(options: {
 } = {}): Promise<{ logs: AuditEvent[]; total: number }> {
   const db = getSupabase();
 
-  let query = db.schema('mapscrape').from('audit_logs').select('id, created_at, level, category, event, message, job_id, metadata');
+  let query = db.from('audit_logs').select('id, created_at, level, category, event, message, job_id, metadata');
 
   if (options.level) {
     query = query.eq('level', options.level);
@@ -125,17 +124,12 @@ export async function listAuditLogs(options: {
     }
   }
 
-  // Get total count
-  const { count, error: countError } = await db.schema('mapscrape').from('audit_logs').select('*', { count: 'exact', head: true });
-
-  if (countError) throw countError;
-
   const requestedLimit = typeof options.limit === 'number' && Number.isFinite(options.limit) ? Math.max(1, Math.min(500, Math.floor(options.limit))) : 100;
   const requestedOffset = typeof options.offset === 'number' && Number.isFinite(options.offset) ? Math.max(0, Math.floor(options.offset)) : 0;
   const limit = requestedLimit;
   const offset = requestedOffset;
 
-  const { data, error } = await query.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+  const { data, error, count } = await query.select('id, created_at, level, category, event, message, job_id, metadata', { count: 'exact' }).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
 
   if (error) throw error;
 

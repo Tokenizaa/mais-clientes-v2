@@ -14,6 +14,7 @@ import type { Browser, Page } from 'puppeteer-core';
 import { extractPlaceDetails } from './src/server/scraper/extractor.ts';
 import { parseSearchLocationFallback, extractSourcePlaceId } from './src/server/scraper/normalizer.ts';
 import { connectScraperBrowser } from './src/server/scraper/browser.ts';
+import { writeAuditLog, listAuditLogs } from './src/server/audit-log.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -674,6 +675,36 @@ class Store {
   }
 
 
+  async getOrCreateSearchSession(input: {
+    userId: string; segment: string; location: string; projectId?: string; categoryId?: string;
+  }): Promise<{ id: string; next_ordinal: number; total_found: number; discovery_checkpoint: Record<string, any>; exhausted: boolean }> {
+    const normalize = (value: string) => value.normalize('NFKC').trim().replace(/\\s+/g, ' ').toLocaleLowerCase('pt-BR');
+    const scopeKey = crypto.createHash('sha256').update([
+      normalize(input.segment), normalize(input.location), input.projectId || '', input.categoryId || '',
+    ].join('|')).digest('hex');
+    if (!this.supabase) {
+      return { id: 'local_' + scopeKey.slice(0, 32), next_ordinal: 0, total_found: 0, discovery_checkpoint: {}, exhausted: false };
+    }
+    const client = this.supabase;
+    const read = async () => client.from('scrape_search_sessions').select('*')
+      .eq('user_id', input.userId).eq('scope_key', scopeKey).maybeSingle();
+    const current = await read();
+    if (current.error) throw new Error('Falha ao recuperar sessão de coleta: ' + current.error.message);
+    if (current.data) return current.data as any;
+    const row = {
+      id: 'sess_' + scopeKey.slice(0, 32), user_id: input.userId, scope_key: scopeKey,
+      segment: input.segment, location: input.location, project_id: input.projectId || null,
+      category_id: input.categoryId || null, next_ordinal: 0, total_found: 0,
+      discovery_checkpoint: {}, exhausted: false, updated_at: new Date().toISOString(),
+    };
+    const inserted = await client.from('scrape_search_sessions').insert(row).select('*').single();
+    if (!inserted.error && inserted.data) return inserted.data as any;
+    // A concurrent request may have created the unique user/scope row first.
+    const raced = await read();
+    if (!raced.error && raced.data) return raced.data as any;
+    throw new Error('Falha ao criar sessão de coleta: ' + (inserted.error?.message || raced.error?.message || 'registro indisponível'));
+  }
+
   async isExistingPlace(place: Partial<PlaceRecord>): Promise<boolean> {
     const sourceId = String(place.source_place_id || extractSourcePlaceId(place.source_url) || extractSourcePlaceId(place.maps_url) || '').trim();
     const urls = Array.from(new Set([place.source_url, place.maps_url]
@@ -1217,244 +1248,233 @@ async function executeScrapeJob(
 ): Promise<void> {
   let browser: Browser | null = null;
   let cancelled = false;
-
-  const cancelHandle = {
-    cancel: () => {
-      cancelled = true;
-    },
-  };
-  activeScrapeJobs.set(jobId, cancelHandle);
-
+  let pauseReason = '';
   const state = store.getState();
-  const job = state.jobs.find((j) => j.id === jobId && j.user_id === userId);
-  if (!job) {
-    activeScrapeJobs.delete(jobId);
-    return;
-  }
+  const job = state.jobs.find((item) => item.id === jobId && item.user_id === userId);
+  if (!job) return;
 
-  const updateProgress = async (stepMessage: string) => {
-    job.current_step = stepMessage;
+  activeScrapeJobs.set(jobId, { cancel: () => { cancelled = true; } });
+
+  const audit = async (event: string, level: 'debug' | 'info' | 'warn' | 'error', message: string, metadata: Record<string, unknown> = {}) => {
+    try {
+      await writeAuditLog({ level, category: 'scraper', event, message, jobId, metadata });
+    } catch (error) {
+      console.error('[AuditLog] Não foi possível persistir evento:', error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const updateProgress = async (message: string) => {
+    job.current_step = message;
     job.heartbeat_at = new Date().toISOString();
     store.persist();
     await store.persistScrapeProgress(job);
   };
 
+  const saveCheckpoint = async (url: string, outcome: 'saved' | 'duplicate', name?: string) => {
+    const previous = job.discovery_checkpoint || {};
+    job.discovery_checkpoint = {
+      ...previous,
+      version: 1,
+      last_processed_url: normalizeMapsPlaceUrl(url),
+      last_processed_source_key: extractSourcePlaceId(url) || normalizeMapsPlaceUrl(url),
+      last_processed_name: name || previous.last_processed_name || '',
+      last_processed_outcome: outcome,
+      last_processed_at: new Date().toISOString(),
+      last_checkpoint_at: new Date().toISOString(),
+      processed_count: Number(previous.processed_count || 0) + 1,
+    };
+    job.candidate_cursor = Number(job.candidate_cursor || 0) + 1;
+    await store.persistScrapeProgress(job);
+    await audit('candidate_checkpoint_saved', 'debug', 'Checkpoint atualizado após processar ficha.', {
+      url: normalizeMapsPlaceUrl(url), outcome, ordinal: job.candidate_cursor, name: name || null,
+    });
+  };
+
   try {
+    await audit('job_started', 'info', 'Coleta iniciada.', {
+      segment, location, limit, resume_url: job.discovery_checkpoint?.last_processed_url || null,
+      session_id: job.search_session_id || null,
+    });
     await updateProgress('Conectando ao navegador...');
     browser = await connectScraperBrowser(state.settings?.browserWsEndpoint);
-
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 900 });
-
-    await page.setExtraHTTPHeaders({
-      'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-    });
+    await page.setExtraHTTPHeaders({ 'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7' });
 
     const searchQuery = `${segment} ${location}`.trim();
-    await updateProgress(`Pesquisando no Google Maps: "${searchQuery}"...`);
+    await updateProgress('Abrindo pesquisa no Google Maps...');
+    await page.goto('https://www.google.com/maps/search/' + encodeURIComponent(searchQuery), {
+      waitUntil: 'domcontentloaded', timeout: 30000,
+    });
+    await page.waitForSelector('div[role="feed"], a[href*="/maps/place/"]', { timeout: 15000 }).catch(() => {});
 
-    const searchUrl = `https://www.google.com/maps/search/${encodeURIComponent(searchQuery)}`;
-    await page.goto(searchUrl, {
-      waitUntil: 'domcontentloaded',
-      timeout: 30000,
+    const anchor = normalizeMapsPlaceUrl(job.discovery_checkpoint?.last_processed_url || '');
+    let anchorFound = !anchor;
+    let previousCount = 0;
+    let stagnantRounds = 0;
+    let ordinalThisRun = 0;
+    const seenThisRun = new Set<string>();
+    const locationFallback = parseSearchLocationFallback(location);
+    const feedSelector = 'div[role="feed"]';
+
+    await audit('feed_scan_started', 'info', anchor ? 'Reconstruindo feed até o último checkpoint.' : 'Iniciando leitura sequencial do feed.', {
+      resume_url: anchor || null,
     });
 
-    // Accept Google cookie/consent banner if present
-    try {
-      const consentButtons = await page.$$('button[aria-label*="Aceitar"], button[aria-label*="Accept"], form[action*="consent"] button');
-      for (const btn of consentButtons) {
-        await btn.click().catch(() => {});
-        await new Promise((r) => setTimeout(r, 400));
-      }
-    } catch {
-      // Best-effort
-    }
+    while (!cancelled && !pauseReason && job.total_collected < limit && stagnantRounds < 8) {
+      if (await store.isJobCancellationRequested(jobId, userId)) { cancelled = true; break; }
 
-    // Wait for the feed or place links to appear
-    await page.waitForSelector('div[role="feed"], a[href*="/maps/place/"]', { timeout: 12000 }).catch(() => {});
+      const links: string[] = await page.$$eval('a[href*="/maps/place/"]', (anchors) =>
+        anchors.map((a) => (a as HTMLAnchorElement).href)
+          .filter((href): href is string => Boolean(href) && href.includes('/maps/place/'))
+      );
+      const normalizedLinks = links.map((url) => ({ url, key: normalizeMapsPlaceUrl(url) }))
+        .filter((item) => item.key);
 
-    // Scroll and gather URLs - dynamically scrolling until we have enough UNCOLLECTED URLs
-    const allDiscoveredUrls = new Set<string>();
-    const unseenCandidateUrls: string[] = [];
-    const checkedUrlDups = new Set<string>();
-    let previousDiscoveredCount = 0;
-    let stagnantCount = 0;
+      for (const item of normalizedLinks) {
+        if (cancelled || pauseReason || job.total_collected >= limit) break;
+        if (seenThisRun.has(item.key)) continue;
+        seenThisRun.add(item.key);
 
-    await updateProgress('Buscando novos estabelecimentos no mapa...');
-
-    // Continue scrolling until we find enough UNCOLLECTED candidate URLs to satisfy the requested limit,
-    // or until the Google Maps list is genuinely exhausted.
-    const maxCandidateCeiling = Math.max(limit * 5, 120);
-
-    while (unseenCandidateUrls.length < limit && stagnantCount < 8 && allDiscoveredUrls.size < maxCandidateCeiling) {
-      if (cancelled || (await store.isJobCancellationRequested(jobId, userId))) {
-        cancelled = true;
-        break;
-      }
-
-      // Collect place links using $$eval
-      const links: string[] = await page.$$eval(
-        'a[href*="/maps/place/"]',
-        (anchors) =>
-          anchors
-            .map((a) => (a as HTMLAnchorElement).href)
-            .filter((href): href is string => Boolean(href) && href.includes('/maps/place/'))
-      ).catch(() => []);
-
-      for (const link of links) {
-        if (!allDiscoveredUrls.has(link)) {
-          allDiscoveredUrls.add(link);
-
-          // Check upfront if this URL already exists in database
-          const isDuplicate = await store.isExistingPlace({ source_url: link, maps_url: link });
-          if (isDuplicate) {
-            checkedUrlDups.add(link);
-            job.total_duplicates += 1;
-          } else {
-            unseenCandidateUrls.push(link);
+        if (!anchorFound) {
+          if (item.key === anchor) {
+            anchorFound = true;
+            await audit('resume_anchor_found', 'info', 'Última ficha processada reencontrada; continuando pela próxima.', { url: item.key });
           }
+          continue;
         }
-        if (unseenCandidateUrls.length >= limit) break;
+
+        // The anchor itself is never processed twice.
+        if (anchor && item.key === anchor) continue;
+        ordinalThisRun += 1;
+        job.total_found += 1;
+        await updateProgress(`Analisando ficha ${job.total_found}; ${job.total_collected}/${limit} novos contatos salvos...`);
+        await audit('candidate_discovered', 'debug', 'Ficha encontrada no feed; verificando URL no banco.', {
+          url: item.key, ordinal: Number(job.candidate_cursor || 0) + ordinalThisRun,
+        });
+
+        let detailPage: Page | null = null;
+        try {
+          const isDuplicate = await store.isExistingPlace({ source_url: item.url, maps_url: item.url });
+          if (isDuplicate) {
+            job.total_duplicates += 1;
+            await saveCheckpoint(item.url, 'duplicate');
+            await audit('duplicate_skipped', 'info', 'URL já cadastrada; ficha descartada e feed avançado.', {
+              url: item.key, duplicate_count: job.total_duplicates,
+            });
+            continue;
+          }
+
+          await audit('extraction_started', 'debug', 'Abrindo ficha inédita para extração.', { url: item.key });
+          detailPage = await browser!.newPage();
+          await detailPage.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 25000 });
+          await new Promise((resolve) => setTimeout(resolve, 800));
+          const place = await extractPlaceDetails(detailPage, jobId, item.url);
+          if (job.project_id) (place as any).project_id = job.project_id;
+          if (job.category_id) (place as any).category_id = job.category_id;
+          if (!place.city && locationFallback.city) place.city = locationFallback.city;
+          if (!place.state && locationFallback.state) place.state = locationFallback.state;
+
+          if (place.name && place.address && await store.isExistingPlace(place)) {
+            job.total_duplicates += 1;
+            await saveCheckpoint(item.url, 'duplicate', place.name);
+            await audit('duplicate_skipped', 'info', 'Ficha já cadastrada por identificador ou nome/endereço.', {
+              url: item.key, name: place.name, duplicate_count: job.total_duplicates,
+            });
+            continue;
+          }
+
+          state.places.push(place);
+          const persisted = await store.persistScrapeProgress(job, place);
+          if (!persisted) throw new Error('O banco recusou a gravação do contato.');
+          job.total_collected += 1;
+          await saveCheckpoint(item.url, 'saved', place.name);
+          await audit('place_saved', 'info', 'Novo contato gravado no Supabase.', {
+            url: item.key, name: place.name, collected: job.total_collected, target: limit,
+          });
+          await updateProgress(`Salvo: ${place.name || 'Estabelecimento sem nome'} (${job.total_collected}/${limit})`);
+        } catch (error: any) {
+          job.total_errors += 1;
+          const message = error instanceof Error ? error.message : String(error ?? 'Erro desconhecido');
+          const browserFailure = /connection closed|target closed|detached frame|session closed|websocket|browser.*disconnect|protocol error/i.test(message);
+          pauseReason = browserFailure ? 'Conexão com o navegador encerrada; ficha mantida pendente para retomada.' : 'Falha na ficha; checkpoint preservado para nova tentativa.';
+          await audit(browserFailure ? 'browser_disconnected' : 'place_extraction_failed', 'error', message, {
+            url: item.key, retryable: true, checkpoint_preserved: true, ordinal: Number(job.candidate_cursor || 0) + 1,
+          });
+          console.error(`[Scraper] Falha na ficha ${item.key}:`, message);
+          break;
+        } finally {
+          if (detailPage) await detailPage.close().catch(() => {});
+        }
       }
 
-      job.total_found = allDiscoveredUrls.size;
-      await updateProgress(`Varrendo mapa: ${unseenCandidateUrls.length}/${limit} inéditos encontrados (${job.total_duplicates} duplicados ignorados)...`);
-
-      if (unseenCandidateUrls.length >= limit) break;
-
-      // Scroll the results container or window
-      await page.evaluate(() => {
-        const feed = document.querySelector('div[role="feed"]') || document.querySelector('div.m6QErb[aria-label]');
-        if (feed) {
-          feed.scrollTop += 1400;
-          return;
-        }
-        window.scrollBy(0, 1000);
-      }).catch(() => {});
-
-      await new Promise((r) => setTimeout(r, 1100));
-
-      if (allDiscoveredUrls.size === previousDiscoveredCount) {
-        stagnantCount++;
+      if (job.total_collected >= limit || cancelled || pauseReason) break;
+      if (!anchorFound) {
+        await page.$eval(feedSelector, (feed) => { (feed as HTMLElement).scrollTop = (feed as HTMLElement).scrollHeight; }).catch(() => {});
       } else {
-        stagnantCount = 0;
-        previousDiscoveredCount = allDiscoveredUrls.size;
+        await page.$eval(feedSelector, (feed) => { (feed as HTMLElement).scrollTop = (feed as HTMLElement).scrollHeight; }).catch(() =>
+          page.evaluate(() => window.scrollBy(0, 1100)).catch(() => {})
+        );
       }
-
-      // Check if end of list was reached
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const currentCount = seenThisRun.size;
+      stagnantRounds = currentCount === previousCount ? stagnantRounds + 1 : 0;
+      previousCount = currentCount;
       const endReached = await page.evaluate(() => {
-        const text = document.body.innerText;
-        return text.includes('Você chegou ao final da lista') || text.includes("You've reached the end of the list");
+        const body = document.body.innerText || '';
+        return body.includes('Você chegou ao final da lista') || body.includes("You've reached the end of the list");
       }).catch(() => false);
-
       if (endReached) break;
     }
 
-    const locationFallback = parseSearchLocationFallback(location);
-
-    // Target URLs to visit: first unseen candidates, then any remaining discovered candidates
-    const targetUrls = [...unseenCandidateUrls];
-    for (const link of allDiscoveredUrls) {
-      if (!checkedUrlDups.has(link) && !targetUrls.includes(link)) {
-        targetUrls.push(link);
-      }
+    if (!anchorFound) {
+      pauseReason = 'Não foi possível reencontrar a ficha do último checkpoint no feed. Nenhuma ficha foi pulada.';
+      await audit('resume_anchor_missing', 'error', pauseReason, { resume_url: anchor });
     }
 
-    // Now process each fresh uncollected place URL: scrape, deduplicate by name+address, save
-    for (const placeUrl of targetUrls) {
-      if (cancelled || (await store.isJobCancellationRequested(jobId, userId))) {
-        cancelled = true;
-        break;
-      }
-
-      if (job.total_collected >= limit) break;
-
-      // 1. Pre-navigation deduplication check by URL
-      if (checkedUrlDups.has(placeUrl)) {
-        continue;
-      }
-      const isUrlDuplicate = await store.isExistingPlace({ source_url: placeUrl, maps_url: placeUrl });
-      if (isUrlDuplicate) {
-        job.total_duplicates += 1;
-        await updateProgress(`Ignorando URL já existente (${job.total_duplicates} duplicados)...`);
-        continue;
-      }
-
-      let detailPage: Page | null = null;
-      try {
-        detailPage = await browser.newPage();
-        await detailPage.goto(placeUrl, {
-          waitUntil: 'domcontentloaded',
-          timeout: 20000,
-        });
-        await new Promise((r) => setTimeout(r, 800));
-
-        // 2. Extract details
-        const place = await extractPlaceDetails(detailPage, jobId, placeUrl);
-
-        if (job.project_id) (place as any).project_id = job.project_id;
-        if (job.category_id) (place as any).category_id = job.category_id;
-        if (!place.city && locationFallback.city) place.city = locationFallback.city;
-        if (!place.state && locationFallback.state) place.state = locationFallback.state;
-
-        // 3. Post-extraction deduplication check by Name + Address
-        if (place.name && place.address) {
-          const isNameDuplicate = await store.isExistingPlace(place);
-          if (isNameDuplicate) {
-            job.total_duplicates += 1;
-            await updateProgress(`Ignorando duplicado: "${place.name}" (${job.total_duplicates} duplicados)...`);
-            continue;
-          }
-        }
-
-        // 4. Save to database
-        state.places.push(place);
-        job.total_collected += 1;
-        await updateProgress(`Coletado (${job.total_collected}/${limit}): ${place.name || 'Sem nome'}`);
-        await store.persistScrapeProgress(job, place);
-
-      } catch (err: any) {
-        job.total_errors += 1;
-        console.error(`[Scraper] Erro ao extrair ficha ${placeUrl}:`, err?.message || err);
-        await updateProgress(`Erro ao coletar ficha (${job.total_errors} erros)...`);
-      } finally {
-        if (detailPage) {
-          await detailPage.close().catch(() => {});
-        }
-      }
-    }
-
-    // Set completion status
     if (cancelled) {
       job.status = 'stopped';
-      job.status_message = `Interrompido: ${job.total_collected} coletados, ${job.total_duplicates} duplicados.`;
-      job.current_step = 'Coleta interrompida.';
-    } else if (job.total_collected === 0 && job.total_errors > 0 && job.total_duplicates === 0) {
-      job.status = 'failed';
-      job.status_message = 'Nenhum estabelecimento pôde ser coletado com sucesso.';
-      job.current_step = 'Falha na coleta.';
+      job.status_message = 'Coleta interrompida pelo usuário.';
+      job.current_step = 'Interrompida';
+    } else if (pauseReason) {
+      job.status = job.total_collected > 0 || job.total_duplicates > 0 ? 'partial' : 'failed';
+      job.status_message = pauseReason;
+      job.current_step = 'Pausada; próxima execução retoma da ficha pendente.';
+    } else if (job.total_collected >= limit) {
+      job.status = 'completed';
+      job.status_message = `Meta atingida: ${job.total_collected} novos contatos salvos.`;
+      job.current_step = 'Meta atingida';
     } else {
       job.status = 'completed';
-      job.status_message = `Concluído: ${job.total_collected} novos contatos coletados com sucesso.`;
-      job.current_step = 'Coleta concluída.';
+      job.status_message = `Feed esgotado: ${job.total_collected} novos contatos salvos, ${job.total_duplicates} duplicados ignorados.`;
+      job.discovery_checkpoint = { ...(job.discovery_checkpoint || {}), exhausted: true };
+      job.current_step = 'Feed esgotado';
     }
-
     job.completed_at = new Date().toISOString();
     store.persist();
     await store.persistScrapeProgress(job);
-
-  } catch (err: any) {
-    console.error(`[Scraper] Falha geral no trabalho ${jobId}:`, err);
-    job.status = 'failed';
-    job.status_message = `Erro: ${err?.message || 'Falha na execução do scraper'}`;
-    job.current_step = 'Falha';
+    await audit('job_finished', job.status === 'failed' ? 'error' : 'info', job.status_message, {
+      status: job.status, collected: job.total_collected, duplicates: job.total_duplicates,
+      errors: job.total_errors, checkpoint: job.discovery_checkpoint?.last_processed_url || null,
+    });
+  } catch (error: any) {
+    const message = error instanceof Error ? error.message : String(error ?? 'Erro desconhecido');
+    const browserFailure = /connection closed|target closed|detached frame|session closed|websocket|browser.*disconnect|protocol error/i.test(message);
+    job.status = job.total_collected > 0 ? 'partial' : 'failed';
+    job.status_message = browserFailure
+      ? 'Conexão do navegador encerrada. A ficha pendente será retomada na próxima execução.'
+      : `Falha na coleta: ${message}`;
+    job.current_step = 'Execução pausada; checkpoint preservado';
+    job.total_errors += 1;
     job.completed_at = new Date().toISOString();
+    await audit(browserFailure ? 'browser_disconnected' : 'job_failed', 'error', message, {
+      retryable: true, checkpoint: job.discovery_checkpoint?.last_processed_url || null,
+    });
+    console.error(`[Scraper] Falha geral no trabalho ${jobId}:`, message);
     store.persist();
     await store.persistScrapeProgress(job).catch(() => {});
   } finally {
-    if (browser) {
-      await browser.close().catch(() => {});
-    }
+    await browser?.close().catch(() => {});
     activeScrapeJobs.delete(jobId);
   }
 }
@@ -1681,6 +1701,10 @@ export async function createApp() {
         };
         state.categories.unshift(category);
       }
+      const searchSession = await store.getOrCreateSearchSession({
+        userId, segment: String(segment).trim(), location: String(location).trim(),
+        projectId: project.id, categoryId: category.id,
+      });
       const newJob: ScrapeJob = {
         id: jobId,
         user_id: userId,
@@ -1697,8 +1721,11 @@ export async function createApp() {
         total_duplicates: 0,
         total_errors: 0,
         current_step: 'Iniciando navegador...',
+        search_session_id: searchSession.id,
+        phase: 'processing',
+        discovery_checkpoint: searchSession.discovery_checkpoint || {},
         candidate_urls: [],
-        candidate_cursor: 0,
+        candidate_cursor: searchSession.next_ordinal || 0,
         retry_count: 0,
         heartbeat_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
@@ -2190,41 +2217,47 @@ export async function createApp() {
   // 8. AUDIT LOGS (/api/v1/logs)
   // =========================================================================
 
-  app.get('/api/v1/logs', (req: Request, res: Response) => {
+  app.get('/api/v1/logs', async (req: Request, res: Response) => {
     try {
-      const state = store.getState();
-      const { level, category, query, jobId, limit = '100' } = req.query;
-
-      let filtered = [...state.logs];
-
-      if (level && typeof level === 'string' && level.trim()) {
-        filtered = filtered.filter((l) => l.level === level.trim().toLowerCase());
-      }
-
-      if (category && typeof category === 'string' && category.trim()) {
-        filtered = filtered.filter((l) => l.category.toLowerCase() === category.trim().toLowerCase());
-      }
-
-      if (jobId && typeof jobId === 'string' && jobId.trim()) {
-        filtered = filtered.filter((l) => l.job_id === jobId.trim());
-      }
-
-      if (query && typeof query === 'string' && query.trim()) {
-        const q = query.trim().toLowerCase();
-        filtered = filtered.filter((l) => l.message.toLowerCase().includes(q) || l.event.toLowerCase().includes(q));
-      }
-
-      const numLimit = Math.max(1, Math.min(500, parseInt(String(limit), 10) || 100));
-      const sliced = filtered.slice(0, numLimit);
-
-      return res.json({
-        logs: sliced,
-        total: filtered.length,
+      const { level, category, query, jobId, limit = '100', offset = '0' } = req.query;
+      const result = await listAuditLogs({
+        level: typeof level === 'string' ? level : undefined,
+        category: typeof category === 'string' ? category : undefined,
+        query: typeof query === 'string' ? query : undefined,
+        jobId: typeof jobId === 'string' ? jobId : undefined,
+        limit: Math.max(1, Math.min(500, Number(limit) || 100)),
+        offset: Math.max(0, Number(offset) || 0),
       });
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json({ logs: result.logs, total: result.total, limit: Math.max(1, Math.min(500, Number(limit) || 100)), offset: Math.max(0, Number(offset) || 0) });
     } catch (err: any) {
-      return res.status(500).json({ error: err.message });
+      console.error('[AuditLog] Falha ao consultar Supabase:', err?.message || err);
+      return res.status(500).json({ error: 'audit_log_query_failed', message: err?.message || 'Falha ao consultar auditoria.' });
     }
   });
+
+  app.get('/api/v1/logs/export', async (req: Request, res: Response) => {
+    try {
+      const { level, category, query, jobId } = req.query;
+      const result = await listAuditLogs({
+        level: typeof level === 'string' ? level : undefined,
+        category: typeof category === 'string' ? category : undefined,
+        query: typeof query === 'string' ? query : undefined,
+        jobId: typeof jobId === 'string' ? jobId : undefined,
+        limit: 500,
+        offset: 0,
+      });
+      const lines = result.logs.map((log) => JSON.stringify(log)).join('\\n');
+      res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="mapscrape-audit.jsonl"');
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).send(lines ? lines + '\\n' : '');
+    } catch (err: any) {
+      console.error('[AuditLog] Falha ao exportar Supabase:', err?.message || err);
+      return res.status(500).json({ error: 'audit_log_export_failed', message: err?.message || 'Falha ao exportar auditoria.' });
+    }
+  });
+
 
   // =========================================================================
   // 9. API CREDENTIALS PROVISIONING (/api/v1/provisioning/credentials)
