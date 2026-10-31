@@ -165,9 +165,21 @@ export function parseSearchLocationFallback(raw: string | null | undefined): { c
 }
 /** Extract Google's stable place identifier when the URL actually contains one. */
 export function extractSourcePlaceId(url: string | null | undefined): string {
-  const value = String(url || '');
-  return value.match(/(0x[0-9a-f]+:0x[0-9a-f]+)/i)?.[1] ||
-    value.match(/!1s([^!/?]+)/)?.[1] || '';
+  let value = String(url || '');
+  try { value = decodeURIComponent(value); } catch { /* Keep the original URL when decoding is incomplete. */ }
+
+  // Maps URLs can contain a nearby feature/CID before the actual selected place.
+  // Prefer the place identifier in the !3m6!1s payload, then the first !1s payload.
+  const selectedPlace = value.match(/!3m6!1s(0x[0-9a-f]+:0x[0-9a-f]+)/i)?.[1];
+  if (selectedPlace) return selectedPlace.toLowerCase();
+
+  const firstPlace = value.match(/!1s(0x[0-9a-f]+:0x[0-9a-f]+)/i)?.[1];
+  if (firstPlace) return firstPlace.toLowerCase();
+
+  const anyCid = value.match(/(0x[0-9a-f]+:0x[0-9a-f]+)/i)?.[1];
+  if (anyCid) return anyCid.toLowerCase();
+
+  return value.match(/!1s([^!/?]+)/)?.[1] || '';
 }
 
 export function extractCoordinates(url: string | null | undefined): { latitude: string; longitude: string } {
