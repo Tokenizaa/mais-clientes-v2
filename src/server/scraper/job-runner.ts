@@ -196,6 +196,7 @@ type NextPlaceResult = { url: string; exhausted: false } | { url: ''; exhausted:
 async function findNextPlaceUrl(page: Page, lastProcessedUrl: string): Promise<NextPlaceResult> {
   const anchorKey = normalizeMapsPlaceUrl(lastProcessedUrl);
   let stagnantRounds = 0;
+  let anchorWasLocated = !anchorKey;
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const result = await page.evaluate((expectedKey) => {
@@ -241,8 +242,17 @@ async function findNextPlaceUrl(page: Page, lastProcessedUrl: string): Promise<N
 
     if (result.url) return { url: result.url, exhausted: false };
     if (result.atEnd) return { url: '', exhausted: true };
-    if (!result.anchorFound && anchorKey) {
+    if (result.anchorFound) anchorWasLocated = true;
+    if (!result.anchorFound && anchorKey && !anchorWasLocated) {
       throw new Error('A última ficha processada não está presente no feed restaurado do Google Maps.');
+    }
+    if (!result.anchorFound && anchorWasLocated) {
+      const firstVisible = await page.evaluate(() => {
+        const feed = document.querySelector('div[role="feed"]');
+        const first = feed?.querySelector('a[href*="/maps/place/"]') as HTMLAnchorElement | null;
+        return first?.href || '';
+      });
+      if (firstVisible) return { url: firstVisible, exhausted: false };
     }
     stagnantRounds = result.moved ? 0 : stagnantRounds + 1;
     if (stagnantRounds >= 3) return { url: '', exhausted: false };
