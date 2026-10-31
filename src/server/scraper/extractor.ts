@@ -652,7 +652,7 @@ export async function extractPlaceDetails(page: Page, jobId: string, targetUrl: 
     next_opening_text: raw.nextOpeningText, next_open_day: raw.nextOpeningDay, next_open_time: raw.nextOpeningTime,
     visible_photos_count: raw.visiblePhotosCount, popular_times: raw.popular_times,
     rating_distribution: raw.rating_distribution, review_highlights: raw.review_highlights,
-    postal_code: addressComponents.postal_code, country: addressComponents.country, city: addressComponents.city, state: addressComponents.state, neighborhood: addressComponents.neighborhood,
+    postal_code: addressComponents.postal_code, country: addressComponents.country, city: addressComponents.city, state: addressComponents.state,
     source_place_id: sourcePlaceId, source_url: sourceUrl, collected_at: collectedAt,
   };
   const fieldStatus = Object.fromEntries(Object.entries(fieldValues).map(([field, value]) => {
