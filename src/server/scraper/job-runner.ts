@@ -162,6 +162,7 @@ async function discoverCandidates(
     setHeartbeat(job);
     await store.persistScrapeProgress(job);
     await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 20_000 });
+    await page.waitForSelector('div[role="feed"]', { timeout: 10_000 }).catch(() => null);
     await delay(900);
 
     await page.evaluate(() => {
@@ -178,6 +179,7 @@ async function discoverCandidates(
     const found = new Map<string, string>();
     const startedAt = Date.now();
     const initialCandidateCount = await store.countScrapeCandidates(job.search_session_id || job.id);
+    const initialStalledPasses = Number(job.discovery_checkpoint?.stalled_passes || 0);
     // Stagnation is measured within this uninterrupted browser pass only.
     // A serverless restart must not inherit a partially accumulated counter.
     let stagnantRounds = 0;
@@ -237,19 +239,30 @@ async function discoverCandidates(
       setHeartbeat(job);
       await store.persistScrapeProgress(job);
 
-      const scrollState = await page.evaluate(() => {
+      await page.evaluate(() => {
         const feed = document.querySelector('div[role="feed"]') ||
           document.querySelector('div.m6QErb[aria-label]') ||
           document.querySelector('div.TFQHme');
         if (feed) {
           const element = feed as HTMLElement;
           element.scrollTop = element.scrollHeight;
+        } else {
+          window.scrollTo(0, document.body.scrollHeight);
+        }
+      }).catch(() => {});
+      // Wait for lazy-loaded cards before saving the actual position. Saving
+      // the pre-load scrollHeight can make the next invocation revisit old rows.
+      await delay(750);
+      const scrollState = await page.evaluate(() => {
+        const feed = document.querySelector('div[role="feed"]') ||
+          document.querySelector('div.m6QErb[aria-label]') ||
+          document.querySelector('div.TFQHme');
+        if (feed) {
+          const element = feed as HTMLElement;
           return { scroll_top: element.scrollTop, scroll_height: element.scrollHeight };
         }
-        window.scrollTo(0, document.body.scrollHeight);
         return { scroll_top: window.scrollY, scroll_height: document.body.scrollHeight };
       }).catch(() => ({ scroll_top: 0, scroll_height: 0 }));
-      await delay(750);
       scrollRound += 1;
       stagnantRounds = found.size === before ? stagnantRounds + 1 : 0;
       job.discovery_checkpoint = {
@@ -274,10 +287,19 @@ async function discoverCandidates(
     job.phase = 'processing';
     job.retry_count = 0;
     job.total_found = await store.countScrapeCandidates(job.search_session_id || job.id);
+    const explicitlyExhausted = await page.evaluate(() => {
+      const bodyText = (document.body?.innerText || '').toLocaleLowerCase();
+      return /you(?:'|’)ve reached the end of the list|you have reached the end of the list|você chegou ao fim da lista|não há mais resultados|no more results/.test(bodyText);
+    }).catch(() => false);
+    const stalledPasses = job.total_found > initialCandidateCount
+      ? 0
+      : initialStalledPasses + 1;
+    const queueCursor = Math.max(0, job.candidate_cursor || 0);
     job.discovery_checkpoint = {
       ...(job.discovery_checkpoint || {}),
       version: 1,
-      exhausted: job.total_found === initialCandidateCount && stagnantRounds >= DISCOVERY_STAGNANT_ROUNDS,
+      exhausted: explicitlyExhausted,
+      stalled_passes: stalledPasses,
       last_checkpoint_at: new Date().toISOString(),
     };
     if (job.total_found === 0) {
@@ -286,12 +308,29 @@ async function discoverCandidates(
       job.current_step = 'Nenhuma ficha localizada';
       job.completed_at = new Date().toISOString();
       addLog(store.getState(), job, 'warn', 'no_results', 'Nenhuma ficha localizada para "' + searchQuery + '".');
+    } else if (
+      !explicitlyExhausted &&
+      stalledPasses >= 3 &&
+      queueCursor >= job.total_found
+    ) {
+      // Lack of new DOM cards is not proof that Google Maps is exhausted.
+      // Pause with the session checkpoint intact so a later job resumes here.
+      job.status = 'partial';
+      job.status_message = 'A meta não foi atingida. A descoberta foi pausada após três etapas sem novos resultados; o checkpoint e a fila foram preservados para retomada.';
+      job.current_step = 'Descoberta pausada; sessão preservada para retomada.';
+      job.completed_at = new Date().toISOString();
+      addLog(store.getState(), job, 'warn', 'discovery_paused', job.status_message, {
+        total_found: job.total_found,
+        candidate_cursor: queueCursor,
+        stalled_passes: stalledPasses,
+      });
     } else {
       job.current_step = 'Encontradas ' + job.total_found + ' fichas. Iniciando processamento em lotes...';
-      job.status_message = 'Localização concluída. As fichas serão processadas em lotes curtos para evitar o limite de execução da Vercel.';
-      addLog(store.getState(), job, 'info', 'discovery_completed', 'Google Maps retornou ' + job.total_found + ' fichas.', {
+      job.status_message = 'Localização em andamento. A fila e o checkpoint ficam salvos para retomada entre execuções.';
+      addLog(store.getState(), job, 'info', 'discovery_checkpoint_saved', 'Google Maps retornou ' + job.total_found + ' fichas acumuladas na sessão.', {
         total_found: job.total_found,
         limit_requested: job.limit_requested,
+        explicitly_exhausted: explicitlyExhausted,
       });
     }
     setHeartbeat(job);
