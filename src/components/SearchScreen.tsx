@@ -235,15 +235,24 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
 
   const calculateProgressPercent = (): number => {
     if (!currentJob) return 0;
+    if (currentJob.status !== 'running') return 100;
 
-    // The selected quantity is a target of new saved records. Duplicates do not
-    // advance the goal; the scraper continues searching after skipping them.
-    if (currentJob.status === 'completed') return 100;
+    const target = Math.max(1, currentJob.limit_requested || 20);
+    const found = Math.max(0, currentJob.total_found || 0);
 
-    const saved = currentJob.total_collected || 0;
-    const target = currentJob.limit_requested || 20;
-    const percent = Math.round((saved / target) * 100);
-    return Math.min(percent, currentJob.status === 'running' ? 99 : 100);
+    // Discovery occupies the first 70% of the bar. Once URLs are persisted,
+    // the remaining 30% follows the durable candidate cursor across batches.
+    if (currentJob.phase === 'discovering') {
+      return Math.min(70, Math.round((found / target) * 100));
+    }
+    if (currentJob.phase === 'processing') {
+      const total = Math.max(1, currentJob.candidate_urls?.length || found);
+      const processed = Math.min(total, Math.max(0, currentJob.candidate_cursor || 0));
+      return Math.min(99, 70 + Math.round((processed / total) * 30));
+    }
+
+    // Backward compatibility for jobs created before the resumable worker.
+    return Math.min(99, Math.round((found / target) * 100));
   };
 
   return (
@@ -626,7 +635,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             </div>
             <div
               role="progressbar"
-              aria-label="Progresso da coleta"
+              aria-label="Progresso por etapa da coleta"
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={calculateProgressPercent()}
