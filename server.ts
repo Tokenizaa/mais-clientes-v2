@@ -665,17 +665,7 @@ class Store {
     }
 
     const client = this.supabase;
-    const { data: lastCandidate, error: lastError } = await client
-      .from('scrape_candidates')
-      .select('ordinal')
-      .eq('job_id', job.id)
-      .order('ordinal', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (lastError) throw new Error('Falha ao consultar posição da fila de fichas: ' + lastError.message);
-
-    let ordinal = Number(lastCandidate?.ordinal ?? -1) + 1;
-    const rows = urls.map((sourceUrl) => {
+    const normalized = urls.map((sourceUrl) => {
       let sourceKey = sourceUrl;
       try {
         const parsed = new URL(sourceUrl);
@@ -685,30 +675,26 @@ class Store {
       } catch {
         sourceKey = sourceUrl.split(/[?#]/, 1)[0].replace(/\/+$/, '');
       }
-      return {
-        id: job.id + ':candidate:' + ordinal,
-        job_id: job.id,
-        user_id: job.user_id,
-        source_key: sourceKey,
-        source_url: sourceUrl,
-        ordinal: ordinal++,
-      };
+      return { sourceUrl, sourceKey };
     });
-    const { error } = await client
-      .from('scrape_candidates')
-      .upsert(rows, { onConflict: 'job_id,source_key', ignoreDuplicates: true });
-    if (error) throw new Error('Falha ao persistir fichas recém-descobertas: ' + error.message);
-  }
+    const unique = Array.from(new Map(normalized.map((item) => [item.sourceKey, item])).values());
 
-  async persistDiscoveredCandidates(job: ScrapeJob, urls: string[]): Promise<void> {
-    if (!urls.length) return;
-    if (!this.supabase) {
-      job.candidate_urls = Array.from(new Set([...(job.candidate_urls || []), ...urls]));
-      this.save(this.state);
-      return;
+    // Filter already-persisted keys before assigning ordinals. Otherwise ignored
+    // duplicates would create gaps and the durable cursor could revisit a row.
+    const existingKeys = new Set<string>();
+    for (let i = 0; i < unique.length; i += 20) {
+      const keys = unique.slice(i, i + 20).map((item) => item.sourceKey);
+      const { data, error } = await client
+        .from('scrape_candidates')
+        .select('source_key')
+        .eq('job_id', job.id)
+        .in('source_key', keys);
+      if (error) throw new Error('Falha ao verificar fichas já descobertas: ' + error.message);
+      for (const row of data || []) existingKeys.add(row.source_key);
     }
+    const fresh = unique.filter((item) => !existingKeys.has(item.sourceKey));
+    if (!fresh.length) return;
 
-    const client = this.supabase;
     const { data: lastCandidate, error: lastError } = await client
       .from('scrape_candidates')
       .select('ordinal')
@@ -719,29 +705,21 @@ class Store {
     if (lastError) throw new Error('Falha ao consultar posição da fila de fichas: ' + lastError.message);
 
     let ordinal = Number(lastCandidate?.ordinal ?? -1) + 1;
-    const rows = urls.map((sourceUrl) => {
-      let sourceKey = sourceUrl;
-      try {
-        const parsed = new URL(sourceUrl);
-        parsed.search = '';
-        parsed.hash = '';
-        sourceKey = parsed.toString().replace(/\/+$/, '');
-      } catch {
-        sourceKey = sourceUrl.split(/[?#]/, 1)[0].replace(/\/+$/, '');
+    const rows = fresh.map((item) => ({
+      id: job.id + ':candidate:' + ordinal,
+      job_id: job.id,
+      user_id: job.user_id,
+      source_key: item.sourceKey,
+      source_url: item.sourceUrl,
+      ordinal: ordinal++,
+    }));
+    const { error } = await client.from('scrape_candidates').insert(rows);
+    if (error) {
+      if (error.code === '23505') {
+        throw new Error('Conflito ao registrar a fila de fichas; o checkpoint será retomado na próxima etapa.');
       }
-      return {
-        id: job.id + ':candidate:' + ordinal,
-        job_id: job.id,
-        user_id: job.user_id,
-        source_key: sourceKey,
-        source_url: sourceUrl,
-        ordinal: ordinal++,
-      };
-    });
-    const { error } = await client
-      .from('scrape_candidates')
-      .upsert(rows, { onConflict: 'job_id,source_key', ignoreDuplicates: true });
-    if (error) throw new Error('Falha ao persistir fichas recém-descobertas: ' + error.message);
+      throw new Error('Falha ao persistir fichas recém-descobertas: ' + error.message);
+    }
   }
 
   async findJobForWorker(jobId: string, userId: string): Promise<ScrapeJob | null> {
