@@ -75,6 +75,13 @@ test('ambiguous location phrases do not populate city or state', () => {
   });
 });
 
+test('prefers the selected place CID over an earlier nearby-feature CID', () => {
+  assert.equal(
+    extractSourcePlaceId('https://www.google.com/maps/place/Teste/data=!3m1!5s0x111aaa:0x222bbb!4m7!3m6!1s0x333ccc:0x444ddd!8m2'),
+    '0x333ccc:0x444ddd',
+  );
+});
+
 test('extracts coordinates from Maps place URL format', () => {
   assert.deepEqual(
     extractCoordinates('https://www.google.com/maps/place/Teste/@-23.5744,-46.6592,17z/data=!3d-23.5744293!4d-46.6592389'),
