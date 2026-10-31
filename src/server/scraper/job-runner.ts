@@ -236,7 +236,7 @@ async function discoverCandidates(
     setHeartbeat(job);
     await store.persistScrapeProgress(job);
   } finally {
-    await page.close().catch(() => {});
+    await withTimeout(page.close(), 1_500, 'Fechamento da página de descoberta').catch(() => {});
   }
 }
 
@@ -363,7 +363,7 @@ async function processCandidateBatch(
       addLog(state, job, 'warn', 'place_error', 'Falha na ficha ' + (cursor + 1) + ': ' +
         (error instanceof Error ? error.message : String(error)), { url: placeUrl });
     } finally {
-      if (detailPage) await detailPage.close().catch(() => {});
+      if (detailPage) await withTimeout(detailPage.close(), 1_500, 'Fechamento da ficha').catch(() => {});
     }
 
     cursor += 1;
@@ -398,6 +398,7 @@ export async function runScrapeJobStep(
   const state = store.getState();
   const job = state.jobs.find((item) => item.id === jobId && item.user_id === userId);
   if (!job || job.status !== 'running') return;
+  console.info('[Scraper] Iniciando etapa do job ' + jobId + ' (' + (job.phase || 'discovering') + ').');
 
   let claimed = false;
   let browser: Browser | null = null;
@@ -419,6 +420,7 @@ export async function runScrapeJobStep(
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    console.error('[Scraper] Falha na etapa do job ' + jobId + ': ' + message);
     job.retry_count = (job.retry_count || 0) + 1;
     job.status_message = 'Falha temporária na execução: ' + message.slice(0, 180);
     job.current_step = 'Falha temporária; tentativa ' + job.retry_count + '/3.';
@@ -433,7 +435,7 @@ export async function runScrapeJobStep(
     addLog(state, job, 'warn', 'worker_step_error', message, { phase: job.phase, retry_count: job.retry_count });
     await store.persistScrapeProgress(job);
   } finally {
-    await browser?.close().catch(() => {});
+    if (browser) await withTimeout(browser.close(), 1_500, 'Fechamento do navegador remoto').catch(() => {});
     if (claimed) await store.releaseScrapeWorkerLease(jobId).catch((error) => {
       console.error('[Scraper] Falha ao liberar lease do job:', error instanceof Error ? error.message : error);
     });
