@@ -809,6 +809,88 @@ class Store {
     return count || 0;
   }
 
+  async isExistingPlace(place: Partial<PlaceRecord>): Promise<boolean> {
+    const sourceId = String(place.source_place_id || extractSourcePlaceId(place.source_url) || extractSourcePlaceId(place.maps_url) || '').trim();
+    const urls = Array.from(new Set([place.source_url, place.maps_url]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)));
+
+    if (!this.supabase) {
+      const target = {
+        sourceId,
+        urls: new Set(urls),
+        name: String(place.name || '').trim().toLocaleLowerCase('pt-BR'),
+        address: String(place.address || '').trim().toLocaleLowerCase('pt-BR'),
+      };
+      return this.state.places.some((existing) => {
+        const existingId = String(existing.source_place_id || extractSourcePlaceId(existing.source_url) || extractSourcePlaceId(existing.maps_url) || '').trim();
+        const existingUrls = [existing.source_url, existing.maps_url].map((value) => String(value || '').trim());
+        return Boolean((target.sourceId && existingId === target.sourceId) ||
+          existingUrls.some((value) => value && target.urls.has(value)) ||
+          (target.name && target.address &&
+            String(existing.name || '').trim().toLocaleLowerCase('pt-BR') === target.name &&
+            String(existing.address || '').trim().toLocaleLowerCase('pt-BR') === target.address));
+      });
+    }
+
+    const client = this.supabase;
+    if (sourceId) {
+      const { data, error } = await client.from('places').select('id')
+        .eq('source_place_id', sourceId).limit(1).maybeSingle();
+      if (error) throw new Error('Falha ao comparar identificador do estabelecimento no banco: ' + error.message);
+      if (data?.id) return true;
+    }
+
+    for (const url of urls) {
+      for (const column of ['source_url', 'maps_url'] as const) {
+        const { data, error } = await client.from('places').select('id')
+          .eq(column, url).limit(1).maybeSingle();
+        if (error) throw new Error('Falha ao comparar URL do estabelecimento no banco: ' + error.message);
+        if (data?.id) return true;
+      }
+    }
+
+    const name = String(place.name || '').trim();
+    const address = String(place.address || '').trim();
+    if (name && address) {
+      const { data, error } = await client.from('places').select('id')
+        .eq('name', name).eq('address', address).limit(1).maybeSingle();
+      if (error) throw new Error('Falha ao comparar nome e endereço do estabelecimento no banco: ' + error.message);
+      if (data?.id) return true;
+    }
+    return false;
+  }
+
+  async updateScrapeCandidateStatus(
+    job: ScrapeJob,
+    ordinal: number,
+    status: 'processing' | 'processed' | 'duplicate' | 'failed',
+    lastError?: string,
+  ): Promise<void> {
+    if (!this.supabase) return;
+    const client = this.supabase;
+    let lookup = client.from('scrape_candidates').select('id,attempt_count')
+      .eq('ordinal', ordinal);
+    lookup = job.search_session_id
+      ? lookup.eq('session_id', job.search_session_id)
+      : lookup.eq('job_id', job.id);
+    const { data: candidate, error: lookupError } = await lookup.maybeSingle();
+    if (lookupError) throw new Error('Falha ao localizar ficha na fila para atualizar status: ' + lookupError.message);
+    if (!candidate?.id) throw new Error('Ficha não encontrada na fila persistida no ordinal ' + ordinal + '.');
+
+    const patch: Record<string, unknown> = {
+      status,
+      attempt_count: Number(candidate.attempt_count || 0) + (status === 'processing' ? 1 : 0),
+      last_error: lastError || null,
+      updated_at: new Date().toISOString(),
+    };
+    if (status === 'processed' || status === 'duplicate' || status === 'failed') {
+      patch.processed_at = new Date().toISOString();
+    }
+    const { error } = await client.from('scrape_candidates').update(patch).eq('id', candidate.id);
+    if (error) throw new Error('Falha ao atualizar status da ficha na fila: ' + error.message);
+  }
+
   async isJobCancellationRequested(id: string, userId: string): Promise<boolean> {
     if (this.supabase) {
       const { data, error } = await this.supabase
