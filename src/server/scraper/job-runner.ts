@@ -3,11 +3,11 @@ import type { PlaceRecord, ScrapeJob } from '../../shared/types.js';
 import { extractPlaceDetails } from './extractor.ts';
 import { extractSourcePlaceId, parseSearchLocationFallback } from './normalizer.ts';
 
-const DISCOVERY_BUDGET_MS = 35_000;
+const DISCOVERY_BUDGET_MS = 12_000;
 const DISCOVERY_STAGNANT_ROUNDS = 6;
-const CANDIDATES_PER_STEP = 2;
+const CANDIDATES_PER_STEP = 1;
 const DETAIL_NAVIGATION_TIMEOUT_MS = 15_000;
-const DETAIL_EXTRACTION_TIMEOUT_MS = 18_000;
+const DETAIL_EXTRACTION_TIMEOUT_MS = 22_000;
 
 type ScraperState = {
   jobs: ScrapeJob[];
@@ -157,7 +157,7 @@ async function discoverCandidates(
     job.current_step = 'Abrindo o Google Maps para localizar fichas...';
     setHeartbeat(job);
     await store.persistScrapeProgress(job);
-    await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 25_000 });
+    await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 20_000 });
     await delay(900);
 
     await page.evaluate(() => {
@@ -183,7 +183,7 @@ async function discoverCandidates(
         page.evaluate(() => Array.from(document.querySelectorAll('a[href*="/maps/place/"]'))
           .map((anchor) => (anchor as HTMLAnchorElement).href)
           .filter((href): href is string => Boolean(href))),
-        7_000,
+        5_000,
         'Leitura dos resultados do Google Maps'
       ).catch((error) => {
         console.warn('[Scraper] Não foi possível ler os links nesta rodada:', error instanceof Error ? error.message : error);
@@ -210,7 +210,7 @@ async function discoverCandidates(
         if (feed) (feed as HTMLElement).scrollTop = feed.scrollHeight;
         else window.scrollTo(0, document.body.scrollHeight);
       }).catch(() => {});
-      await delay(1_000);
+      await delay(750);
       stagnantRounds = found.size === before ? stagnantRounds + 1 : 0;
     }
 
