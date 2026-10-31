@@ -3,7 +3,7 @@ import type { PlaceRecord, ScrapeJob } from '../../shared/types.js';
 import { extractPlaceDetails } from './extractor.ts';
 import { extractSourcePlaceId, parseSearchLocationFallback } from './normalizer.ts';
 
-const STEP_BUDGET_MS = 40_000;
+const STEP_BUDGET_MS = 25_000;
 const STEP_MAX_PLACES = 5;
 const DETAIL_NAVIGATION_TIMEOUT_MS = 15_000;
 const DETAIL_EXTRACTION_TIMEOUT_MS = 22_000;
