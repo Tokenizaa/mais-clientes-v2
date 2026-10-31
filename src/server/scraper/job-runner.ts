@@ -502,7 +502,9 @@ export async function runScrapeJobStep(
       job.candidate_urls = await store.loadScrapeCandidates(
         job.id, Math.max(0, job.candidate_cursor || 0), CANDIDATES_PER_STEP
       );
-    } else {
+    } else if (!job.candidate_urls) {
+      // Preserve the full in-memory queue in local development. Production
+      // candidates are stored in the relational table and need no JSON snapshot.
       job.candidate_urls = [];
     }
     job.retry_count = job.retry_count || 0;
