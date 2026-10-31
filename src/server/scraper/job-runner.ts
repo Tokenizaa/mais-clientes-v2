@@ -4,7 +4,6 @@ import { extractPlaceDetails } from './extractor.ts';
 import { extractSourcePlaceId, parseSearchLocationFallback } from './normalizer.ts';
 
 const STEP_BUDGET_MS = 25_000;
-const STEP_MAX_PLACES = 5;
 const DETAIL_NAVIGATION_TIMEOUT_MS = 15_000;
 const DETAIL_EXTRACTION_TIMEOUT_MS = 22_000;
 
@@ -498,7 +497,6 @@ export async function runScrapeJobStep(
     let processedThisStep = 0;
 
     while (
-      processedThisStep < STEP_MAX_PLACES &&
       Date.now() - startedAt < STEP_BUDGET_MS &&
       job.total_collected < job.limit_requested
     ) {
@@ -550,8 +548,8 @@ export async function runScrapeJobStep(
       }
     }
 
-    job.current_step = 'Checkpoint salvo após ' + processedThisStep + ' ficha(s). Preparando continuação...';
-    job.status_message = 'A coleta continuará da ficha seguinte ao último contato processado.';
+    job.current_step = 'Processadas ' + processedThisStep + ' fichas nesta execução. Continuação automática em andamento...';
+    job.status_message = 'A coleta segue automaticamente da próxima ficha. A meta considera somente novos contatos efetivamente salvos.';
     setHeartbeat(job);
     await store.persistScrapeProgress(job);
   } catch (error) {
