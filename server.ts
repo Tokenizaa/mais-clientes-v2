@@ -957,9 +957,14 @@ class Store {
       return true;
     }
 
-    const snapshot = JSON.parse(JSON.stringify(this.state)) as StoreState;
-    // Candidate URLs live in scrape_candidates, not in the monolithic app_state JSON.
-    // Keeping thousands of URLs in this snapshot would make every heartbeat expensive.
+    // places is already persisted in the relational table and is reloaded from
+    // there during initialization. Never serialize the entire lead database into
+    // app_state on every per-place checkpoint.
+    const snapshot = JSON.parse(JSON.stringify({
+      ...this.state,
+      places: [],
+    })) as StoreState;
+    // Candidate URLs live in scrape_candidates, not in the app_state snapshot.
     for (const snapshotJob of snapshot.jobs) delete snapshotJob.candidate_urls;
     let placeInserted = true;
     this.pendingWrite = this.pendingWrite.catch(() => undefined).then(async () => {
