@@ -872,6 +872,9 @@ class Store {
     }
 
     const snapshot = JSON.parse(JSON.stringify(this.state)) as StoreState;
+    // Candidate URLs live in scrape_candidates, not in the monolithic app_state JSON.
+    // Keeping thousands of URLs in this snapshot would make every heartbeat expensive.
+    for (const snapshotJob of snapshot.jobs) delete snapshotJob.candidate_urls;
     let placeInserted = true;
     this.pendingWrite = this.pendingWrite.catch(() => undefined).then(async () => {
       const client = this.supabase!;
@@ -944,6 +947,8 @@ class Store {
     }
 
     const snapshot = JSON.parse(JSON.stringify(this.state)) as StoreState;
+    // Candidate URLs are normalized in the relational queue and are hydrated by workers.
+    for (const snapshotJob of snapshot.jobs) delete snapshotJob.candidate_urls;
     this.pendingWrite = this.pendingWrite.catch(() => undefined).then(async () => {
       const client = this.supabase!;
       const { error: stateError } = await client
