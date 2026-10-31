@@ -1091,28 +1091,40 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
 
     // The selected quantity is the maximum number of unique Maps fiches
     // checked in this execution, including fiches already present in the base.
-    const normalizePlaceUrl = (value: string): string => {
-      try {
-        const parsed = new URL(value);
-        parsed.search = '';
-        parsed.hash = '';
-        return parsed.toString().replace(/\/+$/, '');
-      } catch {
-        return value.split(/[?#]/, 1)[0].replace(/\/+$/, '');
-      }
-    };
-    const placeUrls = new Set<string>();
-    let previousCount = 0;
-    let stagnantRounds = 0;
+    const placeUrls = new Map<string, string>();
+    const knownPlaceIds = new Set<string>();
+    const knownUrlKeys = new Set<string>();
+    const knownNameAddressKeys = new Set<string>();
 
-    if (searchPage.url().includes('/maps/place/')) {
-      placeUrls.add(normalizePlaceUrl(searchPage.url()));
+    for (const existing of state.places) {
+      const identity = getPlaceIdentity(existing);
+      if (identity.sourceId) knownPlaceIds.add(identity.sourceId);
+      identity.urlKeys.forEach((key) => knownUrlKeys.add(key));
+      if (identity.nameAddressKey) knownNameAddressKeys.add(identity.nameAddressKey);
     }
 
-    job.current_step = `Buscando até ${limit} fichas comerciais no Google Maps...`;
-    store.persist();
+    let previousCount = 0;
+    let stagnantRounds = 0;
+    let processedCount = 0;
+    let collectedCount = 0;
+    // The requested quantity is the target of NEW records. Duplicates are skipped,
+    // and the feed keeps being paged until that target is reached or the source ends.
+    const maxCandidates = Math.min(500, Math.max(limit * 5, limit + 50));
 
-    while (placeUrls.size < limit && stagnantRounds < 12) {
+    job.status_message = 'Meta de ' + limit + ' novos estabelecimentos. Fichas já cadastradas serão ignoradas e a busca continuará procurando outras.';
+    job.current_step = 'Buscando fichas no Google Maps para completar a meta de novos cadastros...';
+    await store.persistScrapeProgress(job);
+
+    if (searchPage.url().includes('/maps/place/')) {
+      const key = normalizeMapsPlaceUrl(searchPage.url());
+      if (key) placeUrls.set(key, searchPage.url());
+    }
+
+    while (
+      collectedCount < limit &&
+      placeUrls.size < maxCandidates &&
+      stagnantRounds < 12
+    ) {
       if (isCancelled) break;
 
       const links: string[] = await searchPage.evaluate(() =>
@@ -1124,17 +1136,201 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
         return [];
       });
 
-      for (const url of links) {
-        if (placeUrls.size >= limit) break;
-        const normalizedUrl = normalizePlaceUrl(url);
-        if (normalizedUrl) placeUrls.add(normalizedUrl);
+      const countBeforeRound = placeUrls.size;
+      for (const placeUrl of links) {
+        if (collectedCount >= limit || placeUrls.size >= maxCandidates) break;
+        const urlKey = normalizeMapsPlaceUrl(placeUrl);
+        if (!urlKey || placeUrls.has(urlKey)) continue;
+
+        placeUrls.set(urlKey, placeUrl);
+        job.total_found = placeUrls.size;
+        const candidateSourceId = extractSourcePlaceId(placeUrl);
+        const alreadyKnown =
+          (candidateSourceId && knownPlaceIds.has(candidateSourceId)) ||
+          knownUrlKeys.has(urlKey);
+
+        if (alreadyKnown) {
+          processedCount += 1;
+          job.total_duplicates += 1;
+          knownUrlKeys.add(urlKey);
+          if (candidateSourceId) knownPlaceIds.add(candidateSourceId);
+          job.current_step =
+            'Verificadas ' + processedCount + ' fichas: ' + job.total_duplicates +
+            ' já cadastradas; ' + collectedCount + '/' + limit + ' novos. Buscando mais resultados...';
+          await store.persistScrapeProgress(job);
+          continue;
+        }
+
+        let detailPage: Page | null = null;
+        let placeAddedToState = false;
+        try {
+          let navigationError: any = null;
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            try {
+              if (!activeBrowser) activeBrowser = await connectScraperBrowser();
+              detailPage = await activeBrowser.newPage();
+              await detailPage.setUserAgent(
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+              );
+              await detailPage.setViewport({ width: 1280, height: 900 });
+              await detailPage.setExtraHTTPHeaders({
+                'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+              });
+              await detailPage.goto(placeUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+              navigationError = null;
+              break;
+            } catch (error) {
+              navigationError = error;
+              if (detailPage) await detailPage.close().catch(() => {});
+              detailPage = null;
+              if (attempt === 0) {
+                await activeBrowser?.close().catch(() => {});
+                activeBrowser = await connectScraperBrowser();
+              }
+            }
+          }
+          if (navigationError) throw navigationError;
+          await new Promise((resolve) => setTimeout(resolve, 900));
+
+          const place = await extractPlaceDetails(detailPage, jobId, placeUrl);
+          if (!isValidMapsBusinessName(place.name)) {
+            throw new Error('Ficha descartada: o Google Maps não apresentou um nome válido de estabelecimento (' + String(place.name || 'vazio') + ').');
+          }
+
+          const identity = getPlaceIdentity(place);
+          if (!place.address && !identity.sourceId && !place.phone && !place.website) {
+            throw new Error('Ficha descartada: não foi possível confirmar endereço, telefone, site ou identificador da ficha.');
+          }
+
+          const duplicateAfterExtraction =
+            (identity.sourceId && knownPlaceIds.has(identity.sourceId)) ||
+            identity.urlKeys.some((key) => knownUrlKeys.has(key)) ||
+            (identity.nameAddressKey && knownNameAddressKeys.has(identity.nameAddressKey));
+
+          if (duplicateAfterExtraction) {
+            processedCount += 1;
+            job.total_duplicates += 1;
+            if (identity.sourceId) knownPlaceIds.add(identity.sourceId);
+            identity.urlKeys.forEach((key) => knownUrlKeys.add(key));
+            if (identity.nameAddressKey) knownNameAddressKeys.add(identity.nameAddressKey);
+            job.current_step =
+              'Verificadas ' + processedCount + ' fichas: ' + job.total_duplicates +
+              ' já cadastradas; ' + collectedCount + '/' + limit + ' novos. Buscando mais resultados...';
+            await store.persistScrapeProgress(job);
+            continue;
+          }
+
+          place.source_place_id = identity.sourceId || place.source_place_id || '';
+          place.source_url = place.source_url || place.maps_url || placeUrl;
+          place.maps_url = place.maps_url || placeUrl;
+
+          // Search-area enrichment is allowed only for an unambiguous Brazilian
+          // city/state pattern. Never promote a lone neighborhood or search phrase to city.
+          const locationFallback = parseSearchLocationFallback(location);
+          let fieldStatus: Record<string, any> = {};
+          try {
+            fieldStatus = place.field_status ? JSON.parse(place.field_status) : {};
+          } catch {
+            fieldStatus = {};
+          }
+          const enrichedAt = new Date().toISOString();
+          if (!place.city && locationFallback.city) {
+            place.city = locationFallback.city;
+            fieldStatus.city = {
+              status: 'enriched_from_search_location',
+              source: 'scrape_job.location',
+              observed_at: enrichedAt,
+            };
+          }
+          if (!place.state && locationFallback.state) {
+            place.state = locationFallback.state;
+            fieldStatus.state = {
+              status: 'enriched_from_search_location',
+              source: 'scrape_job.location',
+              observed_at: enrichedAt,
+            };
+          }
+          place.field_status = JSON.stringify(fieldStatus);
+
+          state.places.push(place);
+          placeAddedToState = true;
+          collectedCount += 1;
+          processedCount += 1;
+          job.total_collected = collectedCount;
+          job.current_step =
+            'Novos salvos: ' + collectedCount + '/' + limit +
+            ' · já cadastrados: ' + job.total_duplicates +
+            ' · fichas verificadas: ' + processedCount + '/' + placeUrls.size;
+
+          state.logs.unshift({
+            id: 'log_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+            created_at: new Date().toISOString(),
+            level: 'info',
+            category: 'scraper',
+            event: 'place_extracted',
+            message: 'Ficha extraída: "' + place.name + '" | Categoria: "' + (place.category || '—') +
+              '" | Tel: ' + (place.phone || '—') + ' | Endereço: ' + (place.address || '—'),
+            job_id: jobId,
+            metadata: JSON.stringify({
+              name: place.name,
+              rating: place.rating,
+              reviews: place.review_count,
+              phone: place.phone,
+              website: place.website,
+              address: place.address,
+              coords: { lat: place.latitude, lng: place.longitude },
+            }),
+            user_id: userId,
+          });
+
+          const inserted = await store.persistScrapeProgress(job, place);
+          if (!inserted) {
+            state.places = state.places.filter((item) => item.id !== place.id);
+            placeAddedToState = false;
+            collectedCount -= 1;
+            processedCount += 0;
+            job.total_collected = collectedCount;
+            job.total_duplicates += 1;
+            job.current_step =
+              'Já cadastrado no banco: ' + job.total_duplicates +
+              ' · novos salvos: ' + collectedCount + '/' + limit + '. Buscando mais resultados...';
+            await store.persistScrapeProgress(job);
+          } else {
+            if (identity.sourceId) knownPlaceIds.add(identity.sourceId);
+            identity.urlKeys.forEach((key) => knownUrlKeys.add(key));
+            if (identity.nameAddressKey) knownNameAddressKeys.add(identity.nameAddressKey);
+          }
+        } catch (extractErr: any) {
+          if (placeAddedToState) {
+            const failedPlace = state.places[state.places.length - 1];
+            if (failedPlace?.job_id === jobId) state.places.pop();
+          }
+          processedCount += 1;
+          job.total_errors += 1;
+          job.current_step =
+            'Falhas: ' + job.total_errors + ' · novos salvos: ' + collectedCount + '/' + limit +
+            ' · já cadastrados: ' + job.total_duplicates;
+          console.error('Erro ao coletar ficha ' + placeUrl + ':', extractErr.message);
+          state.logs.unshift({
+            id: 'log_' + Date.now() + '_err',
+            created_at: new Date().toISOString(),
+            level: 'warn',
+            category: 'scraper',
+            event: 'place_error',
+            message: 'Erro na extração da ficha: ' + extractErr.message,
+            job_id: jobId,
+            metadata: JSON.stringify({ url: placeUrl, error: extractErr.message }),
+            user_id: userId,
+          });
+          await store.persistScrapeProgress(job);
+        } finally {
+          if (detailPage) await detailPage.close().catch(() => {});
+        }
+
+        if (collectedCount >= limit) break;
       }
 
-      job.total_found = placeUrls.size;
-      job.current_step = `Encontradas ${placeUrls.size} de ${limit} fichas solicitadas...`;
-      store.persist();
-
-      if (placeUrls.size >= limit) break;
+      if (collectedCount >= limit || placeUrls.size >= maxCandidates) break;
 
       await searchPage.evaluate(() => {
         const feed =
@@ -1147,21 +1343,17 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
 
       await new Promise((resolve) => setTimeout(resolve, 1500));
 
-      if (placeUrls.size === previousCount) {
-        stagnantRounds += 1;
-      } else {
-        stagnantRounds = 0;
-        previousCount = placeUrls.size;
-      }
+      if (placeUrls.size === countBeforeRound) stagnantRounds += 1;
+      else stagnantRounds = 0;
     }
 
     await searchPage.close().catch(() => {});
 
     if (isCancelled) {
       job.status = 'stopped';
-      job.status_message = 'Coleta interrompida pelo operador.';
+      job.status_message = 'Coleta interrompida pelo operador. ' + collectedCount + '/' + limit + ' novos estabelecimentos foram salvos.';
       job.current_step = 'Interrompido';
-      store.persist();
+      await store.persistScrapeProgress(job);
       return;
     }
 
@@ -1169,180 +1361,37 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
       job.status = 'failed';
       job.status_message = 'Nenhum estabelecimento encontrado no Google Maps para esta busca.';
       job.current_step = 'Sem resultados';
-      job.total_errors = 1;
       state.logs.unshift({
-        id: `log_${Date.now()}_err`,
+        id: 'log_' + Date.now() + '_err',
         created_at: new Date().toISOString(),
         level: 'warn',
         category: 'scraper',
         event: 'no_results',
-        message: `A busca por "${searchQuery}" não retornou nenhuma ficha pública no Google Maps.`,
+        message: 'A busca por "' + searchQuery + '" não retornou nenhuma ficha pública no Google Maps.',
         job_id: jobId,
         metadata: JSON.stringify({ query: searchQuery }),
         user_id: userId,
       });
-      store.persist();
+      await store.persistScrapeProgress(job);
       return;
     }
 
-    // Now visit each place URL and extract full details
-    let collectedCount = 0;
-    let processedCount = 0;
-
-    for (const placeUrl of placeUrls) {
-      if (isCancelled) break;
-
-
-      if (processedCount >= limit) break;
-      processedCount += 1;
-
-      // Match canonical Maps URLs so tracking parameters do not bypass deduplication.
-      const normalizedPlaceUrl = normalizePlaceUrl(placeUrl);
-      const isDuplicate = state.places.some((p) =>
-        normalizePlaceUrl(p.maps_url || '') === normalizedPlaceUrl ||
-        normalizePlaceUrl(p.source_url || '') === normalizedPlaceUrl
-      );
-
-      if (isDuplicate) {
-        job.total_duplicates += 1;
-        job.current_step = `Já cadastrados: ${job.total_duplicates} · verificadas ${processedCount}/${placeUrls.size} fichas...`;
-        store.persist();
-        continue;
-      }
-
-      let detailPage: Page | null = null;
-      try {
-        let navigationError: any = null;
-        for (let attempt = 0; attempt < 2; attempt += 1) {
-          try {
-            // Puppeteer 25 Browser does not expose the legacy isConnected() method.
-            // Keep the current remote session and reconnect only when newPage/navigation fails.
-            if (!activeBrowser) activeBrowser = await connectScraperBrowser();
-            detailPage = await activeBrowser.newPage();
-            await detailPage.setUserAgent(
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            );
-            await detailPage.setViewport({ width: 1280, height: 900 });
-            await detailPage.setExtraHTTPHeaders({
-              'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-            });
-            await detailPage.goto(placeUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-            navigationError = null;
-            break;
-          } catch (error) {
-            navigationError = error;
-            if (detailPage) await detailPage.close().catch(() => {});
-            detailPage = null;
-            if (attempt === 0) {
-              await activeBrowser?.close().catch(() => {});
-              activeBrowser = await connectScraperBrowser();
-            }
-          }
-        }
-        if (navigationError) throw navigationError;
-        await new Promise((resolve) => setTimeout(resolve, 900));
-
-        const place = await extractPlaceDetails(detailPage, jobId, placeUrl);
-
-        // Search-area enrichment is allowed only for an unambiguous Brazilian
-        // city/state pattern. Never promote a lone neighborhood or search phrase to city.
-        const locationFallback = parseSearchLocationFallback(location);
-        let fieldStatus: Record<string, any> = {};
-        try {
-          fieldStatus = place.field_status ? JSON.parse(place.field_status) : {};
-        } catch {
-          fieldStatus = {};
-        }
-        const enrichedAt = new Date().toISOString();
-        if (!place.city && locationFallback.city) {
-          place.city = locationFallback.city;
-          fieldStatus.city = {
-            status: 'enriched_from_search_location',
-            source: 'scrape_job.location',
-            observed_at: enrichedAt,
-          };
-        }
-        if (!place.state && locationFallback.state) {
-          place.state = locationFallback.state;
-          fieldStatus.state = {
-            status: 'enriched_from_search_location',
-            source: 'scrape_job.location',
-            observed_at: enrichedAt,
-          };
-        }
-        place.field_status = JSON.stringify(fieldStatus);
-
-        // Save real place
-        state.places.push(place);
-        collectedCount += 1;
-        job.total_collected = collectedCount;
-        job.current_step = `Novos salvos: ${collectedCount} · verificadas ${processedCount}/${placeUrls.size}: ${place.name || 'Estabelecimento'}`;
-
-        state.logs.unshift({
-          id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          created_at: new Date().toISOString(),
-          level: 'info',
-          category: 'scraper',
-          event: 'place_extracted',
-          message: `Ficha extraída: "${place.name}" | Categoria: "${place.category || '—'}" | Tel: ${place.phone || '—'} | Endereço: ${place.address || '—'}`,
-          job_id: jobId,
-          metadata: JSON.stringify({
-            name: place.name,
-            rating: place.rating,
-            reviews: place.review_count,
-            phone: place.phone,
-            website: place.website,
-            address: place.address,
-            coords: { lat: place.latitude, lng: place.longitude },
-          }),
-          user_id: userId,
-        });
-
-        store.persist();
-      } catch (extractErr: any) {
-        job.total_errors += 1;
-        console.error(`Erro ao coletar ficha ${placeUrl}:`, extractErr.message);
-        state.logs.unshift({
-          id: `log_${Date.now()}_err`,
-          created_at: new Date().toISOString(),
-          level: 'warn',
-          category: 'scraper',
-          event: 'place_error',
-          message: `Erro na extração da ficha: ${extractErr.message}`,
-          job_id: jobId,
-          metadata: JSON.stringify({ url: placeUrl, error: extractErr.message }),
-          user_id: userId,
-        });
-        store.persist();
-      } finally {
-        if (detailPage) await detailPage.close().catch(() => {});
-      }
-    }
-
-    if (isCancelled) {
-      job.status = 'stopped';
-      job.status_message = 'Coleta interrompida pelo operador.';
-      job.current_step = 'Interrompido';
-      store.persist();
-      return;
-    }
-
-    // Final counters describe only the unique fiches checked in this execution.
+    // The selected limit is a target of new records, not a cap on duplicate checks.
     job.total_found = placeUrls.size;
     job.total_collected = collectedCount;
-    job.status =
-      job.total_errors > 0 && (collectedCount > 0 || job.total_duplicates > 0)
-        ? 'partial'
-        : collectedCount === 0 && job.total_duplicates === 0
-          ? 'failed'
-          : 'completed';
-    job.status_message =
-      job.status === 'failed'
-        ? `Pesquisa não concluída: ${placeUrls.size} fichas encontradas, ${job.total_errors} falha(s) e nenhum novo estabelecimento salvo.`
-        : job.status === 'partial'
-          ? `Pesquisa parcial: ${placeUrls.size} fichas verificadas; ${collectedCount} novas, ${job.total_duplicates} já cadastradas e ${job.total_errors} falha(s).`
-          : `Pesquisa concluída: ${placeUrls.size} fichas verificadas; ${collectedCount} novas salvas e ${job.total_duplicates} já cadastradas. Limite solicitado: ${limit}.`;
-    job.current_step = job.status === 'failed' ? 'Falha' : job.status === 'partial' ? 'Concluída parcialmente' : 'Concluído';
+    const targetReached = collectedCount >= limit;
+    job.status = targetReached
+      ? (job.total_errors > 0 ? 'partial' : 'completed')
+      : (collectedCount > 0 || job.total_duplicates > 0 ? 'partial' : 'failed');
+    job.status_message = targetReached
+      ? 'Meta atingida: ' + collectedCount + '/' + limit + ' novos estabelecimentos salvos; ' +
+        job.total_duplicates + ' já cadastrados ignorados; ' + job.total_errors + ' falha(s).'
+      : 'Meta parcial: ' + collectedCount + '/' + limit + ' novos estabelecimentos salvos após verificar ' +
+        processedCount + ' fichas (' + job.total_duplicates + ' já cadastradas e ' + job.total_errors +
+        ' falha(s)). O Google Maps não apresentou mais resultados dentro do limite operacional.';
+    job.current_step = targetReached
+      ? (job.status === 'partial' ? 'Meta atingida com ressalvas' : 'Meta atingida')
+      : (job.status === 'partial' ? 'Pesquisa parcial' : 'Falha');
     job.completed_at = new Date().toISOString();
 
     state.logs.unshift({
@@ -1364,14 +1413,14 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
       user_id: userId,
     });
 
-    store.persist();
+    await store.persistScrapeProgress(job);
   } catch (error: any) {
     const cancellationWasRequested = isCancelled || await store.isJobCancellationRequested(jobId, userId).catch(() => false);
     if (cancellationWasRequested) {
       job.status = 'stopped';
       job.status_message = 'Coleta interrompida pelo usuário.';
       job.current_step = 'Interrompido';
-      store.persist();
+      await store.persistScrapeProgress(job);
       return;
     }
 
@@ -1391,7 +1440,7 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
       metadata: JSON.stringify({ error: error?.message }),
       user_id: userId,
     });
-    store.persist();
+    await store.persistScrapeProgress(job).catch((persistError) => console.error('[Scraper] Falha ao salvar estado final:', persistError));
   } finally {
     clearInterval(cancellationPoll);
     if (activeBrowser) {
