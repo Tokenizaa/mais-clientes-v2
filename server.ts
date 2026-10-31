@@ -13,7 +13,7 @@ import puppeteer from 'puppeteer-core';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Browser, Page } from 'puppeteer-core';
 import { extractPlaceDetails } from './src/server/scraper/extractor.ts';
-import { parseSearchLocationFallback } from './src/server/scraper/normalizer.ts';
+import { extractSourcePlaceId, parseSearchLocationFallback } from './src/server/scraper/normalizer.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -442,6 +442,99 @@ function getInitialStore(): StoreState {
   };
 }
 
+function normalizeMapsPlaceUrl(value: string | null | undefined): string {
+  if (!value) return '';
+  try {
+    const parsed = new URL(value);
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.toString().replace(/\\/+$/, '');
+  } catch {
+    return String(value).split(/[?#]/, 1)[0].replace(/\\/+$/, '');
+  }
+}
+
+function normalizePlaceTextKey(value: string | null | undefined): string {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\\u0300-\\u036f]/g, '')
+    .toLocaleLowerCase('pt-BR')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+const INVALID_MAPS_PLACE_NAMES = new Set([
+  'horario', 'horarios', 'avaliacao', 'avaliacoes', 'sobre', 'fotos', 'foto',
+  'menu', 'reviews', 'review', 'about', 'overview', 'directions', 'rotas',
+  'como chegar', 'mais informacoes', 'informacoes', 'website', 'site',
+]);
+
+function isValidMapsBusinessName(value: string | null | undefined): boolean {
+  const key = normalizePlaceTextKey(value);
+  return key.length >= 3 && key.length <= 180 && !INVALID_MAPS_PLACE_NAMES.has(key) && !/^\\d+$/.test(key);
+}
+
+function getPlaceIdentity(place: Partial<PlaceRecord>): { sourceId: string; urlKeys: string[]; nameAddressKey: string } {
+  const sourceId =
+    extractSourcePlaceId(place.maps_url) ||
+    extractSourcePlaceId(place.source_url) ||
+    String(place.source_place_id || '').trim().toLowerCase();
+  const urlKeys = [place.maps_url, place.source_url]
+    .map(normalizeMapsPlaceUrl)
+    .filter(Boolean);
+  const name = normalizePlaceTextKey(place.name);
+  const address = normalizePlaceTextKey(place.address);
+  return {
+    sourceId,
+    urlKeys,
+    nameAddressKey: name && address ? `${name}|${address}` : '',
+  };
+}
+
+function deduplicatePlaceSnapshot(places: PlaceRecord[]): PlaceRecord[] {
+  const unique = new Map<string, PlaceRecord>();
+  const score = (place: PlaceRecord): number => {
+    const fields: (keyof PlaceRecord)[] = [
+      'name', 'category', 'address', 'phone', 'website', 'rating', 'review_count',
+      'maps_url', 'source_url', 'source_place_id', 'description', 'opening_hours',
+    ];
+    return fields.reduce((total, field) => {
+      const value = place[field];
+      return total + (value !== undefined && value !== null && String(value).trim() ? 1 : 0);
+    }, isValidMapsBusinessName(place.name) ? 5 : -10);
+  };
+
+  for (const place of places) {
+    const identity = getPlaceIdentity(place);
+    const key = identity.sourceId
+      ? `maps:${identity.sourceId}`
+      : identity.urlKeys[0]
+        ? `url:${identity.urlKeys[0]}`
+        : `id:${place.id}`;
+    const existing = unique.get(key);
+    if (!existing || score(place) > score(existing)) unique.set(key, place);
+  }
+  return Array.from(unique.values());
+}
+
+function markStaleRunningJobs(state: StoreState, userId: string, now = Date.now()): boolean {
+  // Vercel function maxDuration is 60 seconds. A job still marked running
+  // after five minutes has lost its worker and must not remain stuck forever.
+  const staleAfterMs = 5 * 60 * 1000;
+  let changed = false;
+  for (const job of state.jobs) {
+    if (job.user_id !== userId || job.status !== 'running') continue;
+    const createdAt = Date.parse(job.created_at);
+    if (!Number.isFinite(createdAt) || now - createdAt <= staleAfterMs) continue;
+    job.status = 'failed';
+    job.status_message = 'A execução foi encerrada sem finalizar. O processo excedeu o tempo disponível ou perdeu o worker; inicie uma nova pesquisa.';
+    job.current_step = 'Execução expirada';
+    job.completed_at = new Date(now).toISOString();
+    changed = true;
+  }
+  return changed;
+}
+
 class Store {
   private state: StoreState;
   private supabase: SupabaseClient | null = null;
@@ -485,6 +578,14 @@ class Store {
         logs: [],
         settings: {},
       };
+      this.persist();
+      await this.flush();
+    }
+
+    const deduplicatedPlaces = deduplicatePlaceSnapshot(this.state.places || []);
+    if (deduplicatedPlaces.length !== this.state.places.length) {
+      console.warn(`[Store] Removendo ${this.state.places.length - deduplicatedPlaces.length} duplicidade(s) do snapshot local de estabelecimentos.`);
+      this.state.places = deduplicatedPlaces;
       this.persist();
       await this.flush();
     }
@@ -610,6 +711,79 @@ class Store {
     if (categoriesError) throw new Error(`Falha ao excluir categorias do projeto: ${categoriesError.message}`);
     const { error: projectError } = await this.supabase.from('projects').delete().eq('id', projectId);
     if (projectError) throw new Error(`Falha ao excluir projeto relacional: ${projectError.message}`);
+  }
+
+  async persistScrapeProgress(job: ScrapeJob, newPlace?: PlaceRecord): Promise<boolean> {
+    if (!this.supabase) {
+      this.save(this.state);
+      return true;
+    }
+
+    const snapshot = JSON.parse(JSON.stringify(this.state)) as StoreState;
+    let placeInserted = true;
+    this.pendingWrite = this.pendingWrite.catch(() => undefined).then(async () => {
+      const client = this.supabase!;
+
+      if (newPlace) {
+        const sourceUrl = String(newPlace.source_url || newPlace.maps_url || '').trim();
+        if (sourceUrl) {
+          const { data: existing, error: lookupError } = await client
+            .from('places')
+            .select('id')
+            .eq('source_url', sourceUrl)
+            .maybeSingle();
+          if (lookupError) throw new Error(`Falha ao verificar URL antes de salvar estabelecimento: ${lookupError.message}`);
+          if (existing && existing.id !== newPlace.id) {
+            placeInserted = false;
+            return;
+          }
+        }
+
+        const p = newPlace;
+        const row = {
+          id: p.id, job_id: p.job_id, name: p.name || '', category: p.category || '',
+          address: p.address || '', neighborhood: p.neighborhood || null, phone: p.phone || '', website: p.website || '',
+          rating: p.rating || '', review_count: p.review_count || '', price_range: p.price_range || '',
+          opening_hours: p.opening_hours || '', business_status: p.business_status || '',
+          latitude: p.latitude || '', longitude: p.longitude || '', maps_url: p.maps_url || '',
+          description: p.description || '', services_attributes: p.services_attributes || '',
+          photos: p.photos ?? null, videos: p.videos ?? null, logo_url: p.logo_url ?? null,
+          booking_url: p.booking_url ?? null, social_links: p.social_links ?? null, reviews: p.reviews ?? null,
+          review_topics: p.review_topics ?? null, additional_attributes: p.additional_attributes ?? null,
+          media_items: p.media_items ?? null, plus_code: p.plus_code ?? null, postal_code: p.postal_code ?? null,
+          country: p.country ?? null, city: p.city ?? null, state: p.state ?? null,
+          source_place_id: p.source_place_id ?? null, source_url: p.source_url || p.maps_url || null,
+          attributes: p.attributes ?? null, accessibility_attributes: p.accessibility_attributes ?? null,
+          next_opening_text: p.next_opening_text ?? null, next_open_day: p.next_open_day ?? null,
+          next_open_time: p.next_open_time ?? null, visible_photos_count: p.visible_photos_count ?? null,
+          popular_times: p.popular_times ?? null, rating_distribution: p.rating_distribution ?? null,
+          review_highlights: p.review_highlights ?? null, field_status: p.field_status ?? null,
+          collected_at: p.collected_at || new Date().toISOString(),
+        };
+        const { error: placeError } = await client.from('places').upsert(row, { onConflict: 'id' });
+        if (placeError) throw new Error(`Falha ao salvar estabelecimento ${p.name}: ${placeError.message}`);
+      }
+
+      const { error: stateError } = await client
+        .from('app_state')
+        .upsert({ id: 'main', state: snapshot, updated_at: new Date().toISOString() });
+      if (stateError) throw new Error(`Falha ao persistir progresso da coleta: ${stateError.message}`);
+
+      const { error: jobError } = await client.from('scrape_jobs').upsert({
+        id: job.id, user_id: job.user_id, segment: job.segment,
+        project_name: job.project_name ?? null, project_id: job.project_id ?? null,
+        category_id: job.category_id ?? null, location: job.location,
+        limit_requested: job.limit_requested, status: job.status,
+        status_message: job.status_message, total_found: job.total_found,
+        total_collected: job.total_collected, total_duplicates: job.total_duplicates,
+        total_errors: job.total_errors, current_step: job.current_step ?? null,
+        created_at: job.created_at, completed_at: job.completed_at ?? null,
+      }, { onConflict: 'id' });
+      if (jobError) throw new Error(`Falha ao sincronizar progresso da coleta: ${jobError.message}`);
+    });
+
+    await this.pendingWrite;
+    return placeInserted;
   }
 
   persist(): void {
