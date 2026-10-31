@@ -21,22 +21,30 @@ function job(overrides: Partial<ScrapeJob> = {}): ScrapeJob {
   };
 }
 
-test('discovery progress reflects found fiches instead of remaining at zero saved', () => {
-  assert.equal(calculateScrapeProgressPercent(job({ phase: 'discovering', total_found: 14 })), 70);
+test('progress is based on NEW saved establishments, not discovered cards', () => {
+  assert.equal(calculateScrapeProgressPercent(job({
+    phase: 'processing',
+    total_found: 40,
+    total_collected: 0,
+    total_duplicates: 29,
+    candidate_cursor: 29,
+    candidate_urls: ['only-the-current-bounded-item'],
+  })), 0);
 });
 
-test('processing starts at 70 percent and advances from the persisted cursor', () => {
-  const base = { phase: 'processing' as const, total_found: 14, candidate_urls: Array(14).fill('url') };
-  assert.equal(calculateScrapeProgressPercent(job(base)), 70);
-  assert.equal(calculateScrapeProgressPercent(job({ ...base, candidate_cursor: 7 })), 85);
-  assert.equal(calculateScrapeProgressPercent(job({ ...base, candidate_cursor: 14 })), 99);
+test('progress follows the requested target as new establishments are saved', () => {
+  assert.equal(calculateScrapeProgressPercent(job({ total_collected: 1 })), 5);
+  assert.equal(calculateScrapeProgressPercent(job({ total_collected: 11 })), 55);
+  assert.equal(calculateScrapeProgressPercent(job({ total_collected: 19 })), 95);
+  assert.equal(calculateScrapeProgressPercent(job({ total_collected: 20 })), 100);
 });
 
-test('terminal jobs report completed work even when the target was not reached', () => {
-  assert.equal(calculateScrapeProgressPercent(job({ status: 'partial', total_found: 14 })), 100);
-  assert.equal(calculateScrapeProgressPercent(job({ status: 'failed' })), 100);
+test('partial, failed and stopped jobs show the target actually achieved', () => {
+  assert.equal(calculateScrapeProgressPercent(job({ status: 'partial', total_collected: 11 })), 55);
+  assert.equal(calculateScrapeProgressPercent(job({ status: 'failed', total_collected: 0 })), 0);
+  assert.equal(calculateScrapeProgressPercent(job({ status: 'stopped', total_collected: 3 })), 15);
 });
 
-test('legacy jobs without a phase retain a useful discovery percentage', () => {
-  assert.equal(calculateScrapeProgressPercent(job({ total_found: 10 })), 50);
+test('completed jobs report 100 percent', () => {
+  assert.equal(calculateScrapeProgressPercent(job({ status: 'completed', total_collected: 20 })), 100);
 });
