@@ -26,6 +26,8 @@ export interface ScrapeRuntimeStore {
   countScrapeCandidates(jobId: string): Promise<number>;
   findJobForWorker(jobId: string, userId: string): Promise<ScrapeJob | null>;
   releaseScrapeWorkerLease(jobId: string): Promise<void>;
+  isExistingPlace(place: Partial<PlaceRecord>): Promise<boolean>;
+  updateScrapeCandidateStatus(job: ScrapeJob, ordinal: number, status: 'processing' | 'processed' | 'duplicate' | 'failed', lastError?: string): Promise<void>;
 }
 
 type BrowserConnector = (legacyEndpoint?: string) => Promise<Browser>;
@@ -485,9 +487,16 @@ async function processCandidateBatch(
     let detailPage: Page | null = null;
 
     try {
+      await store.updateScrapeCandidateStatus(job, cursor, 'processing');
       const urlKey = normalizeMapsPlaceUrl(placeUrl);
       const sourceId = extractSourcePlaceId(placeUrl);
-      if ((sourceId && knownIds.has(sourceId)) || (urlKey && knownUrls.has(urlKey))) {
+      const alreadyInDatabase = await store.isExistingPlace({
+        source_place_id: sourceId,
+        source_url: urlKey,
+        maps_url: placeUrl,
+      });
+      if (alreadyInDatabase || (sourceId && knownIds.has(sourceId)) || (urlKey && knownUrls.has(urlKey))) {
+        await store.updateScrapeCandidateStatus(job, cursor, 'duplicate');
         job.total_duplicates += 1;
         cursor += 1;
         job.candidate_cursor = cursor;
@@ -520,11 +529,14 @@ async function processCandidateBatch(
       }
 
       const identity = getIdentity(place);
+      const alreadyExtractedInDatabase = await store.isExistingPlace(place);
       if (
+        alreadyExtractedInDatabase ||
         (identity.sourceId && knownIds.has(identity.sourceId)) ||
         identity.urlKeys.some((key) => knownUrls.has(key)) ||
         (identity.nameAddressKey && knownNameAddresses.has(identity.nameAddressKey))
       ) {
+        await store.updateScrapeCandidateStatus(job, cursor, 'duplicate');
         job.total_duplicates += 1;
       } else {
         place.source_place_id = identity.sourceId || place.source_place_id || '';
@@ -566,7 +578,9 @@ async function processCandidateBatch(
           state.logs = state.logs.filter((item) => item.id !== logId);
           job.total_collected = Math.max(0, job.total_collected - 1);
           job.total_duplicates += 1;
+          await store.updateScrapeCandidateStatus(job, cursor, 'duplicate');
         } else {
+          await store.updateScrapeCandidateStatus(job, cursor, 'processed');
           if (identity.sourceId) knownIds.add(identity.sourceId);
           identity.urlKeys.forEach((key) => knownUrls.add(key));
           if (identity.nameAddressKey) knownNameAddresses.add(identity.nameAddressKey);
@@ -574,8 +588,12 @@ async function processCandidateBatch(
       }
     } catch (error) {
       job.total_errors += 1;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      await store.updateScrapeCandidateStatus(job, cursor, 'failed', errorMessage).catch((statusError) => {
+        console.error('[Scraper] Não foi possível atualizar o status da ficha com falha:', statusError);
+      });
       addLog(state, job, 'warn', 'place_error', 'Falha na ficha ' + (cursor + 1) + ': ' +
-        (error instanceof Error ? error.message : String(error)), { url: placeUrl });
+        errorMessage, { url: placeUrl });
     } finally {
       if (detailPage) await withTimeout(detailPage.close(), 1_500, 'Fechamento da ficha').catch(() => {});
     }
