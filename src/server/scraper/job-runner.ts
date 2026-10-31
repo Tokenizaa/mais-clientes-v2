@@ -305,7 +305,17 @@ async function checkpointPlace(
   job.current_step = 'Processadas ' + job.total_found + ' fichas · ' +
     job.total_collected + '/' + job.limit_requested + ' novos contatos salvos.';
   setHeartbeat(job);
-  const inserted = await store.persistScrapeProgress(job, place);
+  let inserted = true;
+  try {
+    inserted = await store.persistScrapeProgress(job, place);
+  } catch (error) {
+    if (place) {
+      const state = store.getState();
+      state.places = state.places.filter((item) => item.id !== place.id);
+      job.total_collected = Math.max(0, job.total_collected - 1);
+    }
+    throw error;
+  }
   if (!inserted && place) {
     const state = store.getState();
     state.places = state.places.filter((item) => item.id !== place.id);
