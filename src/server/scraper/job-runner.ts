@@ -475,7 +475,11 @@ export async function runScrapeJobStep(
   userId: string,
 ): Promise<void> {
   const state = store.getState();
-  const durableJob = await store.findJobForWorker(jobId, userId);
+  const durableJob = await store.findJobForWorker(jobId, userId).catch((error) => {
+    console.error('[Scraper] Falha ao recuperar estado durável do job ' + jobId + ':',
+      error instanceof Error ? error.message : error);
+    return null;
+  });
   if (!durableJob || durableJob.status !== 'running') return;
   let job = state.jobs.find((item) => item.id === jobId && item.user_id === userId);
   if (job) Object.assign(job, durableJob);
