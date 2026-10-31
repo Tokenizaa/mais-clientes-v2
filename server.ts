@@ -1441,8 +1441,9 @@ export async function createApp() {
       const scopeKey = crypto.createHash('sha256')
         .update([normalizedSegment, normalizedLocation, project.id, category.id].join('\\u0000'))
         .digest('hex');
+      const sessionId = 'ss_' + crypto.createHash('sha256').update(userId + '\\u0000' + scopeKey).digest('hex');
       const searchSession = await store.ensureSearchSession({
-        id: 'ss_' + scopeKey,
+        id: sessionId,
         userId,
         scopeKey,
         segment: String(segment).trim(),
