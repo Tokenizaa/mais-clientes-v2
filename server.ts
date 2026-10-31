@@ -915,28 +915,30 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
       if (consentBtn) consentBtn.click();
     }).catch(() => {});
 
-    // Collect place links by scrolling the results container
+    // The selected quantity is the maximum number of unique Maps fiches
+    // checked in this execution, including fiches already present in the base.
+    const normalizePlaceUrl = (value: string): string => {
+      try {
+        const parsed = new URL(value);
+        parsed.search = '';
+        parsed.hash = '';
+        return parsed.toString().replace(/\/+$/, '');
+      } catch {
+        return value.split(/[?#]/, 1)[0].replace(/\/+$/, '');
+      }
+    };
     const placeUrls = new Set<string>();
     let previousCount = 0;
     let stagnantRounds = 0;
 
-    // Check if directly redirected to a single place
     if (searchPage.url().includes('/maps/place/')) {
-      placeUrls.add(searchPage.url());
+      placeUrls.add(normalizePlaceUrl(searchPage.url()));
     }
 
-    job.current_step = 'Buscando fichas comerciais na página de resultados do Maps...';
+    job.current_step = `Buscando até ${limit} fichas comerciais no Google Maps...`;
     store.persist();
 
-    // Keep scrolling until we have a full batch of NEW places, not merely
-    // 20 links from the first viewport. Otherwise every new job starts at
-    // Google's first results and spends its limit on records already stored.
-    const countNewPlaces = () =>
-      Array.from(placeUrls).filter((url) =>
-        !state.places.some((p) => p.maps_url === url || p.source_url === url)
-      ).length;
-
-    while (countNewPlaces() < limit && stagnantRounds < 12) {
+    while (placeUrls.size < limit && stagnantRounds < 12) {
       if (isCancelled) break;
 
       const links: string[] = await searchPage.evaluate(() =>
@@ -948,26 +950,25 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
         return [];
       });
 
-      for (const url of links) placeUrls.add(url);
+      for (const url of links) {
+        if (placeUrls.size >= limit) break;
+        const normalizedUrl = normalizePlaceUrl(url);
+        if (normalizedUrl) placeUrls.add(normalizedUrl);
+      }
 
-      const newCount = countNewPlaces();
       job.total_found = placeUrls.size;
-      job.current_step = `Encontrados ${placeUrls.size} (${newCount} ainda não coletados); avançando resultados do Maps...`;
+      job.current_step = `Encontradas ${placeUrls.size} de ${limit} fichas solicitadas...`;
       store.persist();
 
-      if (newCount >= limit) break;
+      if (placeUrls.size >= limit) break;
 
-      // Scroll results container or window
       await searchPage.evaluate(() => {
         const feed =
           document.querySelector('div[role="feed"]') ||
           document.querySelector('div.m6QErb[aria-label]') ||
           document.querySelector('div.TFQHme');
-        if (feed) {
-          (feed as HTMLElement).scrollTop = feed.scrollHeight;
-        } else {
-          window.scrollTo(0, document.body.scrollHeight);
-        }
+        if (feed) (feed as HTMLElement).scrollTop = feed.scrollHeight;
+        else window.scrollTo(0, document.body.scrollHeight);
       }).catch(() => {});
 
       await new Promise((resolve) => setTimeout(resolve, 1500));
@@ -1012,19 +1013,25 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
 
     // Now visit each place URL and extract full details
     let collectedCount = 0;
+    let processedCount = 0;
 
     for (const placeUrl of placeUrls) {
       if (isCancelled) break;
-      if (collectedCount >= limit) break;
 
-      // Duplicate check (by URL or name+address in store)
-      const isDuplicate = state.places.some(
-        (p) => p.maps_url === placeUrl || p.source_url === placeUrl
+
+      if (processedCount >= limit) break;
+      processedCount += 1;
+
+      // Match canonical Maps URLs so tracking parameters do not bypass deduplication.
+      const normalizedPlaceUrl = normalizePlaceUrl(placeUrl);
+      const isDuplicate = state.places.some((p) =>
+        normalizePlaceUrl(p.maps_url || '') === normalizedPlaceUrl ||
+        normalizePlaceUrl(p.source_url || '') === normalizedPlaceUrl
       );
 
       if (isDuplicate) {
         job.total_duplicates += 1;
-        job.current_step = `Ignorando estabelecimento duplicado (${job.total_duplicates})...`;
+        job.current_step = `Já cadastrados: ${job.total_duplicates} · verificadas ${processedCount}/${placeUrls.size} fichas...`;
         store.persist();
         continue;
       }
@@ -1095,7 +1102,7 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
         state.places.push(place);
         collectedCount += 1;
         job.total_collected = collectedCount;
-        job.current_step = `Coletado (${collectedCount}/${Math.min(limit, placeUrls.size)}): ${place.name || 'Estabelecimento'}`;
+        job.current_step = `Novos salvos: ${collectedCount} · verificadas ${processedCount}/${placeUrls.size}: ${place.name || 'Estabelecimento'}`;
 
         state.logs.unshift({
           id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -1146,13 +1153,22 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
       return;
     }
 
-    // Complete job
-    job.status = collectedCount > 0 ? 'completed' : 'failed';
+    // Final counters describe only the unique fiches checked in this execution.
+    job.total_found = placeUrls.size;
+    job.total_collected = collectedCount;
+    job.status =
+      job.total_errors > 0 && (collectedCount > 0 || job.total_duplicates > 0)
+        ? 'partial'
+        : collectedCount === 0 && job.total_duplicates === 0
+          ? 'failed'
+          : 'completed';
     job.status_message =
-      collectedCount > 0
-        ? `Coleta real concluída com sucesso! ${collectedCount} estabelecimentos extraídos do Google Maps.`
-        : 'Nenhum estabelecimento pôde ser extraído da listagem.';
-    job.current_step = collectedCount > 0 ? 'Concluído' : 'Falha';
+      job.status === 'failed'
+        ? `Pesquisa não concluída: ${placeUrls.size} fichas encontradas, ${job.total_errors} falha(s) e nenhum novo estabelecimento salvo.`
+        : job.status === 'partial'
+          ? `Pesquisa parcial: ${placeUrls.size} fichas verificadas; ${collectedCount} novas, ${job.total_duplicates} já cadastradas e ${job.total_errors} falha(s).`
+          : `Pesquisa concluída: ${placeUrls.size} fichas verificadas; ${collectedCount} novas salvas e ${job.total_duplicates} já cadastradas. Limite solicitado: ${limit}.`;
+    job.current_step = job.status === 'failed' ? 'Falha' : job.status === 'partial' ? 'Concluída parcialmente' : 'Concluído';
     job.completed_at = new Date().toISOString();
 
     state.logs.unshift({
@@ -1396,7 +1412,8 @@ export async function createApp() {
 
       const user = resolveUserFromRequest(req);
       const userId = user ? user.id : 'usr_default';
-      const numLimit = Math.max(1, Math.min(200, parseInt(limit, 10) || 20));
+      const parsedLimit = Number.parseInt(String(limit ?? ''), 10);
+      const numLimit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(100, parsedLimit)) : 20;
       const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
       const state = store.getState();
