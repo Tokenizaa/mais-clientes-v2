@@ -311,6 +311,11 @@ async function processCandidateBatch(
   let cursor = Math.max(0, job.candidate_cursor || 0);
   const totalCandidates = job.total_found;
 
+  if (cursor < totalCandidates && urls.length === 0) {
+    throw new Error('A fila persistida não retornou a ficha do cursor ' + cursor +
+      ', embora o total registrado seja ' + totalCandidates + '.');
+  }
+
   if (cursor >= totalCandidates) {
     if (job.discovery_checkpoint?.exhausted === true) {
       await finishJob(store, job);
