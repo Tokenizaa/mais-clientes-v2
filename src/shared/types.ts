@@ -84,6 +84,12 @@ export interface ScrapeJob {
   total_duplicates: number;
   total_errors: number;
   current_step?: string;
+  /** Persisted worker phase; discovery and extraction run in separate Vercel invocations. */
+  phase?: 'discovering' | 'processing';
+  candidate_urls?: string[];
+  candidate_cursor?: number;
+  retry_count?: number;
+  heartbeat_at?: string;
   created_at: string;
   completed_at?: string;
 }
