@@ -88,14 +88,20 @@ async function restoreMapsFeedPosition(page: Page, targetScrollTop: number, expe
         if (!feed) return { scrollTop: -1, anchorFound: !expectedKey };
         const links = Array.from(feed.querySelectorAll('a[href*="/maps/place/"]'))
           .map((anchor) => {
+            let href = (anchor as HTMLAnchorElement).href;
             try {
-              const parsed = new URL((anchor as HTMLAnchorElement).href);
+              const parsed = new URL(href);
               parsed.search = '';
               parsed.hash = '';
-              return parsed.toString().replace(/\/+$/, '');
+              href = parsed.toString();
             } catch {
-              return (anchor as HTMLAnchorElement).href.split(/[?#]/, 1)[0].replace(/\/+$/, '');
+              const queryIndex = href.indexOf('?');
+              const hashIndex = href.indexOf('#');
+              const cutAt = [queryIndex, hashIndex].filter((value) => value >= 0).reduce((a, b) => Math.min(a, b), href.length);
+              href = href.slice(0, cutAt);
             }
+            while (href.endsWith('/')) href = href.slice(0, -1);
+            return href;
           });
         return {
           scrollTop: (feed as HTMLElement).scrollTop,
