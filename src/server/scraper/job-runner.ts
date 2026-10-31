@@ -173,13 +173,25 @@ async function discoverCandidates(
     const found = new Map<string, string>(
       (job.candidate_urls || []).map((url) => [normalizeMapsPlaceUrl(url), url])
     );
-    const maxCandidates = Math.min(200, Math.max(job.limit_requested * 5, job.limit_requested + 50));
     const startedAt = Date.now();
-    let stagnantRounds = Number(job.discovery_checkpoint?.stagnant_rounds || 0);
+    const initialCandidateCount = found.size;
+    // Stagnation is measured within this uninterrupted browser pass only.
+    // A serverless restart must not inherit a partially accumulated counter.
+    let stagnantRounds = 0;
     let scrollRound = Number(job.discovery_checkpoint?.scroll_round || 0);
+    const resumeScrollTop = Number(job.discovery_checkpoint?.scroll_top || 0);
+
+    if (resumeScrollTop > 0) {
+      await page.evaluate((target) => {
+        const feed = document.querySelector('div[role="feed"]') ||
+          document.querySelector('div.m6QErb[aria-label]') ||
+          document.querySelector('div.TFQHme');
+        if (feed) (feed as HTMLElement).scrollTop = target;
+      }, resumeScrollTop).catch(() => {});
+      await delay(650);
+    }
 
     while (
-      found.size < maxCandidates &&
       stagnantRounds < DISCOVERY_STAGNANT_ROUNDS &&
       Date.now() - startedAt < DISCOVERY_BUDGET_MS
     ) {
@@ -219,13 +231,18 @@ async function discoverCandidates(
       await store.persistScrapeProgress(job);
 
       if (found.size >= maxCandidates) break;
-      await page.evaluate(() => {
+      const scrollState = await page.evaluate(() => {
         const feed = document.querySelector('div[role="feed"]') ||
           document.querySelector('div.m6QErb[aria-label]') ||
           document.querySelector('div.TFQHme');
-        if (feed) (feed as HTMLElement).scrollTop = feed.scrollHeight;
-        else window.scrollTo(0, document.body.scrollHeight);
-      }).catch(() => {});
+        if (feed) {
+          const element = feed as HTMLElement;
+          element.scrollTop = element.scrollHeight;
+          return { scroll_top: element.scrollTop, scroll_height: element.scrollHeight };
+        }
+        window.scrollTo(0, document.body.scrollHeight);
+        return { scroll_top: window.scrollY, scroll_height: document.body.scrollHeight };
+      }).catch(() => ({ scroll_top: 0, scroll_height: 0 }));
       await delay(750);
       scrollRound += 1;
       stagnantRounds = found.size === before ? stagnantRounds + 1 : 0;
@@ -233,6 +250,8 @@ async function discoverCandidates(
         ...(job.discovery_checkpoint || {}),
         version: 1,
         scroll_round: scrollRound,
+        scroll_top: scrollState.scroll_top,
+        scroll_height: scrollState.scroll_height,
         last_seen_source_key: Array.from(found.keys()).at(-1) || '',
         last_seen_url: Array.from(found.values()).at(-1) || '',
         stagnant_rounds: stagnantRounds,
@@ -245,10 +264,18 @@ async function discoverCandidates(
     }
 
     job.candidate_urls = Array.from(found.values());
-    job.candidate_cursor = 0;
+    // Keep the durable processing cursor: new discovery rounds append candidates
+    // after already processed ones and must never rewind the queue.
+    job.candidate_cursor = Math.max(0, job.candidate_cursor || 0);
     job.phase = 'processing';
     job.retry_count = 0;
     job.total_found = job.candidate_urls.length;
+    job.discovery_checkpoint = {
+      ...(job.discovery_checkpoint || {}),
+      version: 1,
+      exhausted: found.size === initialCandidateCount && stagnantRounds >= DISCOVERY_STAGNANT_ROUNDS,
+      last_checkpoint_at: new Date().toISOString(),
+    };
     if (job.candidate_urls.length === 0) {
       job.status = 'failed';
       job.status_message = 'O Google Maps não retornou fichas públicas para esta busca.';
@@ -280,7 +307,14 @@ async function processCandidateBatch(
   let cursor = Math.max(0, job.candidate_cursor || 0);
 
   if (cursor >= urls.length) {
-    await finishJob(store, job);
+    if (job.discovery_checkpoint?.exhausted === true) {
+      await finishJob(store, job);
+    } else {
+      job.phase = 'discovering';
+      job.current_step = 'Fila atual processada. Retomando a descoberta no último checkpoint...';
+      setHeartbeat(job);
+      await store.persistScrapeProgress(job);
+    }
     return;
   }
 
@@ -404,8 +438,17 @@ async function processCandidateBatch(
     await store.persistScrapeProgress(job);
   }
 
-  if (job.total_collected >= job.limit_requested || cursor >= urls.length) {
+  if (job.total_collected >= job.limit_requested) {
     await finishJob(store, job);
+  } else if (cursor >= urls.length) {
+    if (job.discovery_checkpoint?.exhausted === true) {
+      await finishJob(store, job);
+    } else {
+      job.phase = 'discovering';
+      job.current_step = 'Fila atual processada. Retomando a descoberta no último checkpoint...';
+      setHeartbeat(job);
+      await store.persistScrapeProgress(job);
+    }
   } else {
     job.current_step = 'Lote concluído: ' + cursor + '/' + urls.length +
       ' fichas verificadas. Preparando o próximo lote...';
