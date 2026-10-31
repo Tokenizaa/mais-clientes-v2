@@ -92,7 +92,7 @@ export async function listAuditLogs(options: {
 } = {}): Promise<{ logs: AuditEvent[]; total: number }> {
   const db = getSupabase();
 
-  let query = db.from('audit_logs').select('id, created_at, level, category, event, message, job_id, metadata');
+  let query = db.from('audit_logs').select('id, created_at, level, category, event, message, job_id, metadata', { count: 'exact' });
 
   if (options.level) {
     query = query.eq('level', options.level);
@@ -111,7 +111,7 @@ export async function listAuditLogs(options: {
   let allowedJobIds: string[] | null = null;
   if (options.consumerProject) {
     const { data: userJobs, error: jobsError } = await db
-      .schema('mapscrape').from('searches')
+      .from('scrape_jobs')
       .select('id')
       .eq('user_id', options.consumerProject);
     if (jobsError) throw jobsError;
@@ -129,7 +129,7 @@ export async function listAuditLogs(options: {
   const limit = requestedLimit;
   const offset = requestedOffset;
 
-  const { data, error, count } = await query.select('id, created_at, level, category, event, message, job_id, metadata', { count: 'exact' }).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+  const { data, error, count } = await query.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
 
   if (error) throw error;
 

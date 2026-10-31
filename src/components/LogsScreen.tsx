@@ -146,7 +146,7 @@ export const LogsScreen: React.FC = () => {
             Diagnóstico do Sistema
           </span>
           <h1 className="mt-3 text-3xl sm:text-4xl font-extrabold tracking-tight text-zinc-100">Logs e Auditoria</h1>
-          <p className="mt-2 text-base text-zinc-400 max-w-2xl">Eventos reais da coleta, persistidos no Supabase para diagnosticar cada etapa do Google Maps.</p>
+          <p className="mt-2 text-base text-zinc-400 max-w-2xl">Eventos persistidos no SQLite para auditar detalhadamente cada ciclo de coleta do Google Maps.</p>
         </div>
         <div className="flex gap-2.5">
           <button
@@ -171,7 +171,7 @@ export const LogsScreen: React.FC = () => {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Buscar mensagem, evento, URL ou ID da pesquisa..."
+            placeholder="Buscar mensagem, evento, ID da pesquisa..."
             className="w-full rounded-xl border border-zinc-750 bg-zinc-950 py-2.5 pl-10 pr-3 text-sm text-zinc-100 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
           />
         </div>
@@ -229,7 +229,7 @@ export const LogsScreen: React.FC = () => {
       <div className="flex flex-col gap-3 rounded-xl border border-zinc-800 bg-zinc-900/70 p-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-400 font-mono">
           <span>{total.toLocaleString('pt-BR')} eventos encontrados</span>
-          <span>Exibindo até 100 eventos por página</span>
+          <span>Exibindo até 100 mais recentes</span>
           <span>{visibleSelectedLogs.length} selecionado(s)</span>
           {copyFeedback && <span className="text-emerald-400">{copyFeedback}</span>}
         </div>
@@ -250,7 +250,7 @@ export const LogsScreen: React.FC = () => {
 
       <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/90 shadow-xl">
         {loading && logs.length === 0 ? (
-          <div className="p-16 text-center text-sm text-zinc-400">Consultando auditoria no Supabase...</div>
+          <div className="p-16 text-center text-sm text-zinc-400">Carregando logs do SQLite...</div>
         ) : logs.length === 0 ? (
           <div className="p-16 text-center text-sm text-zinc-400">Nenhum evento encontrado para estes filtros.</div>
         ) : (

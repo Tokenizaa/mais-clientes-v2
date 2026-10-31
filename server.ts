@@ -1384,9 +1384,16 @@ async function executeScrapeJob(
             continue;
           }
 
-          state.places.push(place);
           const persisted = await store.persistScrapeProgress(job, place);
-          if (!persisted) throw new Error('O banco recusou a gravação do contato.');
+          if (!persisted) {
+            job.total_duplicates += 1;
+            await saveCheckpoint(item.url, 'duplicate', place.name);
+            await audit('duplicate_skipped', 'info', 'A URL já foi gravada por outra execução; registro descartado sem duplicar.', {
+              url: item.key, name: place.name, duplicate_count: job.total_duplicates, race_condition: true,
+            });
+            continue;
+          }
+          state.places.push(place);
           job.total_collected += 1;
           await saveCheckpoint(item.url, 'saved', place.name);
           await audit('place_saved', 'info', 'Novo contato gravado no Supabase.', {
@@ -2218,6 +2225,9 @@ export async function createApp() {
   // =========================================================================
 
   app.get('/api/v1/logs', async (req: Request, res: Response) => {
+    const viewer = resolveUserFromRequest(req);
+    if (!viewer) return res.status(401).json({ error: 'authentication_required' });
+    if (viewer.role !== 'admin') return res.status(403).json({ error: 'admin_required' });
     try {
       const { level, category, query, jobId, limit = '100', offset = '0' } = req.query;
       const result = await listAuditLogs({
@@ -2237,6 +2247,9 @@ export async function createApp() {
   });
 
   app.get('/api/v1/logs/export', async (req: Request, res: Response) => {
+    const viewer = resolveUserFromRequest(req);
+    if (!viewer) return res.status(401).json({ error: 'authentication_required' });
+    if (viewer.role !== 'admin') return res.status(403).json({ error: 'admin_required' });
     try {
       const { level, category, query, jobId } = req.query;
       const result = await listAuditLogs({
