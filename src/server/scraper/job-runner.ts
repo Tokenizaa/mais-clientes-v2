@@ -48,90 +48,145 @@ function delay(ms: number): Promise<void> {
  */
 async function restoreMapsFeedPosition(page: Page, targetScrollTop: number, expectedSourceKey = ''): Promise<void> {
   const target = Math.max(0, Math.floor(targetScrollTop));
-  if (target === 0) return;
+  if (target === 0 && !expectedSourceKey) return;
 
   await page.waitForFunction(() => {
     const feed = document.querySelector('div[role="feed"]') ||
       document.querySelector('div.m6QErb[aria-label]') ||
       document.querySelector('div.TFQHme');
     return Boolean(feed && (feed as HTMLElement).clientHeight > 0);
-  }, { timeout: 8_000 });
+  }, { timeout: 10_000 });
 
+  // Pixel offsets are not stable across fresh Google Maps sessions: the feed
+  // is virtualized and its initial scrollHeight can be shorter than the saved
+  // offset. The last observed Maps URL is the durable resume anchor.
+  const expectedKey = expectedSourceKey.trim();
   let lastState = { scrollTop: 0, scrollHeight: 0, clientHeight: 0, maxScroll: 0 };
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    lastState = await page.evaluate(() => {
+  let stagnantRounds = 0;
+
+  for (let attempt = 0; attempt < 28; attempt += 1) {
+    const state = await page.evaluate((anchorKey) => {
       const feed = document.querySelector('div[role="feed"]') ||
         document.querySelector('div.m6QErb[aria-label]') ||
         document.querySelector('div.TFQHme');
-      if (!feed) return { scrollTop: 0, scrollHeight: 0, clientHeight: 0, maxScroll: 0 };
+      if (!feed) return { scrollTop: 0, scrollHeight: 0, clientHeight: 0, maxScroll: 0, anchorFound: false };
       const element = feed as HTMLElement;
+      const normalize = (value: string) => {
+        try {
+          const parsed = new URL(value);
+          parsed.search = '';
+          parsed.hash = '';
+          return parsed.toString().replace(/\\/+$/, '');
+        } catch {
+          return value.split(/[?#]/, 1)[0].replace(/\\/+$/, '');
+        }
+      };
+      const anchors = Array.from(element.querySelectorAll('a[href*="/maps/place/"]'));
+      const matchingAnchor = anchorKey
+        ? anchors.find((anchor) => normalize((anchor as HTMLAnchorElement).href) === anchorKey)
+        : undefined;
       return {
         scrollTop: element.scrollTop,
         scrollHeight: element.scrollHeight,
         clientHeight: element.clientHeight,
         maxScroll: Math.max(0, element.scrollHeight - element.clientHeight),
+        anchorFound: Boolean(matchingAnchor),
       };
-    });
+    }, expectedKey);
 
-    if (lastState.maxScroll + 80 >= target) {
+    lastState = {
+      scrollTop: state.scrollTop,
+      scrollHeight: state.scrollHeight,
+      clientHeight: state.clientHeight,
+      maxScroll: state.maxScroll,
+    };
+
+    if (state.anchorFound) {
+      const restored = await page.evaluate((anchorKey) => {
+        const feed = document.querySelector('div[role="feed"]') ||
+          document.querySelector('div.m6QErb[aria-label]') ||
+          document.querySelector('div.TFQHme');
+        if (!feed) return false;
+        const element = feed as HTMLElement;
+        const normalize = (value: string) => {
+          try {
+            const parsed = new URL(value);
+            parsed.search = '';
+            parsed.hash = '';
+            return parsed.toString().replace(/\\/+$/, '');
+          } catch {
+            return value.split(/[?#]/, 1)[0].replace(/\\/+$/, '');
+          }
+        };
+        const anchor = Array.from(element.querySelectorAll('a[href*="/maps/place/"]'))
+          .find((item) => normalize((item as HTMLAnchorElement).href) === anchorKey) as HTMLElement | undefined;
+        if (!anchor) return false;
+        // Place the last saved result at the bottom of the visible feed. The
+        // next discovery pass then sees that anchor and results after it.
+        anchor.scrollIntoView({ block: 'end', inline: 'nearest' });
+        return true;
+      }, expectedKey);
+      if (restored) {
+        await delay(500);
+        const verified = await page.evaluate((anchorKey) => {
+          const feed = document.querySelector('div[role="feed"]') ||
+            document.querySelector('div.m6QErb[aria-label]') ||
+            document.querySelector('div.TFQHme');
+          if (!feed) return false;
+          const normalize = (value: string) => {
+            try {
+              const parsed = new URL(value);
+              parsed.search = '';
+              parsed.hash = '';
+              return parsed.toString().replace(/\\/+$/, '');
+            } catch {
+              return value.split(/[?#]/, 1)[0].replace(/\\/+$/, '');
+            }
+          };
+          return Array.from(feed.querySelectorAll('a[href*="/maps/place/"]'))
+            .some((item) => normalize((item as HTMLAnchorElement).href) === anchorKey);
+        }, expectedKey);
+        if (verified) return;
+      }
+    } else if (!expectedKey && lastState.maxScroll + 80 >= target) {
       const restored = await page.evaluate((savedOffset) => {
         const feed = document.querySelector('div[role="feed"]') ||
           document.querySelector('div.m6QErb[aria-label]') ||
           document.querySelector('div.TFQHme');
-        if (!feed) return -1;
+        if (!feed) return false;
         (feed as HTMLElement).scrollTop = savedOffset;
-        return (feed as HTMLElement).scrollTop;
+        return Math.abs((feed as HTMLElement).scrollTop - savedOffset) <= 120;
       }, target);
-      await delay(350);
-      const verified = await page.evaluate((expectedKey) => {
-        const feed = document.querySelector('div[role="feed"]') ||
-          document.querySelector('div.m6QErb[aria-label]') ||
-          document.querySelector('div.TFQHme');
-        if (!feed) return { scrollTop: -1, anchorFound: !expectedKey };
-        const links = Array.from(feed.querySelectorAll('a[href*="/maps/place/"]'))
-          .map((anchor) => {
-            let href = (anchor as HTMLAnchorElement).href;
-            try {
-              const parsed = new URL(href);
-              parsed.search = '';
-              parsed.hash = '';
-              href = parsed.toString();
-            } catch {
-              const queryIndex = href.indexOf('?');
-              const hashIndex = href.indexOf('#');
-              const cutAt = [queryIndex, hashIndex].filter((value) => value >= 0).reduce((a, b) => Math.min(a, b), href.length);
-              href = href.slice(0, cutAt);
-            }
-            while (href.endsWith('/')) href = href.slice(0, -1);
-            return href;
-          });
-        return {
-          scrollTop: (feed as HTMLElement).scrollTop,
-          anchorFound: !expectedKey || links.includes(expectedKey),
-        };
-      }, expectedSourceKey);
-      const offsetVerified = restored >= 0 && verified.scrollTop >= 0 &&
-        Math.abs(verified.scrollTop - target) <= Math.max(120, lastState.clientHeight * 0.35);
-      if (offsetVerified && verified.anchorFound) {
-        return;
-      }
+      if (restored) return;
     }
 
-    // Force lazy loading to extend the virtualized feed, then try the saved
-    // offset again. This is bounded and does not process candidate records.
-    await page.evaluate(() => {
+    // Advance gradually instead of jumping to scrollHeight. Google Maps loads
+    // virtualized result cards as the feed approaches its current end.
+    const advanced = await page.evaluate(() => {
       const feed = document.querySelector('div[role="feed"]') ||
         document.querySelector('div.m6QErb[aria-label]') ||
         document.querySelector('div.TFQHme');
-      if (feed) (feed as HTMLElement).scrollTop = (feed as HTMLElement).scrollHeight;
+      if (!feed) return { moved: false, atEnd: true };
+      const element = feed as HTMLElement;
+      const before = element.scrollTop;
+      const step = Math.max(350, Math.floor(element.clientHeight * 0.75));
+      element.scrollTop = Math.min(element.scrollTop + step, element.scrollHeight);
+      return {
+        moved: element.scrollTop > before + 5,
+        atEnd: element.scrollTop + element.clientHeight >= element.scrollHeight - 20,
+      };
     });
-    await delay(500);
+    await delay(advanced.atEnd ? 900 : 500);
+    if (!advanced.moved) stagnantRounds += 1;
+    else stagnantRounds = 0;
+    if (stagnantRounds >= 6) break;
   }
 
   throw new Error(
-    'Não foi possível restaurar a posição da descoberta no Google Maps. ' +
-    'Checkpoint preservado em ' + target + 'px; feed atual alcança ' +
-    lastState.maxScroll + 'px. A coleta não será reiniciada do primeiro resultado.'
+    'Não foi possível reencontrar o último resultado salvo no Google Maps. ' +
+    'Âncora: ' + (expectedKey || 'não registrada') + '; checkpoint: ' + target +
+    'px; posição atual: ' + lastState.scrollTop + 'px; limite atual: ' +
+    lastState.maxScroll + 'px. O checkpoint e a fila foram preservados.'
   );
 }
 
