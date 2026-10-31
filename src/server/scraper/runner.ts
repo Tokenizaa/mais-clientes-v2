@@ -290,7 +290,7 @@ async function runScraperJob(
             category: 'scraper',
             event: 'place_extraction_failed',
             message: error instanceof Error ? error.message : String(error ?? 'Erro desconhecido'),
-            job_id: jobId,
+            jobId,
             metadata: { url: placeUrl },
           });
           await reportProgress({
