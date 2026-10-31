@@ -977,18 +977,27 @@ async function connectScraperBrowser(): Promise<Browser> {
     : legacyEndpoint;
 
   if (wsEndpoint) {
-    try {
-      console.log(`[Scraper] Conectando ao Browserless / Chromium remoto (${browserlessToken ? 'Browserless' : 'endpoint legado'})...`);
-      return await puppeteer.connect({
-        browserWSEndpoint: wsEndpoint,
-        protocolTimeout: 60000,
-      });
-    } catch (err: any) {
-      const message = err?.message || 'erro desconhecido';
-      console.error(`[Scraper] Falha na conexão com o navegador remoto: ${message}`);
-      if (process.env.VERCEL === '1' || process.env.NODE_ENV === 'production') {
-        throw new Error(`Não foi possível conectar ao Browserless. Verifique BROWSERLESS_TOKEN e a região da conta. Detalhe: ${message}`);
+    let lastError: any = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        console.log(`[Scraper] Conectando ao Browserless / Chromium remoto (${browserlessToken ? 'Browserless' : 'endpoint legado'}) — tentativa ${attempt + 1}/3...`);
+        return await puppeteer.connect({
+          browserWSEndpoint: wsEndpoint,
+          protocolTimeout: 60000,
+        });
+      } catch (err: any) {
+        lastError = err;
+        const message = err?.message || 'erro desconhecido';
+        const retryable = /429|502|503|504|ECONNRESET|ETIMEDOUT|connection closed/i.test(message);
+        console.error(`[Scraper] Falha na conexão com o navegador remoto (tentativa ${attempt + 1}/3): ${message}`);
+        if (!retryable || attempt === 2) break;
+        await new Promise((resolve) => setTimeout(resolve, 1500 * (2 ** attempt)));
       }
+    }
+
+    const message = lastError?.message || 'erro desconhecido';
+    if (process.env.VERCEL === '1' || process.env.NODE_ENV === 'production') {
+      throw new Error(`Não foi possível conectar ao Browserless após 3 tentativas. Verifique BROWSERLESS_TOKEN, limite de sessões e região da conta. Detalhe: ${message}`);
     }
   }
 
