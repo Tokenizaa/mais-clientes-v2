@@ -19,6 +19,7 @@ type ScraperState = {
 export interface ScrapeRuntimeStore {
   getState(): ScraperState;
   persistScrapeProgress(job: ScrapeJob, newPlace?: PlaceRecord): Promise<boolean>;
+  persistDiscoveredCandidates(job: ScrapeJob, urls: string[]): Promise<void>;
   isJobCancellationRequested(jobId: string, userId: string): Promise<boolean>;
   claimScrapeWorkerLease(jobId: string, userId: string): Promise<boolean>;
   loadScrapeCandidates(jobId: string): Promise<string[]>;
@@ -209,12 +210,17 @@ async function discoverCandidates(
       });
 
       const before = found.size;
+      const newlyFound: string[] = [];
       for (const url of links) {
         const key = normalizeMapsPlaceUrl(url);
-        if (key && !found.has(key)) found.set(key, url);
-        if (found.size >= maxCandidates) break;
+        if (key && !found.has(key)) {
+          found.set(key, url);
+          newlyFound.push(url);
+        }
       }
 
+      // Persist only new discoveries before advancing the Maps feed.
+      await store.persistDiscoveredCandidates(job, newlyFound);
       job.candidate_urls = Array.from(found.values());
       job.total_found = found.size;
       job.discovery_checkpoint = {
