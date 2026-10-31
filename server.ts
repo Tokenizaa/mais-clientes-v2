@@ -626,42 +626,8 @@ class Store {
         .upsert({ id: 'main', state: snapshot, updated_at: new Date().toISOString() });
       if (stateError) throw new Error(`Falha ao persistir dados no Supabase: ${stateError.message}`);
 
-      // Keep the relational catalog in sync with the compatibility snapshot.
-      const owners = new Map<string, UserProfile>();
-      for (const user of snapshot.users) owners.set(user.id, user);
-      const ownerIds = new Set([
-        ...snapshot.projects.map((item) => item.user_id),
-        ...snapshot.categories.map((item) => item.user_id),
-        ...snapshot.jobs.map((item) => item.user_id),
-      ]);
-      for (const id of ownerIds) {
-        if (!owners.has(id)) owners.set(id, {
-          id, email: `${id}@internal.mapscrape.invalid`, name: id,
-          passwordHash: '', role: 'user', createdAt: new Date().toISOString(),
-        });
-      }
-      const userRows = Array.from(owners.values()).map((user) => ({
-        id: user.id, email: user.email, name: user.name,
-        password_hash: user.passwordHash, role: user.role, created_at: user.createdAt,
-      }));
-      if (userRows.length) {
-        const { error } = await client.from('app_users').upsert(userRows, { onConflict: 'id' });
-        if (error) throw new Error(`Falha ao sincronizar usuários: ${error.message}`);
-      }
-      if (snapshot.projects.length) {
-        const { error } = await client.from('projects').upsert(snapshot.projects.map((item) => ({
-          id: item.id, name: item.name, user_id: item.user_id,
-          created_at: item.created_at, updated_at: item.updated_at ?? null,
-        })), { onConflict: 'id' });
-        if (error) throw new Error(`Falha ao sincronizar projetos: ${error.message}`);
-      }
-      if (snapshot.categories.length) {
-        const { error } = await client.from('categories').upsert(snapshot.categories.map((item) => ({
-          id: item.id, name: item.name, user_id: item.user_id,
-          project_id: item.project_id, created_at: item.created_at,
-        })), { onConflict: 'id' });
-        if (error) throw new Error(`Falha ao sincronizar categorias: ${error.message}`);
-      }
+      // The compatibility snapshot is authoritative for users, projects, categories and credentials.
+      // Only searches and places are mirrored to their existing relational tables.
       if (snapshot.jobs.length) {
         const { error } = await client.from('searches').upsert(snapshot.jobs.map((item) => ({
           id: item.id, user_id: item.user_id, segment: item.segment,
@@ -737,17 +703,7 @@ class Store {
         }
       }
 
-      if (snapshot.credentials.length) {
-        const { error } = await client.from('api_credentials').upsert(snapshot.credentials.map((item) => ({
-          id: item.id,
-          consumer_name: item.consumer_name,
-          consumer_project: item.consumer_project,
-          api_key_hash: item.api_key_hash,
-          status: item.status,
-          created_at: item.created_at,
-        })), { onConflict: 'id' });
-        if (error) throw new Error(`Falha ao sincronizar credenciais de API: ${error.message}`);
-      }
+
     });
   }
 }
