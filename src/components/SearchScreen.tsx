@@ -262,7 +262,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           Pesquisar no Google Maps
         </h1>
         <p className="mt-3 text-base sm:text-lg text-zinc-400 max-w-3xl leading-relaxed">
-          Defina o projeto, o segmento, a localização e o total máximo de fichas desta pesquisa.
+          Defina o projeto, o segmento, a localização e quantos novos estabelecimentos deseja cadastrar.
         </p>
       </div>
 
@@ -513,10 +513,10 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           <div className="space-y-3">
             <div>
               <label className="block text-base sm:text-lg font-semibold text-zinc-100">
-                5. Quantidade máxima de fichas
+                5. Meta de novos estabelecimentos
               </label>
               <p className="mt-1 text-sm text-zinc-500">
-                Esse limite inclui fichas novas e estabelecimentos que já estão cadastrados na base.
+                A meta é de novos cadastros. Fichas antigas são ignoradas; a pesquisa continua até atingir a meta ou esgotar os resultados.
               </p>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -533,7 +533,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                       : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:bg-zinc-850 hover:text-zinc-200'
                   }`}
                 >
-                  {preset} fichas
+                  {preset} novos
                 </button>
               ))}
             </div>
@@ -657,7 +657,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             </div>
             <div className="flex justify-between mt-2 text-[11px] text-zinc-500">
               <span>{currentJob.total_collected.toLocaleString('pt-BR')} novos salvos</span>
-              <span>Limite total: {(currentJob.limit_requested || 20).toLocaleString('pt-BR')}</span>
+              <span>Meta de novos: {(currentJob.limit_requested || 20).toLocaleString('pt-BR')}</span>
             </div>
           </div>
 
@@ -666,7 +666,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             {/* Encontrados */}
             <div className="p-5 bg-zinc-950 border border-zinc-800 rounded-xl text-center">
               <span className="block text-xs sm:text-sm font-bold text-zinc-400 uppercase tracking-wider">
-                Fichas encontradas
+                Fichas localizadas
               </span>
               <span className="block text-3xl sm:text-4xl font-extrabold text-zinc-100 mt-2 font-mono tabular-nums">
                 {currentJob.total_found}
@@ -704,7 +704,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             </div>
           </div>
           <p className="text-xs leading-relaxed text-zinc-500">
-            Os números representam somente esta execução. “Novos salvos” são inserções realizadas agora; “Já cadastrados” são fichas que já existiam na base e contam dentro do limite; falhas são tentativas que não puderam ser concluídas.
+            Os números representam somente esta execução. A meta é de novos cadastros: fichas já existentes são ignoradas e a busca continua procurando outras. “Fichas localizadas” inclui resultados novos e antigos encontrados no Google Maps.
           </p>
 
           {/* Status Message */}
