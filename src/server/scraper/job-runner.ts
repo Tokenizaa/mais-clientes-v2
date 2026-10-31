@@ -23,6 +23,7 @@ export interface ScrapeRuntimeStore {
   isJobCancellationRequested(jobId: string, userId: string): Promise<boolean>;
   claimScrapeWorkerLease(jobId: string, userId: string): Promise<boolean>;
   loadScrapeCandidates(jobId: string): Promise<string[]>;
+  findJobForWorker(jobId: string, userId: string): Promise<ScrapeJob | null>;
   releaseScrapeWorkerLease(jobId: string): Promise<void>;
 }
 
@@ -474,8 +475,14 @@ export async function runScrapeJobStep(
   userId: string,
 ): Promise<void> {
   const state = store.getState();
-  const job = state.jobs.find((item) => item.id === jobId && item.user_id === userId);
-  if (!job || job.status !== 'running') return;
+  const durableJob = await store.findJobForWorker(jobId, userId);
+  if (!durableJob || durableJob.status !== 'running') return;
+  let job = state.jobs.find((item) => item.id === jobId && item.user_id === userId);
+  if (job) Object.assign(job, durableJob);
+  else {
+    job = durableJob;
+    state.jobs.push(job);
+  }
   console.info('[Scraper] Iniciando etapa do job ' + jobId + ' (' + (job.phase || 'discovering') + ').');
 
   let claimed = false;
