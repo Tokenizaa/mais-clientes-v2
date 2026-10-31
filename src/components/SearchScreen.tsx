@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { PlaceRecord, ScrapeJob } from '../shared/types';
 import { BRAZILIAN_STATES, POPULAR_CATEGORIES } from '../shared/brazilLocations';
+import { calculateScrapeProgressPercent } from '../shared/scrape-progress';
 
 // Requisições internas usam a sessão da conta; API keys ficam reservadas a integrações externas.
 async function accountFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
@@ -233,27 +234,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
 
   const limitPresets = [10, 20, 50, 100];
 
-  const calculateProgressPercent = (): number => {
-    if (!currentJob) return 0;
-    if (currentJob.status !== 'running') return 100;
-
-    const target = Math.max(1, currentJob.limit_requested || 20);
-    const found = Math.max(0, currentJob.total_found || 0);
-
-    // Discovery occupies the first 70% of the bar. Once URLs are persisted,
-    // the remaining 30% follows the durable candidate cursor across batches.
-    if (currentJob.phase === 'discovering') {
-      return Math.min(70, Math.round((found / target) * 100));
-    }
-    if (currentJob.phase === 'processing') {
-      const total = Math.max(1, currentJob.candidate_urls?.length || found);
-      const processed = Math.min(total, Math.max(0, currentJob.candidate_cursor || 0));
-      return Math.min(99, 70 + Math.round((processed / total) * 30));
-    }
-
-    // Backward compatibility for jobs created before the resumable worker.
-    return Math.min(99, Math.round((found / target) * 100));
-  };
+  const calculateProgressPercent = (): number => calculateScrapeProgressPercent(currentJob);
 
   return (
     <div className="max-w-5xl mx-auto py-2 sm:py-6 space-y-8">
