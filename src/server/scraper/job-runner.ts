@@ -351,7 +351,7 @@ async function processCandidateBatch(
         job.total_duplicates += 1;
         cursor += 1;
         job.candidate_cursor = cursor;
-        job.current_step = 'Ficha ' + cursor + '/' + urls.length + ': já cadastrada; seguindo para a próxima.';
+        job.current_step = 'Ficha ' + cursor + '/' + totalCandidates + ': já cadastrada; seguindo para a próxima.';
         setHeartbeat(job);
         await store.persistScrapeProgress(job);
         continue;
@@ -442,7 +442,7 @@ async function processCandidateBatch(
 
     cursor += 1;
     job.candidate_cursor = cursor;
-    job.current_step = 'Processadas ' + cursor + '/' + urls.length +
+    job.current_step = 'Processadas ' + cursor + '/' + totalCandidates +
       ' fichas · ' + job.total_collected + '/' + job.limit_requested + ' novos salvos.';
     setHeartbeat(job);
     await store.persistScrapeProgress(job);
@@ -460,7 +460,7 @@ async function processCandidateBatch(
       await store.persistScrapeProgress(job);
     }
   } else {
-    job.current_step = 'Lote concluído: ' + cursor + '/' + urls.length +
+    job.current_step = 'Lote concluído: ' + cursor + '/' + totalCandidates +
       ' fichas verificadas. Preparando o próximo lote...';
     setHeartbeat(job);
     await store.persistScrapeProgress(job);
