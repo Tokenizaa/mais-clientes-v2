@@ -1616,13 +1616,18 @@ export async function createApp() {
   // 2. SCRAPING JOBS (/api/v1/jobs)
   // =========================================================================
 
-  app.get('/api/v1/jobs', (req: Request, res: Response) => {
+  app.get('/api/v1/jobs', async (req: Request, res: Response) => {
     try {
       const state = store.getState();
       const user = resolveUserFromRequest(req);
-      const ownedJobs = state.jobs.filter((job) => job.user_id === user?.id);
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+      if (markStaleRunningJobs(state, user.id)) {
+        store.persist();
+        await store.flush();
+      }
+      const ownedJobs = state.jobs.filter((job) => job.user_id === user.id);
       const sorted = [...ownedJobs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-      return res.json({ data: sorted, total: sorted.length });
+      return res.setHeader('Cache-Control', 'no-store').json({ data: sorted, total: sorted.length });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -1671,7 +1676,7 @@ export async function createApp() {
         project_name: project.name, project_id: project.id, category_id: category.id,
         location: String(location).trim(), limit_requested: numLimit,
         status: 'running',
-        status_message: `Iniciando coleta para "${segment}" em "${location}"...`,
+        status_message: `Meta de ${numLimit} novos estabelecimentos. Fichas já cadastradas serão ignoradas e a busca continuará procurando outras em "${location}".`,
         total_found: 0, total_collected: 0, total_duplicates: 0, total_errors: 0,
         current_step: 'Conectando ao mecanismo de busca...',
         created_at: new Date().toISOString(),
@@ -1703,6 +1708,11 @@ export async function createApp() {
       const user = resolveUserFromRequest(req);
       if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
       // Read durable job state instead of trusting this function instance's snapshot.
+      const state = store.getState();
+      if (markStaleRunningJobs(state, user.id)) {
+        store.persist();
+        await store.flush();
+      }
       const job = await store.findJobForUser(req.params.id, user.id);
       if (!job) {
         console.warn('[Jobs] Job lookup miss', { jobId: req.params.id, userId: user.id, snapshotContainsId: store.getState().jobs.some((item) => item.id === req.params.id) });
