@@ -652,7 +652,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             {/* Encontrados */}
             <div className="p-5 bg-zinc-950 border border-zinc-800 rounded-xl text-center">
               <span className="block text-xs sm:text-sm font-bold text-zinc-400 uppercase tracking-wider">
-                Fichas localizadas
+                Fichas verificadas
               </span>
               <span className="block text-3xl sm:text-4xl font-extrabold text-zinc-100 mt-2 font-mono tabular-nums">
                 {currentJob.total_found}
@@ -690,7 +690,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             </div>
           </div>
           <p className="text-xs leading-relaxed text-zinc-500">
-            Os números representam somente esta execução. A meta é de novos cadastros: fichas já existentes são ignoradas e a busca continua procurando outras. “Fichas localizadas” inclui resultados novos e antigos encontrados no Google Maps.
+            Os números representam somente esta execução. A meta conta apenas novos contatos salvos. “Fichas verificadas” conta as fichas efetivamente processadas: novos contatos e registros que já existiam no banco.
           </p>
 
           {/* Status Message */}
