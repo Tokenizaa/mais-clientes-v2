@@ -22,7 +22,8 @@ export interface ScrapeRuntimeStore {
   persistDiscoveredCandidates(job: ScrapeJob, urls: string[]): Promise<void>;
   isJobCancellationRequested(jobId: string, userId: string): Promise<boolean>;
   claimScrapeWorkerLease(jobId: string, userId: string): Promise<boolean>;
-  loadScrapeCandidates(jobId: string): Promise<string[]>;
+  loadScrapeCandidates(jobId: string, fromOrdinal?: number, limit?: number): Promise<string[]>;
+  countScrapeCandidates(jobId: string): Promise<number>;
   findJobForWorker(jobId: string, userId: string): Promise<ScrapeJob | null>;
   releaseScrapeWorkerLease(jobId: string): Promise<void>;
 }
@@ -172,11 +173,11 @@ async function discoverCandidates(
 
     // Seed discovery from the durable queue so a terminated invocation never
     // forgets candidates that were already observed and committed.
-    const found = new Map<string, string>(
-      (job.candidate_urls || []).map((url) => [normalizeMapsPlaceUrl(url), url])
-    );
+    // This map deduplicates only the current browser pass. The database's
+    // unique (job_id, source_key) key deduplicates across worker restarts.
+    const found = new Map<string, string>();
     const startedAt = Date.now();
-    const initialCandidateCount = found.size;
+    const initialCandidateCount = await store.countScrapeCandidates(job.id);
     // Stagnation is measured within this uninterrupted browser pass only.
     // A serverless restart must not inherit a partially accumulated counter.
     let stagnantRounds = 0;
@@ -222,8 +223,7 @@ async function discoverCandidates(
 
       // Persist only new discoveries before advancing the Maps feed.
       await store.persistDiscoveredCandidates(job, newlyFound);
-      job.candidate_urls = Array.from(found.values());
-      job.total_found = found.size;
+      job.total_found = await store.countScrapeCandidates(job.id);
       job.discovery_checkpoint = {
         ...(job.discovery_checkpoint || {}),
         version: 1,
@@ -263,26 +263,24 @@ async function discoverCandidates(
         stagnant_rounds: stagnantRounds,
         last_checkpoint_at: new Date().toISOString(),
       };
-      job.candidate_urls = Array.from(found.values());
-      job.total_found = found.size;
+      job.total_found = await store.countScrapeCandidates(job.id);
       setHeartbeat(job);
       await store.persistScrapeProgress(job);
     }
 
-    job.candidate_urls = Array.from(found.values());
     // Keep the durable processing cursor: new discovery rounds append candidates
     // after already processed ones and must never rewind the queue.
     job.candidate_cursor = Math.max(0, job.candidate_cursor || 0);
     job.phase = 'processing';
     job.retry_count = 0;
-    job.total_found = job.candidate_urls.length;
+    job.total_found = await store.countScrapeCandidates(job.id);
     job.discovery_checkpoint = {
       ...(job.discovery_checkpoint || {}),
       version: 1,
-      exhausted: found.size === initialCandidateCount && stagnantRounds >= DISCOVERY_STAGNANT_ROUNDS,
+      exhausted: job.total_found === initialCandidateCount && stagnantRounds >= DISCOVERY_STAGNANT_ROUNDS,
       last_checkpoint_at: new Date().toISOString(),
     };
-    if (job.candidate_urls.length === 0) {
+    if (job.total_found === 0) {
       job.status = 'failed';
       job.status_message = 'O Google Maps não retornou fichas públicas para esta busca.';
       job.current_step = 'Nenhuma ficha localizada';
@@ -311,8 +309,9 @@ async function processCandidateBatch(
   const state = store.getState();
   const urls = job.candidate_urls || [];
   let cursor = Math.max(0, job.candidate_cursor || 0);
+  const totalCandidates = job.total_found;
 
-  if (cursor >= urls.length) {
+  if (cursor >= totalCandidates) {
     if (job.discovery_checkpoint?.exhausted === true) {
       await finishJob(store, job);
     } else {
@@ -334,10 +333,10 @@ async function processCandidateBatch(
     if (identity.nameAddressKey) knownNameAddresses.add(identity.nameAddressKey);
   }
 
-  const end = Math.min(cursor + CANDIDATES_PER_STEP, urls.length);
+  const end = Math.min(cursor + urls.length, cursor + CANDIDATES_PER_STEP);
   while (cursor < end && job.total_collected < job.limit_requested) {
     if (await stopIfRequested(store, job)) return;
-    const placeUrl = urls[cursor];
+    const placeUrl = urls[cursor - (job.candidate_cursor || 0)];
     let detailPage: Page | null = null;
 
     try {
@@ -446,7 +445,7 @@ async function processCandidateBatch(
 
   if (job.total_collected >= job.limit_requested) {
     await finishJob(store, job);
-  } else if (cursor >= urls.length) {
+  } else if (cursor >= totalCandidates) {
     if (job.discovery_checkpoint?.exhausted === true) {
       await finishJob(store, job);
     } else {
@@ -496,10 +495,16 @@ export async function runScrapeJobStep(
     if (!claimed) return;
 
     if (await stopIfRequested(store, job)) return;
-    // The relational candidate queue is authoritative in production. Reload it
-    // after acquiring the lease so a cold serverless instance resumes from durable data.
-    job.candidate_urls = await store.loadScrapeCandidates(job.id);
+    // The relational queue is authoritative. Fetch only the next bounded batch;
+    // discovery uses its own pass-local set and database uniqueness across restarts.
     job.phase = job.phase || 'discovering';
+    if (job.phase === 'processing') {
+      job.candidate_urls = await store.loadScrapeCandidates(
+        job.id, Math.max(0, job.candidate_cursor || 0), CANDIDATES_PER_STEP
+      );
+    } else {
+      job.candidate_urls = [];
+    }
     job.retry_count = job.retry_count || 0;
 
     browser = await connectBrowser(state.settings?.browserWsEndpoint);
