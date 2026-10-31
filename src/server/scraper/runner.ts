@@ -285,6 +285,14 @@ async function runScraperJob(
         } catch (error) {
           totalErrors += 1;
           console.error(`Erro ao coletar ${placeUrl}:`, error);
+          await safeAudit({
+            level: 'error',
+            category: 'scraper',
+            event: 'place_extraction_failed',
+            message: error instanceof Error ? error.message : String(error ?? 'Erro desconhecido'),
+            job_id: jobId,
+            metadata: JSON.stringify({ url: placeUrl }),
+          });
           await reportProgress({
             total_errors: totalErrors,
             current_step: `Erro em ficha (${totalErrors})...`,
@@ -303,6 +311,8 @@ async function runScraperJob(
           ? ('failed' as const)
           : totalCollected === 0 && totalFound === 0
             ? ('failed' as const)
+            : totalErrors > 0
+            ? ('partial' as const)
             : ('completed' as const);
 
       await reportProgress({
