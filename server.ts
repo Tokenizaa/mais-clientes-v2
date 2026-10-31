@@ -448,16 +448,16 @@ function normalizeMapsPlaceUrl(value: string | null | undefined): string {
     const parsed = new URL(value);
     parsed.search = '';
     parsed.hash = '';
-    return parsed.toString().replace(/\\/+$/, '');
+    return parsed.toString().replace(/\/+$/, '');
   } catch {
-    return String(value).split(/[?#]/, 1)[0].replace(/\\/+$/, '');
+    return String(value).split(/[?#]/, 1)[0].replace(/\/+$/, '');
   }
 }
 
 function normalizePlaceTextKey(value: string | null | undefined): string {
   return String(value || '')
     .normalize('NFD')
-    .replace(/[\\u0300-\\u036f]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
     .toLocaleLowerCase('pt-BR')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
@@ -471,7 +471,7 @@ const INVALID_MAPS_PLACE_NAMES = new Set([
 
 function isValidMapsBusinessName(value: string | null | undefined): boolean {
   const key = normalizePlaceTextKey(value);
-  return key.length >= 3 && key.length <= 180 && !INVALID_MAPS_PLACE_NAMES.has(key) && !/^\\d+$/.test(key);
+  return key.length >= 3 && key.length <= 180 && !INVALID_MAPS_PLACE_NAMES.has(key) && !/^\d+$/.test(key);
 }
 
 function getPlaceIdentity(place: Partial<PlaceRecord>): { sourceId: string; urlKeys: string[]; nameAddressKey: string } {
