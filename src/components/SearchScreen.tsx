@@ -8,7 +8,6 @@ import {
   ArrowRight,
   Building2,
   MapPin,
-  Hash,
   Sparkles,
   Compass,
 } from 'lucide-react';
@@ -246,7 +245,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
       (currentJob.total_collected || 0) +
       (currentJob.total_duplicates || 0) +
       (currentJob.total_errors || 0);
-    const totalToProcess = currentJob.total_found || currentJob.limit_requested || 20;
+    const totalToProcess = currentJob.limit_requested || 20;
 
     return Math.min(Math.round((processed / totalToProcess) * 100), 99);
   };
@@ -263,7 +262,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           Pesquisar no Google Maps
         </h1>
         <p className="mt-3 text-base sm:text-lg text-zinc-400 max-w-3xl leading-relaxed">
-          Selecione a categoria e a localização desejada.
+          Defina o projeto, o segmento, a localização e o total máximo de fichas desta pesquisa.
         </p>
       </div>
 
@@ -395,7 +394,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <label className="block text-base sm:text-lg font-semibold text-zinc-100">
-                2. Localização <span className="text-emerald-400">*</span>
+                4. Localização <span className="text-emerald-400">*</span>
               </label>
 
               {/* Mode Switcher: Brazil Selector vs Custom */}
@@ -452,19 +451,18 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                   <label htmlFor="city-select" className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
                     Cidade
                   </label>
-                  <select
+                  <input
                     id="city-select"
+                    list="city-options"
                     value={selectedCity}
                     onChange={(e) => setSelectedCity(e.target.value)}
                     disabled={isScraping}
+                    placeholder="Digite ou selecione a cidade"
                     className="w-full py-3.5 px-3.5 bg-zinc-950 border border-zinc-750 rounded-xl text-zinc-100 text-sm sm:text-base font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition-all"
-                  >
-                    {currentState.cities.map((city) => (
-                      <option key={city} value={city} className="bg-zinc-900 text-zinc-100">
-                        {city}
-                      </option>
-                    ))}
-                  </select>
+                  />
+                  <datalist id="city-options">
+                    {currentState.cities.map((city) => <option key={city} value={city} />)}
+                  </datalist>
                 </div>
 
                 {/* Bairro ou Região (Opcional) */}
@@ -511,52 +509,33 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             </div>
           </div>
 
-          {/* Seção 3: Limite de Resultados Desejado */}
+          {/* Etapa 5: Limite total da pesquisa */}
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <label htmlFor="limit" className="block text-base sm:text-lg font-semibold text-zinc-100">
-                3. Quantidade de Resultados Desejada
+            <div>
+              <label className="block text-base sm:text-lg font-semibold text-zinc-100">
+                5. Quantidade máxima de fichas
               </label>
-              <span className="text-xs sm:text-sm text-zinc-500">
-                Recomendado: 10 a 50 estabelecimentos por consulta
-              </span>
+              <p className="mt-1 text-sm text-zinc-500">
+                Esse limite inclui fichas novas e estabelecimentos que já estão cadastrados na base.
+              </p>
             </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="relative w-36">
-                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-zinc-500">
-                  <Hash className="w-4 h-4" />
-                </div>
-                <input
-                  id="limit"
-                  type="number"
-                  min="1"
-                  max="100"
-                  value={limit}
-                  onChange={(e) => setLimit(Math.max(1, Math.min(100, Number(e.target.value))))}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {limitPresets.map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => setLimit(preset)}
                   disabled={isScraping}
-                  className="w-full pl-10 pr-3 py-3 bg-zinc-950 border border-zinc-750 rounded-xl text-zinc-100 text-base font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500"
-                />
-              </div>
-
-              {/* Presets */}
-              <div className="flex items-center gap-2">
-                {limitPresets.map((preset) => (
-                  <button
-                    key={preset}
-                    type="button"
-                    onClick={() => setLimit(preset)}
-                    disabled={isScraping}
-                    className={`px-4 py-2.5 text-sm font-semibold rounded-xl border transition-all cursor-pointer ${
-                      limit === preset
-                        ? 'bg-zinc-800 text-zinc-100 border-zinc-650 shadow-xs'
-                        : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:bg-zinc-850 hover:text-zinc-200'
-                    }`}
-                  >
-                    {preset} fichas
-                  </button>
-                ))}
-              </div>
+                  aria-pressed={limit === preset}
+                  className={`px-3 py-3.5 text-sm sm:text-base font-semibold rounded-xl border transition-all cursor-pointer ${
+                    limit === preset
+                      ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/50'
+                      : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:bg-zinc-850 hover:text-zinc-200'
+                  }`}
+                >
+                  {preset} fichas
+                </button>
+              ))}
             </div>
           </div>
 
@@ -630,7 +609,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                 onClick={onGoToResults}
                 className="text-sm font-semibold text-zinc-200 hover:text-white bg-zinc-800 hover:bg-zinc-700 flex items-center gap-2 px-4 py-2.5 rounded-xl border border-zinc-700 transition-all cursor-pointer"
               >
-                <span>Ver {currentJob.total_collected} resultados salvos</span>
+                <span>Ver {currentJob.total_collected} novos salvos</span>
                 <ArrowRight className="w-4 h-4 text-emerald-400" />
               </button>
             )}
@@ -677,8 +656,8 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
               </div>
             </div>
             <div className="flex justify-between mt-2 text-[11px] text-zinc-500">
-              <span>{currentJob.total_collected.toLocaleString('pt-BR')} coletados</span>
-              <span>Meta: {(currentJob.limit_requested || 20).toLocaleString('pt-BR')}</span>
+              <span>{currentJob.total_collected.toLocaleString('pt-BR')} novos salvos</span>
+              <span>Limite total: {(currentJob.limit_requested || 20).toLocaleString('pt-BR')}</span>
             </div>
           </div>
 
@@ -724,6 +703,9 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
               </span>
             </div>
           </div>
+          <p className="text-xs leading-relaxed text-zinc-500">
+            Os números representam somente esta execução. “Novos salvos” são inserções realizadas agora; “Já cadastrados” são fichas que já existiam na base e contam dentro do limite; falhas são tentativas que não puderam ser concluídas.
+          </p>
 
           {/* Status Message */}
           {currentJob.status_message && (
