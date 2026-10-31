@@ -739,109 +739,8 @@ class Store {
     return String(data?.source_url || '');
   }
 
-  async persistDiscoveredCandidates(job: ScrapeJob, urls: string[]): Promise<void> {
-    if (!urls.length) return;
-    if (!this.supabase) {
-      const session = job.search_session_id ? this.localSearchSessions.get(job.search_session_id) : null;
-      if (session) {
-        session.candidate_urls = Array.from(new Set([...session.candidate_urls, ...urls]));
-        session.total_found = session.candidate_urls.length;
-        job.candidate_urls = session.candidate_urls;
-      } else {
-        job.candidate_urls = Array.from(new Set([...(job.candidate_urls || []), ...urls]));
-      }
-      this.save(this.state);
-      return;
-    }
-
-    const client = this.supabase;
-    const sessionId = job.search_session_id || null;
-    const isSessionQueue = Boolean(sessionId);
-    const normalized = urls.map((sourceUrl) => {
-      let sourceKey = sourceUrl;
-      try {
-        const parsed = new URL(sourceUrl);
-        parsed.search = '';
-        parsed.hash = '';
-        sourceKey = parsed.toString().replace(/\/+$/, '');
-      } catch {
-        sourceKey = sourceUrl.split(/[?#]/, 1)[0].replace(/\/+$/, '');
-      }
-      return { sourceUrl, sourceKey };
-    });
-    const unique = Array.from(new Map(normalized.map((item) => [item.sourceKey, item])).values());
-
-    // Filter already-persisted keys before assigning ordinals. Otherwise ignored
-    // duplicates would create gaps and the durable cursor could revisit a row.
-    const existingKeys = new Set<string>();
-    for (let i = 0; i < unique.length; i += 20) {
-      const keys = unique.slice(i, i + 20).map((item) => item.sourceKey);
-      let query = client.from('scrape_candidates').select('source_key');
-      query = isSessionQueue ? query.eq('session_id', sessionId) : query.eq('job_id', job.id);
-      const { data, error } = await query.in('source_key', keys);
-      if (error) throw new Error('Falha ao verificar fichas já descobertas: ' + error.message);
-      for (const row of data || []) existingKeys.add(row.source_key);
-    }
-    const fresh = unique.filter((item) => !existingKeys.has(item.sourceKey));
-    if (!fresh.length) return;
-
-    let lastQuery = client.from('scrape_candidates').select('ordinal');
-    lastQuery = isSessionQueue ? lastQuery.eq('session_id', sessionId) : lastQuery.eq('job_id', job.id);
-    const { data: lastCandidate, error: lastError } = await lastQuery
-      .order('ordinal', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (lastError) throw new Error('Falha ao consultar posição da fila de fichas: ' + lastError.message);
-
-    let ordinal = Number(lastCandidate?.ordinal ?? -1) + 1;
-    const rows = fresh.map((item) => ({
-      id: job.id + ':candidate:' + ordinal,
-      job_id: job.id,
-      session_id: sessionId,
-      user_id: job.user_id,
-      source_key: item.sourceKey,
-      source_url: item.sourceUrl,
-      ordinal: ordinal++,
-    }));
-    const { error } = await client.from('scrape_candidates').insert(rows);
-    if (error) {
-      if (error.code === '23505') {
-        throw new Error('Conflito ao registrar a fila de fichas; o checkpoint será retomado na próxima etapa.');
-      }
-      throw new Error('Falha ao persistir fichas recém-descobertas: ' + error.message);
-    }
-  }
-
   async findJobForWorker(jobId: string, userId: string): Promise<ScrapeJob | null> {
     return this.findJobForUser(jobId, userId);
-  }
-
-  async loadScrapeCandidates(queueId: string, fromOrdinal = 0, limit = 1): Promise<string[]> {
-    if (!this.supabase) {
-      const session = this.localSearchSessions.get(queueId);
-      const urls = session?.candidate_urls || this.state.jobs.find((job) => job.id === queueId)?.candidate_urls || [];
-      return urls.slice(fromOrdinal, fromOrdinal + limit);
-    }
-    let query = this.supabase.from('scrape_candidates').select('source_url');
-    query = queueId.startsWith('ss_') ? query.eq('session_id', queueId) : query.eq('job_id', queueId);
-    const { data, error } = await query
-      .gte('ordinal', fromOrdinal)
-      .order('ordinal', { ascending: true })
-      .limit(limit);
-    if (error) throw new Error('Falha ao recuperar fila de fichas da coleta: ' + error.message);
-    return (data || []).map((row: { source_url: string }) => row.source_url).filter(Boolean);
-  }
-
-  async countScrapeCandidates(queueId: string): Promise<number> {
-    if (!this.supabase) {
-      const session = this.localSearchSessions.get(queueId);
-      return session?.candidate_urls.length || this.state.jobs.find((job) => job.id === queueId)?.candidate_urls?.length || 0;
-    }
-    let query = this.supabase.from('scrape_candidates').select('id', { count: 'exact', head: true });
-    query = queueId.startsWith('ss_') ? query.eq('session_id', queueId) : query.eq('job_id', queueId);
-    const { count, error } = await query;
-    if (error) throw new Error('Falha ao contar fichas persistidas da coleta: ' + error.message);
-    return count || 0;
   }
 
   async isExistingPlace(place: Partial<PlaceRecord>): Promise<boolean> {
@@ -894,36 +793,6 @@ class Store {
       if (data?.id) return true;
     }
     return false;
-  }
-
-  async updateScrapeCandidateStatus(
-    job: ScrapeJob,
-    ordinal: number,
-    status: 'processing' | 'processed' | 'duplicate' | 'failed',
-    lastError?: string,
-  ): Promise<void> {
-    if (!this.supabase) return;
-    const client = this.supabase;
-    let lookup = client.from('scrape_candidates').select('id,attempt_count')
-      .eq('ordinal', ordinal);
-    lookup = job.search_session_id
-      ? lookup.eq('session_id', job.search_session_id)
-      : lookup.eq('job_id', job.id);
-    const { data: candidate, error: lookupError } = await lookup.maybeSingle();
-    if (lookupError) throw new Error('Falha ao localizar ficha na fila para atualizar status: ' + lookupError.message);
-    if (!candidate?.id) throw new Error('Ficha não encontrada na fila persistida no ordinal ' + ordinal + '.');
-
-    const patch: Record<string, unknown> = {
-      status,
-      attempt_count: Number(candidate.attempt_count || 0) + (status === 'processing' ? 1 : 0),
-      last_error: lastError || null,
-      updated_at: new Date().toISOString(),
-    };
-    if (status === 'processed' || status === 'duplicate' || status === 'failed') {
-      patch.processed_at = new Date().toISOString();
-    }
-    const { error } = await client.from('scrape_candidates').update(patch).eq('id', candidate.id);
-    if (error) throw new Error('Falha ao atualizar status da ficha na fila: ' + error.message);
   }
 
   async isJobCancellationRequested(id: string, userId: string): Promise<boolean> {
