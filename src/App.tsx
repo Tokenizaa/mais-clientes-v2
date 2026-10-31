@@ -335,6 +335,17 @@ export default function App() {
     progressPollRef.current = setInterval(() => { void pollStatus(); }, 2000);
   }, [loadHistory, loadPlaces]);
 
+  // Restore an in-progress job after a reload so its persisted cursor can resume.
+  useEffect(() => {
+    if (currentJob) return;
+    const resumableJob = jobs.find((job) => job.status === 'running' && Boolean(job.phase));
+    if (!resumableJob) return;
+    setCurrentJob(resumableJob);
+    setSelectedJobId(resumableJob.id);
+    setIsScraping(true);
+    subscribeToJobStream(resumableJob.id);
+  }, [jobs, currentJob, subscribeToJobStream]);
+
   // Clean up progress polling on unmount
   useEffect(() => {
     return () => {
