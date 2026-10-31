@@ -1,7 +1,7 @@
 import type { Browser, Page } from 'puppeteer-core';
 import type { PlaceRecord, ScrapeJob } from '../../shared/types.js';
 import { extractPlaceDetails } from './extractor.ts';
-import { extractSourcePlaceId, parseSearchLocationFallback } from './normalizer.ts';
+import { extractSourcePlaceId } from './normalizer.ts';
 
 const STEP_BUDGET_MS = 25_000;
 const DETAIL_NAVIGATION_TIMEOUT_MS = 15_000;
@@ -382,20 +382,6 @@ async function processOnePlace(
     place.source_place_id = place.source_place_id || sourceId;
     place.source_url = place.source_url || place.maps_url || placeUrl;
     place.maps_url = place.maps_url || placeUrl;
-
-    const fallback = parseSearchLocationFallback(job.location);
-    let fieldStatus: Record<string, any> = {};
-    try { fieldStatus = place.field_status ? JSON.parse(place.field_status) : {}; } catch { fieldStatus = {}; }
-    const enrichedAt = new Date().toISOString();
-    if (!place.city && fallback.city) {
-      place.city = fallback.city;
-      fieldStatus.city = { status: 'enriched_from_search_location', source: 'scrape_job.location', observed_at: enrichedAt };
-    }
-    if (!place.state && fallback.state) {
-      place.state = fallback.state;
-      fieldStatus.state = { status: 'enriched_from_search_location', source: 'scrape_job.location', observed_at: enrichedAt };
-    }
-    place.field_status = JSON.stringify(fieldStatus);
 
     state.places.push(place);
     job.total_collected += 1;
