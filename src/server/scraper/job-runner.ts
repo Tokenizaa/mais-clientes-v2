@@ -42,9 +42,9 @@ function delay(ms: number): Promise<void> {
  * navigation is not a reliable resume: the feed may not have loaded enough
  * cards yet, so the browser clamps the requested position back near the top.
  *
- * Grow the feed until the saved offset is reachable, then restore and verify
- * the actual position. If it cannot be restored, fail this bounded invocation
- * while keeping the durable checkpoint; never silently restart discovery at 0.
+ * Rebuild the virtualized feed until the last saved Maps result appears, then
+ * continue from that result. Pixel offsets are diagnostic only, never the
+ * source of truth for resuming a fresh browser session.
  */
 async function restoreMapsFeedPosition(page: Page, targetScrollTop: number, expectedSourceKey = ''): Promise<void> {
   const target = Math.max(0, Math.floor(targetScrollTop));
@@ -76,9 +76,9 @@ async function restoreMapsFeedPosition(page: Page, targetScrollTop: number, expe
           const parsed = new URL(value);
           parsed.search = '';
           parsed.hash = '';
-          return parsed.toString().replace(/\\/+$/, '');
+          return parsed.toString().replace(/\/+$/, '');
         } catch {
-          return value.split(/[?#]/, 1)[0].replace(/\\/+$/, '');
+          return value.split(/[?#]/, 1)[0].replace(/\/+$/, '');
         }
       };
       const anchors = Array.from(element.querySelectorAll('a[href*="/maps/place/"]'));
@@ -113,9 +113,9 @@ async function restoreMapsFeedPosition(page: Page, targetScrollTop: number, expe
             const parsed = new URL(value);
             parsed.search = '';
             parsed.hash = '';
-            return parsed.toString().replace(/\\/+$/, '');
+            return parsed.toString().replace(/\/+$/, '');
           } catch {
-            return value.split(/[?#]/, 1)[0].replace(/\\/+$/, '');
+            return value.split(/[?#]/, 1)[0].replace(/\/+$/, '');
           }
         };
         const anchor = Array.from(element.querySelectorAll('a[href*="/maps/place/"]'))
@@ -138,9 +138,9 @@ async function restoreMapsFeedPosition(page: Page, targetScrollTop: number, expe
               const parsed = new URL(value);
               parsed.search = '';
               parsed.hash = '';
-              return parsed.toString().replace(/\\/+$/, '');
+              return parsed.toString().replace(/\/+$/, '');
             } catch {
-              return value.split(/[?#]/, 1)[0].replace(/\\/+$/, '');
+              return value.split(/[?#]/, 1)[0].replace(/\/+$/, '');
             }
           };
           return Array.from(feed.querySelectorAll('a[href*="/maps/place/"]'))
