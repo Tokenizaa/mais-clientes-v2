@@ -1158,6 +1158,8 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
 
         let detailPage: Page | null = null;
         let placeAddedToState = false;
+        let extractedPlace: PlaceRecord | null = null;
+        let extractedLogId: string | null = null;
         try {
           let navigationError: any = null;
           for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -1188,6 +1190,7 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
           await new Promise((resolve) => setTimeout(resolve, 900));
 
           const place = await extractPlaceDetails(detailPage, jobId, placeUrl);
+          extractedPlace = place;
           if (!isValidMapsBusinessName(place.name)) {
             throw new Error('Ficha descartada: o Google Maps não apresentou um nome válido de estabelecimento (' + String(place.name || 'vazio') + ').');
           }
@@ -1257,7 +1260,7 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
             ' · já cadastrados: ' + job.total_duplicates +
             ' · fichas verificadas: ' + processedCount + '/' + placeUrls.size;
 
-          const extractedLogId = 'log_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+          extractedLogId = 'log_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
           state.logs.unshift({
             id: extractedLogId,
             created_at: new Date().toISOString(),
@@ -1287,6 +1290,9 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
             collectedCount -= 1;
             job.total_collected = collectedCount;
             job.total_duplicates += 1;
+            if (identity.sourceId) knownPlaceIds.add(identity.sourceId);
+            identity.urlKeys.forEach((key) => knownUrlKeys.add(key));
+            if (identity.nameAddressKey) knownNameAddressKeys.add(identity.nameAddressKey);
             job.current_step =
               'Já cadastrado no banco: ' + job.total_duplicates +
               ' · novos salvos: ' + collectedCount + '/' + limit + '. Buscando mais resultados...';
@@ -1297,10 +1303,10 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
             if (identity.nameAddressKey) knownNameAddressKeys.add(identity.nameAddressKey);
           }
         } catch (extractErr: any) {
-          if (placeAddedToState) {
-            const failedPlace = state.places[state.places.length - 1];
-            if (failedPlace?.job_id === jobId) state.places.pop();
+          if (placeAddedToState && extractedPlace) {
+            state.places = state.places.filter((item) => item.id !== extractedPlace!.id);
           }
+          if (extractedLogId) state.logs = state.logs.filter((item) => item.id !== extractedLogId);
           processedCount += 1;
           job.total_errors += 1;
           job.current_step =
