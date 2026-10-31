@@ -539,6 +539,7 @@ class Store {
   private supabase: SupabaseClient | null = null;
   private pendingWrite: Promise<void> = Promise.resolve();
   private localScrapeLeases = new Set<string>();
+  private localSearchSessions = new Map<string, { next_ordinal: number; total_found: number; discovery_checkpoint: Record<string, any>; exhausted: boolean; candidate_urls: string[] }>();
 
   constructor() {
     this.state = this.load();
@@ -644,6 +645,7 @@ class Store {
         if (!snapshotJob) return data as unknown as ScrapeJob;
         return {
           ...(data as unknown as ScrapeJob),
+          search_session_id: (data as any).search_session_id ?? snapshotJob.search_session_id,
           phase: (data as any).phase ?? snapshotJob.phase,
           discovery_checkpoint: (data as any).discovery_checkpoint ?? snapshotJob.discovery_checkpoint,
           candidate_urls: snapshotJob.candidate_urls,
@@ -656,15 +658,70 @@ class Store {
     return this.state.jobs.find((job) => job.id === id && job.user_id === userId) ?? null;
   }
 
+  async ensureSearchSession(input: {
+    id: string;
+    userId: string;
+    scopeKey: string;
+    segment: string;
+    location: string;
+    projectId?: string;
+    categoryId?: string;
+  }): Promise<{ id: string; next_ordinal: number; total_found: number; discovery_checkpoint: Record<string, any>; exhausted: boolean }> {
+    if (!this.supabase) {
+      let session = this.localSearchSessions.get(input.id);
+      if (!session) {
+        session = { next_ordinal: 0, total_found: 0, discovery_checkpoint: {}, exhausted: false, candidate_urls: [] };
+        this.localSearchSessions.set(input.id, session);
+      }
+      return { id: input.id, next_ordinal: session.next_ordinal, total_found: session.total_found,
+        discovery_checkpoint: session.discovery_checkpoint, exhausted: session.exhausted };
+    }
+
+    const { error: upsertError } = await this.supabase.from('scrape_search_sessions').upsert({
+      id: input.id,
+      user_id: input.userId,
+      scope_key: input.scopeKey,
+      segment: input.segment,
+      location: input.location,
+      project_id: input.projectId ?? null,
+      category_id: input.categoryId ?? null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id,scope_key', ignoreDuplicates: true });
+    if (upsertError) throw new Error('Falha ao recuperar sessão persistente de pesquisa: ' + upsertError.message);
+
+    const { data, error } = await this.supabase.from('scrape_search_sessions')
+      .select('id,next_ordinal,total_found,discovery_checkpoint,exhausted')
+      .eq('user_id', input.userId)
+      .eq('scope_key', input.scopeKey)
+      .maybeSingle();
+    if (error || !data) throw new Error('Falha ao carregar sessão persistente de pesquisa: ' + (error?.message || 'sessão não encontrada'));
+    return {
+      id: data.id,
+      next_ordinal: Number(data.next_ordinal || 0),
+      total_found: Number(data.total_found || 0),
+      discovery_checkpoint: (data.discovery_checkpoint || {}) as Record<string, any>,
+      exhausted: data.exhausted === true,
+    };
+  }
+
   async persistDiscoveredCandidates(job: ScrapeJob, urls: string[]): Promise<void> {
     if (!urls.length) return;
     if (!this.supabase) {
-      job.candidate_urls = Array.from(new Set([...(job.candidate_urls || []), ...urls]));
+      const session = job.search_session_id ? this.localSearchSessions.get(job.search_session_id) : null;
+      if (session) {
+        session.candidate_urls = Array.from(new Set([...session.candidate_urls, ...urls]));
+        session.total_found = session.candidate_urls.length;
+        job.candidate_urls = session.candidate_urls;
+      } else {
+        job.candidate_urls = Array.from(new Set([...(job.candidate_urls || []), ...urls]));
+      }
       this.save(this.state);
       return;
     }
 
     const client = this.supabase;
+    const sessionId = job.search_session_id || null;
+    const isSessionQueue = Boolean(sessionId);
     const normalized = urls.map((sourceUrl) => {
       let sourceKey = sourceUrl;
       try {
@@ -684,21 +741,18 @@ class Store {
     const existingKeys = new Set<string>();
     for (let i = 0; i < unique.length; i += 20) {
       const keys = unique.slice(i, i + 20).map((item) => item.sourceKey);
-      const { data, error } = await client
-        .from('scrape_candidates')
-        .select('source_key')
-        .eq('job_id', job.id)
-        .in('source_key', keys);
+      let query = client.from('scrape_candidates').select('source_key');
+      query = isSessionQueue ? query.eq('session_id', sessionId) : query.eq('job_id', job.id);
+      const { data, error } = await query.in('source_key', keys);
       if (error) throw new Error('Falha ao verificar fichas já descobertas: ' + error.message);
       for (const row of data || []) existingKeys.add(row.source_key);
     }
     const fresh = unique.filter((item) => !existingKeys.has(item.sourceKey));
     if (!fresh.length) return;
 
-    const { data: lastCandidate, error: lastError } = await client
-      .from('scrape_candidates')
-      .select('ordinal')
-      .eq('job_id', job.id)
+    let lastQuery = client.from('scrape_candidates').select('ordinal');
+    lastQuery = isSessionQueue ? lastQuery.eq('session_id', sessionId) : lastQuery.eq('job_id', job.id);
+    const { data: lastCandidate, error: lastError } = await lastQuery
       .order('ordinal', { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -708,6 +762,7 @@ class Store {
     const rows = fresh.map((item) => ({
       id: job.id + ':candidate:' + ordinal,
       job_id: job.id,
+      session_id: sessionId,
       user_id: job.user_id,
       source_key: item.sourceKey,
       source_url: item.sourceUrl,
@@ -726,15 +781,15 @@ class Store {
     return this.findJobForUser(jobId, userId);
   }
 
-  async loadScrapeCandidates(jobId: string, fromOrdinal = 0, limit = 1): Promise<string[]> {
+  async loadScrapeCandidates(queueId: string, fromOrdinal = 0, limit = 1): Promise<string[]> {
     if (!this.supabase) {
-      return (this.state.jobs.find((job) => job.id === jobId)?.candidate_urls || [])
-        .slice(fromOrdinal, fromOrdinal + limit);
+      const session = this.localSearchSessions.get(queueId);
+      const urls = session?.candidate_urls || this.state.jobs.find((job) => job.id === queueId)?.candidate_urls || [];
+      return urls.slice(fromOrdinal, fromOrdinal + limit);
     }
-    const { data, error } = await this.supabase
-      .from('scrape_candidates')
-      .select('source_url')
-      .eq('job_id', jobId)
+    let query = this.supabase.from('scrape_candidates').select('source_url');
+    query = queueId.startsWith('ss_') ? query.eq('session_id', queueId) : query.eq('job_id', queueId);
+    const { data, error } = await query
       .gte('ordinal', fromOrdinal)
       .order('ordinal', { ascending: true })
       .limit(limit);
@@ -742,14 +797,14 @@ class Store {
     return (data || []).map((row: { source_url: string }) => row.source_url).filter(Boolean);
   }
 
-  async countScrapeCandidates(jobId: string): Promise<number> {
+  async countScrapeCandidates(queueId: string): Promise<number> {
     if (!this.supabase) {
-      return this.state.jobs.find((job) => job.id === jobId)?.candidate_urls?.length || 0;
+      const session = this.localSearchSessions.get(queueId);
+      return session?.candidate_urls.length || this.state.jobs.find((job) => job.id === queueId)?.candidate_urls?.length || 0;
     }
-    const { count, error } = await this.supabase
-      .from('scrape_candidates')
-      .select('id', { count: 'exact', head: true })
-      .eq('job_id', jobId);
+    let query = this.supabase.from('scrape_candidates').select('id', { count: 'exact', head: true });
+    query = queueId.startsWith('ss_') ? query.eq('session_id', queueId) : query.eq('job_id', queueId);
+    const { count, error } = await query;
     if (error) throw new Error('Falha ao contar fichas persistidas da coleta: ' + error.message);
     return count || 0;
   }
@@ -914,7 +969,7 @@ class Store {
       if (stateError) throw new Error(`Falha ao persistir progresso da coleta: ${stateError.message}`);
 
       const { error: jobError } = await client.from('scrape_jobs').upsert({
-        id: job.id, user_id: job.user_id, segment: job.segment,
+        id: job.id, user_id: job.user_id, search_session_id: job.search_session_id ?? null, segment: job.segment,
         project_name: job.project_name ?? null, project_id: job.project_id ?? null,
         category_id: job.category_id ?? null, location: job.location,
         limit_requested: job.limit_requested, status: job.status,
@@ -927,6 +982,17 @@ class Store {
         created_at: job.created_at, completed_at: job.completed_at ?? null,
       }, { onConflict: 'id' });
       if (jobError) throw new Error(`Falha ao sincronizar progresso da coleta: ${jobError.message}`);
+
+      if (job.search_session_id) {
+        const { error: sessionError } = await client.from('scrape_search_sessions').update({
+          next_ordinal: Math.max(0, job.candidate_cursor || 0),
+          total_found: Math.max(0, job.total_found || 0),
+          discovery_checkpoint: job.discovery_checkpoint || {},
+          exhausted: job.discovery_checkpoint?.exhausted === true,
+          updated_at: new Date().toISOString(),
+        }).eq('id', job.search_session_id).eq('user_id', job.user_id);
+        if (sessionError) throw new Error(`Falha ao sincronizar checkpoint da sessão de pesquisa: ${sessionError.message}`);
+      }
     });
 
     await this.pendingWrite;
@@ -953,7 +1019,7 @@ class Store {
       // Only scrape_jobs and places are mirrored to their existing relational tables.
       if (snapshot.jobs.length) {
         const { error } = await client.from('scrape_jobs').upsert(snapshot.jobs.map((item) => ({
-          id: item.id, user_id: item.user_id, segment: item.segment,
+          id: item.id, user_id: item.user_id, search_session_id: item.search_session_id ?? null, segment: item.segment,
           project_name: item.project_name ?? null, project_id: item.project_id ?? null,
           category_id: item.category_id ?? null, location: item.location,
           limit_requested: item.limit_requested, status: item.status,
