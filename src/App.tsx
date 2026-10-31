@@ -219,6 +219,7 @@ export default function App() {
   const [isLoadingPlaces, setIsLoadingPlaces] = useState<boolean>(false);
 
   const progressPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastStepRequestRef = useRef(0);
 
   // Load past searches history
   const loadHistory = useCallback(async () => {
@@ -315,6 +316,17 @@ export default function App() {
         await loadHistory();
         await loadPlaces(jobId);
 
+        // Progress reads are read-only. Explicitly request the next bounded
+        // worker step, with a throttle; the server lease prevents overlap.
+        if (updatedJob.status === 'running' && Date.now() - lastStepRequestRef.current >= 8_000) {
+          lastStepRequestRef.current = Date.now();
+          void apiFetch(`/api/v1/jobs/${encodeURIComponent(jobId)}/step`, {
+            method: 'POST',
+            headers: { Accept: 'application/json' },
+            cache: 'no-store',
+          }).catch((error) => console.error('Falha ao agendar próxima etapa da coleta:', error));
+        }
+
         if (updatedJob.status !== 'running') {
           if (progressPollRef.current) clearInterval(progressPollRef.current);
           progressPollRef.current = null;
@@ -395,6 +407,7 @@ export default function App() {
       setSelectedPlaceIds(new Set());
       setIsScraping(true);
       setSelectedJobId(jobId);
+      lastStepRequestRef.current = Date.now();
       subscribeToJobStream(jobId);
       loadHistory();
     } catch (err: any) {
