@@ -1670,6 +1670,15 @@ export async function createApp() {
       if (markStaleRunningJobs(state, userId)) {
         for (const staleJob of staleCandidates) await store.persistScrapeProgress(staleJob);
       }
+      const activeJob = state.jobs.find((job) => job.user_id === userId && job.status === 'running');
+      if (activeJob) {
+        return res.status(409).json({
+          error: 'Já existe uma pesquisa em execução. Aguarde a conclusão antes de iniciar outra.',
+          jobId: activeJob.id,
+          data: activeJob,
+        });
+      }
+
       const normalizedProjectName = String(projectName || `${segment} · ${location}`).trim();
       let project = state.projects.find((item) =>
         item.user_id === userId && item.name.toLocaleLowerCase('pt-BR') === normalizedProjectName.toLocaleLowerCase('pt-BR')
