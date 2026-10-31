@@ -1174,13 +1174,15 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
     state.logs.unshift({
       id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       created_at: new Date().toISOString(),
-      level: collectedCount > 0 ? 'info' : 'error',
+      level: job.status === 'failed' ? 'error' : job.status === 'partial' ? 'warn' : 'info',
       category: 'scraper',
       event: 'job_completed',
-      message: `Coleta finalizada: ${collectedCount} estabelecimentos reais capturados e salvos no SQLite/JSON para "${segment}".`,
+      message: `Pesquisa finalizada para "${segment}": ${placeUrls.size} fichas verificadas, ${collectedCount} novas salvas, ${job.total_duplicates} já cadastradas e ${job.total_errors} falha(s). Limite: ${limit}.`,
       job_id: jobId,
       metadata: JSON.stringify({
+        limit_requested: limit,
         total_found: placeUrls.size,
+        total_processed: processedCount,
         total_collected: collectedCount,
         total_duplicates: job.total_duplicates,
         total_errors: job.total_errors,
