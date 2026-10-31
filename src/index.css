@@ -9,24 +9,52 @@
   }
 
   body {
-    background-color: #09090b;
-    color: #f4f4f5;
+    background-color: #060b18;
+    color: #f1f5f9;
     overflow-x: hidden;
   }
 
-  /* Custom minimal dark scrollbars */
+  /* Custom minimal dark navy scrollbars */
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
   }
   ::-webkit-scrollbar-track {
-    background: #09090b;
+    background: #060b18;
   }
   ::-webkit-scrollbar-thumb {
-    background: #27272a;
+    background: #1e2e4e;
     border-radius: 9999px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #3f3f46;
+    background: #2d4575;
   }
+}
+
+@keyframes radar-sweep {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-radar-sweep {
+  animation: radar-sweep 3s linear infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    opacity: 0.4;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.05);
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2.5s ease-in-out infinite;
 }

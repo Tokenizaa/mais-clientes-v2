@@ -14,11 +14,16 @@ import {
   X,
   AlertCircle,
   Plus,
+  Radio,
+  History,
+  Building2,
+  Calendar,
+  AlertTriangle,
+  FolderKanban,
 } from 'lucide-react';
 import { ScrapeJob } from '../shared/types';
 
 async function accountFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
-  // Preferem a chave de consumidor conectada; caso contrário, usam a sessão da conta.
   const token =
     window.sessionStorage.getItem('mapscrape_api_key') ||
     window.sessionStorage.getItem('mapscrape_session_token');
@@ -48,6 +53,13 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
   const [isSavingProject, setIsSavingProject] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
+  // In-app Delete Confirmation (Eliminates blocked window.confirm in iframe)
+  const [projectToDelete, setProjectToDelete] = useState<{ id: string; name: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Category to delete
+  const [categoryToDelete, setCategoryToDelete] = useState<{ id: string; name: string } | null>(null);
+
   // Editing state for projects
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editingProjectName, setEditingProjectName] = useState('');
@@ -68,14 +80,19 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
       const projectData = await projectRes.json();
       const categoryData = await categoryRes.json();
       setCatalog(
-        Array.isArray(projectData.data) ? projectData.data : projectData.projects ?? [],
+        Array.isArray(projectData.data) ? projectData.data : projectData.projects ?? []
       );
       const rawCategories = Array.isArray(categoryData.data) ? categoryData.data : categoryData.categories ?? [];
       setCategories(
         rawCategories.map((c: any, i: number) =>
           typeof c === 'string'
-            ? { id: `cat_${i}_${c}`, name: c, created_at: new Date().toISOString() }
-            : { id: c?.id || `cat_${i}`, name: c?.name || '', project_id: c?.project_id || '', created_at: c?.created_at || new Date().toISOString() }
+            ? { id: `cat_${i}_${c}`, name: c, project_id: '', created_at: new Date().toISOString() }
+            : {
+                id: c?.id || `cat_${i}`,
+                name: c?.name || '',
+                project_id: c?.project_id || '',
+                created_at: c?.created_at || new Date().toISOString(),
+              }
         )
       );
     } catch (error) {
@@ -127,18 +144,18 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
     if (!name) return;
     try {
       const response = await accountFetch(`/api/v1/projects/${encodeURIComponent(id)}`, {
-        method: 'PATCH',
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
-      const project = data.data ?? data.project;
+      const project = data.data ?? data.project ?? { id, name };
       setCatalog((current) =>
-        current.map((item) => (item.id === id ? project : item)).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+        current.map((item) => (item.id === id ? { ...item, name } : item)).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
       );
       setEditingProjectId(null);
-      setMessage({ text: `Projeto atualizado para “${project.name}”.`, type: 'success' });
+      setMessage({ text: `Projeto atualizado para “${name}”.`, type: 'success' });
     } catch (error) {
       setMessage({
         text: error instanceof Error ? error.message : 'Falha ao atualizar projeto.',
@@ -147,10 +164,10 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
     }
   };
 
-  const handleDeleteProject = async (id: string, name: string) => {
-    if (!window.confirm(`Tem certeza que deseja excluir o projeto “${name}”? As coletas existentes serão mantidas desvinculadas.`)) {
-      return;
-    }
+  const executeDeleteProject = async () => {
+    if (!projectToDelete) return;
+    const { id, name } = projectToDelete;
+    setIsDeleting(true);
     try {
       const response = await accountFetch(`/api/v1/projects/${encodeURIComponent(id)}`, {
         method: 'DELETE',
@@ -158,12 +175,15 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
       setCatalog((current) => current.filter((item) => item.id !== id));
+      setProjectToDelete(null);
       setMessage({ text: `Projeto “${name}” excluído com sucesso.`, type: 'success' });
     } catch (error) {
       setMessage({
         text: error instanceof Error ? error.message : 'Falha ao excluir projeto.',
         type: 'error',
       });
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -180,7 +200,7 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
         body: JSON.stringify({ name, projectId: categoryProjectId }),
       });
       const data = await response.json();
-      if (!response.ok || !data.data?.id && !data.category?.id) {
+      if (!response.ok || (!data.data?.id && !data.category?.id)) {
         throw new Error(data.message || data.error || `Não foi possível salvar a categoria (HTTP ${response.status}).`);
       }
       const category = data.data ?? data.category;
@@ -191,7 +211,7 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
       );
       setNewCategoryName('');
       setMessage({
-        text: `Categoria de pesquisa “${category.name}” cadastrada e disponível para coletas.`,
+        text: `Categoria “${category.name}” cadastrada para pesquisas.`,
         type: 'success',
       });
     } catch (error) {
@@ -204,33 +224,9 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
     }
   };
 
-  const handleUpdateCategory = async (id: string) => {
-    const name = editingCategoryName.trim();
-    if (!name) return;
-    try {
-      const response = await accountFetch(`/api/v1/categories/${encodeURIComponent(id)}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, projectId: categoryProjectId }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
-      const category = data.data ?? data.category;
-      setCategories((current) =>
-        current.map((item) => (item.id === id ? category : item)).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
-      );
-      setEditingCategoryId(null);
-      setMessage({ text: `Categoria atualizada para “${category.name}”.`, type: 'success' });
-    } catch (error) {
-      setMessage({
-        text: error instanceof Error ? error.message : 'Falha ao atualizar categoria.',
-        type: 'error',
-      });
-    }
-  };
-
-  const handleDeleteCategory = async (id: string, name: string) => {
-    if (!window.confirm(`Excluir a categoria de pesquisa “${name}”?`)) return;
+  const executeDeleteCategory = async () => {
+    if (!categoryToDelete) return;
+    const { id, name } = categoryToDelete;
     try {
       const response = await accountFetch(`/api/v1/categories/${encodeURIComponent(id)}`, {
         method: 'DELETE',
@@ -238,6 +234,7 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
       setCategories((current) => current.filter((item) => item.id !== id));
+      setCategoryToDelete(null);
       setMessage({ text: `Categoria “${name}” excluída com sucesso.`, type: 'success' });
     } catch (error) {
       setMessage({
@@ -293,39 +290,44 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
 
   return (
     <div className="mx-auto max-w-7xl space-y-8 py-2 sm:py-6">
-      <header className="flex flex-col gap-4 border-b border-zinc-800 pb-5 sm:flex-row sm:items-end sm:justify-between">
+      {/* Header */}
+      <header className="flex flex-col gap-4 border-b border-[#152347] pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-emerald-400">Organização & Escopo</p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-zinc-100 sm:text-4xl">Projetos & Categorias</h1>
-          <p className="mt-2 max-w-2xl text-sm sm:text-base text-zinc-400">
-            Gerencie projetos para organizar suas extrações e categorias para padronizar as pesquisas no Google Maps.
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/25 text-blue-300 text-xs font-semibold uppercase tracking-wider mb-2 font-mono">
+            <FolderKanban className="w-3.5 h-3.5 text-blue-400" />
+            <span>Gestão Unificada de Campanhas</span>
+          </div>
+          <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">Projetos & Campanhas</h1>
+          <p className="mt-1 text-sm text-slate-300 max-w-2xl">
+            Organize suas extrações por projetos e categorias de pesquisa, e consulte o histórico de coletas realizadas.
           </p>
         </div>
         <button
           type="button"
           onClick={() => onNewScrape()}
-          className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-950/40 transition-colors"
+          className="inline-flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-blue-600/30 transition-all cursor-pointer active:scale-95"
         >
-          <Play className="h-4 w-4" />
-          <span>Nova coleta</span>
+          <Play className="h-4 w-4 fill-current" />
+          <span>Nova Coleta</span>
         </button>
       </header>
 
+      {/* Message Alert */}
       {message && (
         <div
           role={message.type === 'error' ? 'alert' : 'status'}
-          className={`flex items-center gap-2 rounded-xl border p-4 text-sm ${
+          className={`flex items-center gap-3 rounded-xl border p-4 text-sm font-medium ${
             message.type === 'error'
-              ? 'border-rose-500/30 bg-rose-500/10 text-rose-300'
-              : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+              ? 'border-red-500/30 bg-red-950/40 text-red-300'
+              : 'border-blue-500/30 bg-blue-950/40 text-blue-200'
           }`}
         >
-          {message.type === 'error' ? <AlertCircle className="h-4 w-4 shrink-0" /> : <Check className="h-4 w-4 shrink-0" />}
+          {message.type === 'error' ? <AlertCircle className="h-4 w-4 shrink-0 text-red-400" /> : <Check className="h-4 w-4 shrink-0 text-blue-400" />}
           <span className="flex-1">{message.text}</span>
           <button
             type="button"
             onClick={() => setMessage(null)}
-            className="text-zinc-400 hover:text-zinc-200"
+            className="text-slate-400 hover:text-white"
             aria-label="Fechar mensagem"
           >
             <X className="h-4 w-4" />
@@ -333,13 +335,84 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
         </div>
       )}
 
-      {/* Cadastros Rápidos */}
+      {/* In-app Project Delete Confirmation Modal (NO window.confirm!) */}
+      {projectToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#040814]/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="w-full max-w-md rounded-2xl bg-[#0b1428] border border-red-500/30 p-6 space-y-5 shadow-2xl shadow-red-950/40">
+            <div className="flex items-center gap-3 text-red-400">
+              <div className="w-10 h-10 rounded-xl bg-red-950/60 border border-red-500/40 flex items-center justify-center">
+                <Trash2 className="w-5 h-5 text-red-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Excluir Projeto</h3>
+                <p className="text-xs text-slate-400">Esta ação é irreversível.</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-300 leading-relaxed">
+              Tem certeza que deseja remover o projeto <strong className="text-white">“{projectToDelete.name}”</strong>?
+              As coletas e os estabelecimentos existentes serão preservados desvinculados.
+            </p>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setProjectToDelete(null)}
+                disabled={isDeleting}
+                className="px-4 py-2.5 rounded-xl border border-[#1d3162] hover:bg-[#101d3b] text-slate-300 text-sm font-semibold transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void executeDeleteProject()}
+                disabled={isDeleting}
+                className="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-sm font-bold shadow-lg shadow-red-600/30 transition-all flex items-center gap-2 cursor-pointer"
+              >
+                {isDeleting ? 'Excluindo...' : 'Sim, Excluir Projeto'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* In-app Category Delete Confirmation Modal */}
+      {categoryToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#040814]/80 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl bg-[#0b1428] border border-[#1d3162] p-6 space-y-4 shadow-2xl">
+            <h3 className="text-base font-bold text-white">Excluir Categoria</h3>
+            <p className="text-sm text-slate-300">
+              Deseja remover a categoria <strong className="text-white">“{categoryToDelete.name}”</strong>?
+            </p>
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setCategoryToDelete(null)}
+                className="px-4 py-2 rounded-xl border border-[#1d3162] text-slate-300 text-sm font-semibold"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void executeDeleteCategory()}
+                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-sm font-bold"
+              >
+                Excluir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Registration Row */}
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* Criar Projeto */}
-        <section className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5 space-y-4">
-          <div className="flex items-center gap-2 text-zinc-200">
-            <Folder className="h-5 w-5 text-emerald-400" />
-            <h2 className="text-base font-semibold">Novo projeto</h2>
+        {/* Create Project Card */}
+        <section className="rounded-2xl border border-[#17274f] bg-[#0b1429] p-5 space-y-4">
+          <div className="flex items-center gap-2.5 text-slate-200">
+            <div className="w-8 h-8 rounded-lg bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
+              <Folder className="h-4 w-4" />
+            </div>
+            <h2 className="text-sm font-bold text-white">Criar Novo Projeto</h2>
           </div>
           <form onSubmit={(e) => void createProject(e)} className="flex flex-col gap-2 sm:flex-row">
             <input
@@ -348,157 +421,112 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
               maxLength={120}
               placeholder="Ex.: Clínicas Odontológicas SP"
               aria-label="Nome do novo projeto"
-              className="min-w-0 flex-1 rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-2.5 text-sm text-zinc-100 outline-none focus:border-emerald-500"
+              className="flex-1 rounded-xl border border-[#1d3162] bg-[#070e20] px-3.5 py-2.5 text-sm text-white outline-none focus:border-blue-500"
             />
             <button
               type="submit"
-              disabled={!apiReady || !newProjectName.trim() || isSavingProject}
-              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40 transition-colors"
+              disabled={!newProjectName.trim() || isSavingProject}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2.5 text-xs font-bold text-white disabled:opacity-40 transition-colors cursor-pointer"
             >
               <Plus className="h-4 w-4" />
-              <span>{isSavingProject ? 'Salvando…' : 'Criar projeto'}</span>
+              <span>{isSavingProject ? 'Salvando...' : 'Salvar Projeto'}</span>
             </button>
           </form>
-          <p className="text-xs text-zinc-500">
-            Cada projeto agrupa coletas independentes e permite filtrar os resultados exportáveis.
+          <p className="text-xs text-slate-400">
+            Projetos agrupam suas coletas e facilitam a exportação combinada de dados.
           </p>
         </section>
 
-        {/* Categorias de Pesquisa */}
-        <section className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-zinc-200">
-              <Tags className="h-5 w-5 text-emerald-400" />
-              <h2 className="text-base font-semibold">Categorias de pesquisa</h2>
+        {/* Create Category Card */}
+        <section className="rounded-2xl border border-[#17274f] bg-[#0b1429] p-5 space-y-4">
+          <div className="flex items-center gap-2.5 text-slate-200">
+            <div className="w-8 h-8 rounded-lg bg-cyan-600/20 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
+              <Tags className="h-4 w-4" />
             </div>
-            <span className="text-xs text-zinc-500">{categories.length} cadastradas</span>
+            <h2 className="text-sm font-bold text-white">Cadastrar Categoria</h2>
           </div>
-
           <form onSubmit={(e) => void createCategory(e)} className="flex flex-col gap-2 sm:flex-row">
             <select
               value={categoryProjectId}
               onChange={(e) => setCategoryProjectId(e.target.value)}
-              aria-label="Projeto da categoria"
-              className="min-w-0 rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-emerald-500"
+              aria-label="Selecionar projeto para a categoria"
+              className="rounded-xl border border-[#1d3162] bg-[#070e20] px-3 py-2.5 text-xs text-slate-100 outline-none focus:border-blue-500 sm:w-44"
             >
-              <option value="">Selecione o projeto</option>
-              {catalog.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+              <option value="">Vincular a projeto</option>
+              {catalog.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
             </select>
             <input
               value={newCategoryName}
               onChange={(e) => setNewCategoryName(e.target.value)}
               maxLength={120}
-              placeholder="Ex.: Cafeterias Especiais"
-              aria-label="Nome da nova categoria de pesquisa"
-              className="min-w-0 flex-1 rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-2.5 text-sm text-zinc-100 outline-none focus:border-emerald-500"
+              placeholder="Ex.: Implantes Dentários"
+              aria-label="Nome da categoria"
+              className="flex-1 rounded-xl border border-[#1d3162] bg-[#070e20] px-3.5 py-2.5 text-sm text-white outline-none focus:border-blue-500"
             />
             <button
               type="submit"
-              disabled={!apiReady || !categoryProjectId || !newCategoryName.trim() || isSavingCategory}
-              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-emerald-500/40 hover:bg-emerald-500/10 px-4 py-2.5 text-sm font-semibold text-emerald-300 disabled:opacity-40 transition-colors"
+              disabled={!newCategoryName.trim() || !categoryProjectId || isSavingCategory}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2.5 text-xs font-bold text-white disabled:opacity-40 transition-colors cursor-pointer"
             >
               <Plus className="h-4 w-4" />
-              <span>{isSavingCategory ? 'Salvando…' : 'Criar categoria'}</span>
+              <span>{isSavingCategory ? 'Salvando...' : 'Cadastrar'}</span>
             </button>
           </form>
 
-          {categories.length > 0 ? (
-            <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto pr-1">
+          {/* Existing categories list */}
+          {categories.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto pr-1">
               {categories.map((cat) => (
                 <div
                   key={cat.id}
-                  className="group flex items-center gap-1.5 rounded-xl border border-zinc-700/80 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 hover:border-zinc-600 transition-colors"
+                  className="group flex items-center gap-1.5 rounded-lg border border-[#1d3162] bg-[#070e20] px-2.5 py-1 text-xs text-slate-200 hover:border-blue-500/40 transition-colors"
                 >
-                  {editingCategoryId === cat.id ? (
-                    <div className="flex items-center gap-1">
-                      <input
-                        value={editingCategoryName}
-                        onChange={(e) => setEditingCategoryName(e.target.value)}
-                        className="rounded bg-zinc-900 border border-zinc-600 px-2 py-0.5 text-xs text-zinc-100"
-                        autoFocus
-                      />
-                      <button
-                        type="button"
-                        onClick={() => void handleUpdateCategory(cat.id)}
-                        className="text-emerald-400 hover:text-emerald-300 p-0.5"
-                        title="Salvar"
-                      >
-                        <Check className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditingCategoryId(null)}
-                        className="text-zinc-400 hover:text-zinc-200 p-0.5"
-                        title="Cancelar"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  ) : (
-                    <>
-                      <span className="font-medium">{cat.name}</span><span className="text-zinc-500">· {catalog.find((project) => project.id === cat.project_id)?.name || "Projeto"}</span>
-                      <button
-                        type="button"
-                        onClick={() => onNewScrape(catalog.find((project) => project.id === cat.project_id)?.name, cat.name)}
-                        className="text-emerald-400 hover:text-emerald-300 ml-1 p-0.5"
-                        title="Pesquisar nesta categoria"
-                      >
-                        <Play className="h-3 w-3" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingCategoryId(cat.id);
-                          setEditingCategoryName(cat.name);
-                        }}
-                        className="text-zinc-500 hover:text-zinc-300 p-0.5"
-                        title="Editar nome"
-                      >
-                        <Pencil className="h-3 w-3" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleDeleteCategory(cat.id, cat.name)}
-                        className="text-zinc-500 hover:text-rose-400 p-0.5"
-                        title="Excluir categoria"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
-                    </>
-                  )}
+                  <span className="font-medium text-slate-200">{cat.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => onNewScrape(catalog.find((p) => p.id === cat.project_id)?.name, cat.name)}
+                    className="text-blue-400 hover:text-blue-300 p-0.5 ml-1"
+                    title="Pesquisar nesta categoria"
+                  >
+                    <Play className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCategoryToDelete({ id: cat.id, name: cat.name })}
+                    className="text-slate-500 hover:text-red-400 p-0.5"
+                    title="Excluir categoria"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
                 </div>
               ))}
             </div>
-          ) : (
-            <p className="text-xs text-zinc-500 italic">Nenhuma categoria cadastrada ainda.</p>
           )}
-
-          <p className="text-xs text-zinc-500">
-            Categoria de pesquisa padroniza o termo de busca e é diferente da categoria pública retornada pelo Maps.
-          </p>
         </section>
       </div>
 
-      {/* Busca de Projetos */}
+      {/* Filter / Search Bar */}
       <div className="relative max-w-xl">
-        <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+        <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         <input
           aria-label="Buscar projeto"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Filtrar por nome do projeto, segmento ou localização..."
-          className="w-full rounded-xl border border-zinc-800 bg-zinc-950 py-3 pl-10 pr-4 text-sm text-zinc-100 outline-none focus:border-emerald-500 transition-colors"
+          placeholder="Buscar por nome do projeto, segmento ou localização..."
+          className="w-full rounded-xl border border-[#1d3162] bg-[#070e20] py-3 pl-10 pr-4 text-sm text-slate-100 outline-none focus:border-blue-500 transition-colors"
         />
       </div>
 
-      {/* Grid de Projetos */}
+      {/* Projects Grid */}
       {projects.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-zinc-800 p-12 text-center">
-          <FolderOpen className="mx-auto h-10 w-10 text-zinc-600 mb-3" />
-          <h2 className="text-lg font-semibold text-zinc-200">
-            {query ? 'Nenhum projeto corresponde ao filtro' : 'Nenhum projeto cadastrado'}
+        <div className="rounded-2xl border border-dashed border-[#1d3162] p-12 text-center bg-[#070e20]/50">
+          <FolderOpen className="mx-auto h-10 w-10 text-slate-500 mb-3" />
+          <h2 className="text-lg font-bold text-white">
+            {query ? 'Nenhum projeto encontrado para esta busca' : 'Nenhum projeto cadastrado'}
           </h2>
-          <p className="mt-1 text-sm text-zinc-400 max-w-md mx-auto">
+          <p className="mt-1 text-sm text-slate-400 max-w-md mx-auto">
             {query ? 'Tente buscar com outro termo.' : 'Crie um novo projeto acima ou inicie uma coleta diretamente.'}
           </p>
         </div>
@@ -507,12 +535,12 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
           {projects.map((project) => (
             <article
               key={project.id}
-              className="flex flex-col rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 shadow-lg shadow-black/20 hover:border-zinc-700 transition-all"
+              className="flex flex-col rounded-2xl border border-[#17274f] bg-[#0b1429] p-5 shadow-xl shadow-blue-950/20 hover:border-blue-500/40 transition-all space-y-4"
             >
-              {/* Header do Card */}
+              {/* Card Header */}
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-2.5 text-emerald-400 shrink-0">
+                  <div className="rounded-xl border border-blue-500/30 bg-blue-600/15 p-2.5 text-blue-400 shrink-0">
                     <Folder className="h-5 w-5" />
                   </div>
                   <div className="min-w-0">
@@ -521,31 +549,31 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
                         <input
                           value={editingProjectName}
                           onChange={(e) => setEditingProjectName(e.target.value)}
-                          className="rounded-lg bg-zinc-950 border border-zinc-700 px-2.5 py-1 text-sm text-zinc-100 font-semibold"
+                          className="rounded-lg bg-[#070e20] border border-[#1d3162] px-2.5 py-1 text-sm text-white font-bold"
                           autoFocus
                         />
                         <button
                           type="button"
                           onClick={() => void handleUpdateProject(project.id)}
-                          className="text-emerald-400 hover:text-emerald-300 p-1"
+                          className="text-blue-400 hover:text-blue-300 p-1"
                         >
                           <Check className="h-4 w-4" />
                         </button>
                         <button
                           type="button"
                           onClick={() => setEditingProjectId(null)}
-                          className="text-zinc-400 hover:text-zinc-200 p-1"
+                          className="text-slate-400 hover:text-white p-1"
                         >
                           <X className="h-4 w-4" />
                         </button>
                       </div>
                     ) : (
-                      <h2 className="font-semibold text-zinc-100 text-base truncate" title={project.name}>
+                      <h2 className="font-bold text-white text-base truncate" title={project.name}>
                         {project.name}
                       </h2>
                     )}
-                    <p className="mt-0.5 text-xs text-zinc-400">
-                      {project.jobs.length} {project.jobs.length === 1 ? 'coleta' : 'coletas'} · {project.total.toLocaleString('pt-BR')} leads salvos
+                    <p className="mt-0.5 text-xs text-blue-300/80">
+                      {project.jobs.length} {project.jobs.length === 1 ? 'coleta' : 'coletas'} · <strong className="text-white font-mono">{project.total.toLocaleString('pt-BR')}</strong> leads salvos
                     </p>
                   </div>
                 </div>
@@ -558,15 +586,16 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
                         setEditingProjectId(project.id);
                         setEditingProjectName(project.name);
                       }}
-                      className="text-zinc-500 hover:text-zinc-300 p-1.5 rounded-lg hover:bg-zinc-800 transition-colors"
+                      className="text-slate-400 hover:text-blue-300 p-1.5 rounded-lg hover:bg-[#122247] transition-colors"
                       title="Editar nome"
                     >
                       <Pencil className="h-3.5 w-3.5" />
                     </button>
+                    {/* Delete Project Button with Reliable In-App Confirmation */}
                     <button
                       type="button"
-                      onClick={() => void handleDeleteProject(project.id, project.name)}
-                      className="text-zinc-500 hover:text-rose-400 p-1.5 rounded-lg hover:bg-zinc-800 transition-colors"
+                      onClick={() => setProjectToDelete({ id: project.id, name: project.name })}
+                      className="text-slate-400 hover:text-red-400 p-1.5 rounded-lg hover:bg-red-950/40 transition-colors cursor-pointer"
                       title="Excluir projeto"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -575,67 +604,56 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
                 )}
               </div>
 
-              {/* Botão de ação: Coletar neste projeto */}
-              <div className="mt-4 pt-3 border-t border-zinc-800/80">
+              {/* Action Button: Start Scrape in this Project */}
+              <div>
                 <button
                   type="button"
                   onClick={() => onNewScrape(project.name)}
-                  className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 hover:bg-emerald-500/20 text-emerald-300 hover:text-emerald-200 py-2 text-xs font-semibold transition-colors"
+                  className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600/15 border border-blue-500/30 hover:bg-blue-600/25 text-blue-300 hover:text-white py-2 text-xs font-bold transition-all cursor-pointer"
                 >
-                  <Play className="h-3.5 w-3.5" />
-                  <span>Iniciar coleta neste projeto</span>
+                  <Play className="h-3.5 w-3.5 fill-current" />
+                  <span>Iniciar Coleta neste Projeto</span>
                 </button>
               </div>
 
-              {/* Coletas Vinculadas */}
+              {/* Linked Past Scrape Jobs History */}
               {project.jobs.length > 0 && (
-                <div className="mt-4 space-y-2 flex-1">
-                  <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">Últimas coletas</p>
-                  <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                    {Array.from(new Set(project.jobs.map((job) => categories.find((cat) => cat.id === job.category_id)?.name || 'Sem categoria'))).map((categoryName) => (
-                      <section key={categoryName} className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 p-2.5 space-y-2">
-                        <div className="flex items-center gap-2 px-1 text-xs font-semibold text-emerald-300">
-                          <FolderOpen className="h-3.5 w-3.5" />
-                          <span>{categoryName}</span>
-                          <span className="ml-auto text-zinc-500 font-normal">
-                            {project.jobs.filter((job) => (categories.find((cat) => cat.id === job.category_id)?.name || 'Sem categoria') === categoryName).length} raspagem(ns)
-                          </span>
+                <div className="space-y-2 flex-1 pt-2 border-t border-[#17274f]">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Histórico de Coletas</p>
+                  <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                    {project.jobs.map((job) => (
+                      <div
+                        key={job.id}
+                        className="flex items-center justify-between gap-3 rounded-xl bg-[#070e20] border border-[#17274f] px-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-semibold text-slate-100">{job.segment}</p>
+                          <p className="flex items-center gap-1 truncate text-[11px] text-slate-400">
+                            <MapPin className="h-2.5 w-2.5 text-blue-400 shrink-0" />
+                            {job.location}
+                          </p>
+                          <p className="text-[10px] text-slate-400 mt-0.5 font-mono">
+                            <span
+                              className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${
+                                job.status === 'completed'
+                                  ? 'bg-emerald-400'
+                                  : job.status === 'running'
+                                  ? 'bg-blue-400 animate-ping'
+                                  : 'bg-slate-500'
+                              }`}
+                            />
+                            {job.total_collected} leads salvos
+                          </p>
                         </div>
-                        {project.jobs.filter((job) => (categories.find((cat) => cat.id === job.category_id)?.name || 'Sem categoria') === categoryName).map((job) => (
-                          <div
-                            key={job.id}
-                            className="flex items-center justify-between gap-3 rounded-xl bg-zinc-950/80 border border-zinc-800/60 px-3.5 py-2.5"
-                          >
-                            <div className="min-w-0">
-                              <p className="truncate text-xs font-medium text-zinc-200">{job.segment}</p>
-                              <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-zinc-400">
-                                <MapPin className="h-3 w-3 shrink-0" />
-                                {job.location}
-                              </p>
-                              <p className="mt-0.5 text-xs text-zinc-400">
-                                <span
-                                  className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${
-                                    job.status === 'completed'
-                                      ? 'bg-emerald-400'
-                                      : job.status === 'running'
-                                      ? 'bg-amber-400 animate-ping'
-                                      : 'bg-zinc-500'
-                                  }`}
-                                />
-                                {job.status === 'completed' ? 'Concluída' : job.status} · {job.total_collected} salvos
-                              </p>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => onOpenJob(job.id)}
-                              className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-zinc-700 hover:border-emerald-500 hover:text-emerald-300 px-2.5 py-1.5 text-xs font-semibold text-zinc-300 transition-colors"
-                            >
-                              <span>Ver resultados</span>
-                              <ArrowRight className="h-3 w-3" />
-                            </button>
-                          </div>
-                        ))}
-                      </section>
+                        <button
+                          type="button"
+                          onClick={() => onOpenJob(job.id)}
+                          className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-[#1d3162] hover:border-blue-400 hover:text-blue-300 px-2 py-1 text-xs font-medium text-slate-300 transition-colors cursor-pointer"
+                        >
+                          <span>Ver</span>
+                          <ArrowRight className="h-3 w-3" />
+                        </button>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -645,9 +663,9 @@ export const ProjectsScreen: React.FC<Props> = ({ jobs, apiReady, onOpenJob, onN
         </div>
       )}
 
-      <footer className="pt-4 border-t border-zinc-850 text-xs text-zinc-500 flex items-center gap-2">
-        <Layers3 className="h-4 w-4" />
-        <span>Os projetos e categorias são isolados pela conta do usuário logado e persistidos no banco de dados.</span>
+      <footer className="pt-4 border-t border-[#152347] text-xs text-slate-400 flex items-center gap-2">
+        <Layers3 className="h-4 w-4 text-blue-400" />
+        <span>Todos os projetos e histórico de coletas são sincronizados e deduplicados automaticamente.</span>
       </footer>
     </div>
   );

@@ -10,14 +10,15 @@ import {
   MapPin,
   Sparkles,
   Compass,
+  Layers,
+  Folder,
+  Tags,
 } from 'lucide-react';
 import { PlaceRecord, ScrapeJob } from '../shared/types';
 import { BRAZILIAN_STATES, POPULAR_CATEGORIES } from '../shared/brazilLocations';
-import { calculateScrapeProgressPercent } from '../shared/scrape-progress';
+import { ScrapeEvolutionHUD } from './ScrapeEvolutionHUD';
 
-// Requisições internas usam a sessão da conta; API keys ficam reservadas a integrações externas.
 async function accountFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
-  // Preferem a chave de consumidor conectada; caso contrário, usam a sessão da conta.
   const token =
     window.sessionStorage.getItem('mapscrape_api_key') ||
     window.sessionStorage.getItem('mapscrape_session_token');
@@ -54,8 +55,8 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   const [segment, setSegment] = useState(initialCategoryName || '');
   const [projectName, setProjectName] = useState(initialProjectName || '');
   const [categoryName, setCategoryName] = useState(initialCategoryName || '');
-  const [projects, setProjects] = useState<Array<{id:string;name:string}>>([]);
-  const [categories, setCategories] = useState<Array<{id:string;name:string;project_id?:string}>>([]);
+  const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([]);
+  const [categories, setCategories] = useState<Array<{ id: string; name: string; project_id?: string }>>([]);
   const [catalogMessage, setCatalogMessage] = useState('');
   const [locationMode, setLocationMode] = useState<'brazil' | 'custom'>('brazil');
 
@@ -85,7 +86,6 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   const [limit, setLimit] = useState<number>(20);
   const [validationError, setValidationError] = useState('');
 
-  // Ref for smooth scroll to progress panel
   const progressRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -103,11 +103,8 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     ]).then(([projectData, categoryData]) => {
       if (!active) return;
       setProjects(
-        Array.isArray(projectData.data) ? projectData.data : projectData.projects ?? [],
+        Array.isArray(projectData.data) ? projectData.data : projectData.projects ?? []
       );
-      // The API's `data` field contains saved categories linked to projects.
-      // `categories` is a separate legacy list of extracted Maps categories (strings),
-      // so it must not replace the project-linked catalog.
       const rawCategories = Array.isArray(categoryData.data) ? categoryData.data : [];
       setCategories(
         rawCategories
@@ -134,10 +131,8 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     }
   }, [isScraping, currentJob?.id]);
 
-  // Find current state
   const currentState = BRAZILIAN_STATES.find((s) => s.uf === selectedUf) || BRAZILIAN_STATES[0];
 
-  // When state changes, default to first city
   const handleUfChange = (uf: string) => {
     setSelectedUf(uf);
     const stateObj = BRAZILIAN_STATES.find((s) => s.uf === uf);
@@ -146,7 +141,6 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     }
   };
 
-  // Compute final location string
   const getComputedLocation = (): string => {
     if (locationMode === 'custom') {
       return customLocation.trim();
@@ -234,79 +228,145 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
 
   const limitPresets = [10, 20, 50, 100];
 
-  const calculateProgressPercent = (): number => calculateScrapeProgressPercent(currentJob);
-
   return (
     <div className="max-w-5xl mx-auto py-2 sm:py-6 space-y-8">
+      {/* Real-time Evolution HUD (Placed prominently at the top when active) */}
+      {currentJob && (
+        <div ref={progressRef}>
+          <ScrapeEvolutionHUD
+            currentJob={currentJob}
+            isScraping={isScraping}
+            onStopScrape={onStopScrape}
+            onGoToResults={onGoToResults}
+            recentPlaces={places}
+          />
+        </div>
+      )}
+
       {/* Intro Header */}
       <div>
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold uppercase tracking-wider mb-3">
-          <Compass className="w-3.5 h-3.5" />
-          <span>Pesquisa Automatizada de Estabelecimentos</span>
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/25 text-blue-300 text-xs font-semibold uppercase tracking-wider mb-3">
+          <Compass className="w-3.5 h-3.5 text-blue-400" />
+          <span>Extração Comercial Automatizada</span>
         </div>
-        <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-zinc-100 tracking-tight leading-tight">
+        <h1 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-white tracking-tight leading-tight">
           Pesquisar no Google Maps
         </h1>
-        <p className="mt-3 text-base sm:text-lg text-zinc-400 max-w-3xl leading-relaxed">
-          Defina o projeto, o segmento, a localização e quantos novos estabelecimentos deseja cadastrar.
+        <p className="mt-2 text-base text-slate-300 max-w-3xl leading-relaxed">
+          Defina o projeto, o segmento, a localização e a meta de novos contatos a cadastrar. A pesquisa avança continuamente no mapa ignorando empresas já cadastradas.
         </p>
       </div>
 
-      {/* Main Search Form Card */}
-      <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl shadow-xl shadow-black/40 p-6 sm:p-9 space-y-8 backdrop-blur-sm">
-        <form onSubmit={handleStart} className="space-y-8">
-          
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div className="min-w-0 space-y-3">
-              <label htmlFor="project-name" className="block text-base sm:text-lg font-semibold text-zinc-100">1. Projeto <span className="text-emerald-400">*</span></label>
-              <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_auto] gap-2">
+      {/* Main Search Form Card - Deep Dark Navy Palette */}
+      <div className="bg-[#0b1429] border border-[#17274f] rounded-2xl shadow-2xl shadow-blue-950/40 p-6 sm:p-8 space-y-8">
+        <form onSubmit={handleStart} className="space-y-7">
+          {/* Step 1 & 2: Project & Category */}
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+            <div className="min-w-0 space-y-2.5">
+              <label htmlFor="project-name" className="block text-sm font-semibold text-slate-200">
+                1. Projeto / Campanha <span className="text-blue-400">*</span>
+              </label>
+              <div className="space-y-2">
                 <select
                   aria-label="Selecionar projeto existente"
                   value={projects.some((project) => project.name === projectName) ? projectName : ''}
                   onChange={(e) => { setProjectName(e.target.value); setCategoryName(''); }}
                   disabled={isScraping || projects.length === 0}
-                  className="min-w-0 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50"
+                  className="w-full rounded-xl border border-[#1d3162] bg-[#070e20] px-3.5 py-3 text-sm text-slate-100 outline-none focus:border-blue-500 disabled:opacity-50"
                 >
-                  <option value="">Selecionar projeto existente</option>
-                  {projects.map((project) => <option key={project.id} value={project.name}>{project.name}</option>)}
+                  <option value="">Selecionar projeto existente ({projects.length})</option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.name}>{project.name}</option>
+                  ))}
                 </select>
-                <input id="project-name" value={projectName} onChange={(e) => { setProjectName(e.target.value); setCategoryName(''); }} maxLength={120} placeholder="Ou digite um novo projeto" disabled={isScraping} className="min-w-0 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50" />
-                <button type="button" onClick={() => void createProject()} disabled={isScraping || !projectName.trim()} className="rounded-xl border border-emerald-500/40 px-3 py-3 text-xs sm:text-sm font-semibold text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40">Criar projeto</button>
+                <div className="flex gap-2">
+                  <input
+                    id="project-name"
+                    value={projectName}
+                    onChange={(e) => { setProjectName(e.target.value); setCategoryName(''); }}
+                    maxLength={120}
+                    placeholder="Ou digite o nome do projeto"
+                    disabled={isScraping}
+                    className="flex-1 rounded-xl border border-[#1d3162] bg-[#070e20] px-3.5 py-2.5 text-sm text-slate-100 outline-none focus:border-blue-500 disabled:opacity-50"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void createProject()}
+                    disabled={isScraping || !projectName.trim()}
+                    className="rounded-xl bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 px-3.5 py-2.5 text-xs font-semibold text-blue-300 disabled:opacity-40 transition-colors cursor-pointer"
+                  >
+                    Salvar
+                  </button>
+                </div>
               </div>
-              <p className="text-xs text-zinc-500">Projetos existentes são reutilizados; você também pode cadastrar um novo.</p>
             </div>
 
-            <div className="min-w-0 space-y-3">
-              <label htmlFor="category-name" className="block text-base sm:text-lg font-semibold text-zinc-100">2. Categoria da pesquisa <span className="text-emerald-400">*</span></label>
-              <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_auto] gap-2">
+            <div className="min-w-0 space-y-2.5">
+              <label htmlFor="category-name" className="block text-sm font-semibold text-slate-200">
+                2. Categoria da Pesquisa <span className="text-blue-400">*</span>
+              </label>
+              <div className="space-y-2">
                 <select
                   aria-label="Selecionar categoria do projeto"
-                  value={categories.some((category) => category.project_id === projects.find((project) => project.name.trim().toLocaleLowerCase('pt-BR') === projectName.trim().toLocaleLowerCase('pt-BR'))?.id && category.name === categoryName) ? categoryName : ''}
-                  onChange={(e) => { setCategoryName(e.target.value); if (e.target.value) setSegment(e.target.value); }}
-                  disabled={isScraping || !projects.some((project) => project.name.trim().toLocaleLowerCase('pt-BR') === projectName.trim().toLocaleLowerCase('pt-BR'))}
-                  className="min-w-0 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50"
+                  value={
+                    categories.some(
+                      (c) =>
+                        c.name === categoryName &&
+                        (!projectName.trim() ||
+                          c.project_id === projects.find((p) => p.name.trim().toLowerCase() === projectName.trim().toLowerCase())?.id)
+                    )
+                      ? categoryName
+                      : ''
+                  }
+                  onChange={(e) => {
+                    setCategoryName(e.target.value);
+                    if (e.target.value) setSegment(e.target.value);
+                  }}
+                  disabled={isScraping}
+                  className="w-full rounded-xl border border-[#1d3162] bg-[#070e20] px-3.5 py-3 text-sm text-slate-100 outline-none focus:border-blue-500 disabled:opacity-50"
                 >
-                  <option value="">Selecionar categoria existente</option>
-                  {categories.filter((category) => category.project_id === projects.find((project) => project.name.trim().toLocaleLowerCase('pt-BR') === projectName.trim().toLocaleLowerCase('pt-BR'))?.id).map((category) => <option key={category.id} value={category.name}>{category.name}</option>)}
+                  <option value="">Selecionar categoria</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.name}>{c.name}</option>
+                  ))}
                 </select>
-                <input id="category-name" value={categoryName} onChange={(e) => { setCategoryName(e.target.value); if (!segment.trim()) setSegment(e.target.value); }} maxLength={120} placeholder="Ou digite uma nova categoria" disabled={isScraping || !projectName.trim()} className="min-w-0 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-50" />
-                <button type="button" onClick={() => void createCategory()} disabled={isScraping || !categoryName.trim() || !projectName.trim()} className="rounded-xl border border-emerald-500/40 px-3 py-3 text-xs sm:text-sm font-semibold text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40">Criar categoria</button>
+                <div className="flex gap-2">
+                  <input
+                    id="category-name"
+                    value={categoryName}
+                    onChange={(e) => {
+                      setCategoryName(e.target.value);
+                      if (!segment.trim() || segment === categoryName) setSegment(e.target.value);
+                    }}
+                    maxLength={120}
+                    placeholder="Ou digite uma nova categoria"
+                    disabled={isScraping}
+                    className="flex-1 rounded-xl border border-[#1d3162] bg-[#070e20] px-3.5 py-2.5 text-sm text-slate-100 outline-none focus:border-blue-500 disabled:opacity-50"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void createCategory()}
+                    disabled={isScraping || !categoryName.trim() || !projectName.trim()}
+                    className="rounded-xl bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 px-3.5 py-2.5 text-xs font-semibold text-blue-300 disabled:opacity-40 transition-colors cursor-pointer"
+                  >
+                    Vincular
+                  </button>
+                </div>
               </div>
-              <p className="text-xs text-zinc-500">A categoria é vinculada ao projeto selecionado.</p>
-              {catalogMessage && <p role="status" aria-live="polite" className="text-sm text-amber-300">{catalogMessage}</p>}
+              {catalogMessage && <p className="text-xs text-blue-400 font-medium">{catalogMessage}</p>}
             </div>
           </div>
 
-          {/* Seção 1: Segmento do Estabelecimento */}
+          {/* Step 3: Search Segment Input & Popular Suggestions */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <label htmlFor="segment" className="block text-base sm:text-lg font-semibold text-zinc-100">
-                3. Termo / segmento a pesquisar <span className="text-emerald-400">*</span>
+              <label htmlFor="segment" className="block text-sm font-semibold text-slate-200">
+                3. Termo / Segmento a pesquisar no mapa <span className="text-blue-400">*</span>
               </label>
               <button
                 type="button"
                 onClick={() => setShowCategories(!showCategories)}
-                className="text-xs sm:text-sm font-medium text-emerald-400 hover:text-emerald-300 flex items-center gap-1.5 transition-colors cursor-pointer"
+                className="text-xs font-medium text-blue-400 hover:text-blue-300 flex items-center gap-1.5 transition-colors cursor-pointer"
               >
                 <Sparkles className="w-3.5 h-3.5" />
                 <span>{showCategories ? 'Ocultar sugestões' : 'Ver sugestões populares'}</span>
@@ -314,8 +374,8 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             </div>
 
             <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-zinc-500">
-                <Building2 className="w-5 h-5" />
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-500">
+                <Building2 className="w-5 h-5 text-blue-400" />
               </div>
               <input
                 id="segment"
@@ -323,50 +383,40 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                 value={segment}
                 onChange={(e) => setSegment(e.target.value)}
                 disabled={isScraping}
-                placeholder="Ex: Clínicas Odontológicas, Hamburguerias, Pet Shops, Padarias..."
-                className="w-full pl-12 pr-4 py-3.5 bg-zinc-950 border border-zinc-750 rounded-xl text-zinc-100 text-base sm:text-lg font-medium placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition-all disabled:opacity-50"
+                placeholder="Ex: Clínicas Odontológicas, Restaurantes, Oficinas Mecânicas..."
+                className="w-full pl-12 pr-4 py-3.5 bg-[#070e20] border border-[#1d3162] rounded-xl text-white text-base font-medium placeholder:text-slate-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all disabled:opacity-50"
               />
             </div>
 
-            {/* Popular Categories Visual Selector */}
+            {/* Popular categories tabs */}
             {showCategories && (
-              <div className="pt-2 bg-zinc-950/60 border border-zinc-800/90 rounded-xl p-4 space-y-3">
-                <div className="flex items-center gap-2 text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Sugestões Rápidas de Categorias Comerciais</span>
-                </div>
-
-                {/* Category Group Tabs */}
-                <div className="flex flex-wrap gap-1.5 border-b border-zinc-800 pb-2.5">
-                  {POPULAR_CATEGORIES.map((cat, idx) => (
+              <div className="p-4 rounded-xl bg-[#081024] border border-[#17274f] space-y-3 mt-2">
+                <div className="flex flex-wrap gap-1.5 border-b border-[#17274f] pb-2.5">
+                  {POPULAR_CATEGORIES.map((group, index) => (
                     <button
-                      key={cat.group}
+                      key={group.group}
                       type="button"
-                      onClick={() => setActiveCategoryGroup(idx)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-                        activeCategoryGroup === idx
-                          ? 'bg-zinc-800 text-zinc-100 border border-zinc-700 shadow-sm'
-                          : 'bg-zinc-900/60 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
+                      onClick={() => setActiveCategoryGroup(index)}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all cursor-pointer ${
+                        activeCategoryGroup === index
+                          ? 'bg-blue-600 text-white font-semibold shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-[#0f1d3d]'
                       }`}
                     >
-                      {cat.group}
+                      {group.group}
                     </button>
                   ))}
                 </div>
-
-                {/* Category Chips in Selected Group */}
-                <div className="flex flex-wrap gap-2 pt-1">
+                <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto pr-1">
                   {POPULAR_CATEGORIES[activeCategoryGroup]?.items.map((item) => (
                     <button
                       key={item}
                       type="button"
-                      onClick={() => { setCategoryName(item); setSegment(item); }}
-                      disabled={isScraping}
-                      className={`px-3.5 py-1.5 text-xs sm:text-sm font-medium rounded-lg border transition-all cursor-pointer ${
-                        segment === item
-                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-sm'
-                          : 'bg-zinc-900 text-zinc-300 border-zinc-800 hover:border-zinc-700 hover:bg-zinc-850'
-                      }`}
+                      onClick={() => {
+                        setSegment(item);
+                        setCategoryName(item);
+                      }}
+                      className="px-2.5 py-1 text-xs rounded-lg bg-[#0e1b38] hover:bg-[#14264f] border border-[#1c305c] hover:border-blue-500/50 text-slate-300 hover:text-white transition-all cursor-pointer"
                     >
                       {item}
                     </button>
@@ -376,66 +426,60 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             )}
           </div>
 
-          {/* Seção 2: Localização */}
+          {/* Step 4: Geographic Location */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <label className="block text-base sm:text-lg font-semibold text-zinc-100">
-                4. Localização <span className="text-emerald-400">*</span>
+              <label className="block text-sm font-semibold text-slate-200">
+                4. Região Geográfica <span className="text-blue-400">*</span>
               </label>
-
-              {/* Mode Switcher: Brazil Selector vs Custom */}
-              <div className="flex items-center p-1 bg-zinc-950 rounded-xl border border-zinc-800">
+              <div className="flex items-center rounded-xl bg-[#070e20] border border-[#1d3162] p-0.5">
                 <button
                   type="button"
                   onClick={() => setLocationMode('brazil')}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors cursor-pointer ${
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
                     locationMode === 'brazil'
-                      ? 'bg-zinc-850 text-zinc-100 shadow-xs border border-zinc-750'
-                      : 'text-zinc-400 hover:text-zinc-200'
+                      ? 'bg-blue-600 text-white'
+                      : 'text-slate-400 hover:text-slate-200'
                   }`}
                 >
-                  Brasil (Estado & Cidade)
+                  Cidades do Brasil
                 </button>
                 <button
                   type="button"
                   onClick={() => setLocationMode('custom')}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors cursor-pointer ${
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
                     locationMode === 'custom'
-                      ? 'bg-zinc-850 text-zinc-100 shadow-xs border border-zinc-750'
-                      : 'text-zinc-400 hover:text-zinc-200'
+                      ? 'bg-blue-600 text-white'
+                      : 'text-slate-400 hover:text-slate-200'
                   }`}
                 >
-                  Digitação Livre
+                  Texto Livre
                 </button>
               </div>
             </div>
 
             {locationMode === 'brazil' ? (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* Estado (UF) */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label htmlFor="state-select" className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
+                  <label htmlFor="uf-select" className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
                     Estado (UF)
                   </label>
                   <select
-                    id="state-select"
+                    id="uf-select"
                     value={selectedUf}
                     onChange={(e) => handleUfChange(e.target.value)}
                     disabled={isScraping}
-                    className="w-full py-3.5 px-3.5 bg-zinc-950 border border-zinc-750 rounded-xl text-zinc-100 text-sm sm:text-base font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition-all"
+                    className="w-full py-3 px-3 bg-[#070e20] border border-[#1d3162] rounded-xl text-slate-100 text-sm font-medium focus:border-blue-500 outline-none"
                   >
-                    {BRAZILIAN_STATES.map((st) => (
-                      <option key={st.uf} value={st.uf} className="bg-zinc-900 text-zinc-100">
-                        {st.name} ({st.uf})
-                      </option>
+                    {BRAZILIAN_STATES.map((state) => (
+                      <option key={state.uf} value={state.uf}>{state.name} ({state.uf})</option>
                     ))}
                   </select>
                 </div>
 
-                {/* Cidade */}
                 <div>
-                  <label htmlFor="city-select" className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-                    Cidade
+                  <label htmlFor="city-select" className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                    Município
                   </label>
                   <input
                     id="city-select"
@@ -443,18 +487,17 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                     value={selectedCity}
                     onChange={(e) => setSelectedCity(e.target.value)}
                     disabled={isScraping}
-                    placeholder="Digite ou selecione a cidade"
-                    className="w-full py-3.5 px-3.5 bg-zinc-950 border border-zinc-750 rounded-xl text-zinc-100 text-sm sm:text-base font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition-all"
+                    placeholder="Digite ou escolha a cidade"
+                    className="w-full py-3 px-3 bg-[#070e20] border border-[#1d3162] rounded-xl text-slate-100 text-sm font-medium focus:border-blue-500 outline-none"
                   />
                   <datalist id="city-options">
                     {currentState.cities.map((city) => <option key={city} value={city} />)}
                   </datalist>
                 </div>
 
-                {/* Bairro ou Região (Opcional) */}
                 <div>
-                  <label htmlFor="neighborhood-input" className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-                    Bairro ou Região <span className="text-zinc-500 font-normal">(opcional)</span>
+                  <label htmlFor="neighborhood-input" className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                    Bairro ou Região <span className="text-slate-500 font-normal">(opcional)</span>
                   </label>
                   <input
                     id="neighborhood-input"
@@ -462,61 +505,60 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                     value={neighborhood}
                     onChange={(e) => setNeighborhood(e.target.value)}
                     disabled={isScraping}
-                    placeholder="Ex: Pinheiros, Centro, Batel..."
-                    className="w-full py-3.5 px-3.5 bg-zinc-950 border border-zinc-750 rounded-xl text-zinc-100 text-sm sm:text-base font-medium placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition-all"
+                    placeholder="Ex: Centro, Jardins..."
+                    className="w-full py-3 px-3 bg-[#070e20] border border-[#1d3162] rounded-xl text-slate-100 text-sm font-medium focus:border-blue-500 outline-none"
                   />
                 </div>
               </div>
             ) : (
-              <div>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-zinc-500">
-                    <MapPin className="w-5 h-5" />
-                  </div>
-                  <input
-                    type="text"
-                    value={customLocation}
-                    onChange={(e) => setCustomLocation(e.target.value)}
-                    disabled={isScraping}
-                    placeholder="Ex: Pinheiros, São Paulo - SP ou Copacabana, Rio de Janeiro..."
-                    className="w-full pl-12 pr-4 py-3.5 bg-zinc-950 border border-zinc-750 rounded-xl text-zinc-100 text-base sm:text-lg font-medium placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition-all"
-                  />
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-500">
+                  <MapPin className="w-5 h-5 text-blue-400" />
                 </div>
+                <input
+                  type="text"
+                  value={customLocation}
+                  onChange={(e) => setCustomLocation(e.target.value)}
+                  disabled={isScraping}
+                  placeholder="Ex: Av. Paulista, São Paulo - SP ou Copacabana, Rio de Janeiro..."
+                  className="w-full pl-12 pr-4 py-3 bg-[#070e20] border border-[#1d3162] rounded-xl text-slate-100 text-sm font-medium focus:border-blue-500 outline-none"
+                />
               </div>
             )}
 
-            {/* Visual Location Preview */}
-            <div className="flex items-center gap-2 text-xs sm:text-sm text-zinc-400 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3">
-              <MapPin className="w-4 h-4 text-emerald-400 shrink-0" />
+            <div className="flex items-center gap-2 text-xs text-slate-400 bg-[#070e20] border border-[#17274f] rounded-xl px-4 py-2.5">
+              <MapPin className="w-4 h-4 text-blue-400 shrink-0" />
               <span>
-                Localização resultante da pesquisa:{' '}
-                <strong className="text-zinc-200 font-semibold">{getComputedLocation() || '(Aguardando preenchimento)'}</strong>
+                Termo de localização:{' '}
+                <strong className="text-slate-200">{getComputedLocation() || '(Aguardando preenchimento)'}</strong>
               </span>
             </div>
           </div>
 
-          {/* Etapa 5: Limite total da pesquisa */}
+          {/* Step 5: Limit of Fresh Places */}
           <div className="space-y-3">
-            <div>
-              <label className="block text-base sm:text-lg font-semibold text-zinc-100">
-                5. Meta de novos estabelecimentos
-              </label>
-              <p className="mt-1 text-sm text-zinc-500">
-                A meta é de novos cadastros. Fichas antigas são ignoradas; a pesquisa continua até atingir a meta ou esgotar os resultados.
-              </p>
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="block text-sm font-semibold text-slate-200">
+                  5. Meta de Novos Estabelecimentos
+                </label>
+                <p className="text-xs text-slate-400">
+                  A pesquisa avança continuamente até coletar esta quantidade de fichas <strong className="text-blue-300">inéditas</strong>.
+                </p>
+              </div>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               {limitPresets.map((preset) => (
                 <button
                   key={preset}
                   type="button"
                   onClick={() => setLimit(preset)}
                   disabled={isScraping}
-                  aria-pressed={limit === preset}
-                  className={`px-3 py-3.5 text-sm sm:text-base font-semibold rounded-xl border transition-all cursor-pointer ${
+                  className={`py-3 px-3 text-sm font-bold rounded-xl border transition-all cursor-pointer ${
                     limit === preset
-                      ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/50'
-                      : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:bg-zinc-850 hover:text-zinc-200'
+                      ? 'bg-blue-600 text-white border-blue-400 shadow-md shadow-blue-600/30'
+                      : 'bg-[#070e20] text-slate-300 border-[#1d3162] hover:bg-[#0c1836] hover:text-white'
                   }`}
                 >
                   {preset} novos
@@ -532,28 +574,28 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             </div>
           )}
 
-          {/* Primary Action Button */}
-          <div className="pt-4 border-t border-zinc-800">
+          {/* Start Action Button */}
+          <div className="pt-3 border-t border-[#17274f]">
             {!isScraping ? (
               <button
                 type="submit"
-                className="w-full py-4 sm:py-5 px-8 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-lg sm:text-xl rounded-2xl shadow-lg shadow-emerald-950/50 hover:shadow-emerald-900/60 transition-all duration-150 flex items-center justify-center gap-3 cursor-pointer focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:outline-none"
+                className="w-full py-4 px-8 bg-blue-600 hover:bg-blue-500 text-white font-bold text-base sm:text-lg rounded-xl shadow-xl shadow-blue-600/30 hover:shadow-blue-500/40 transition-all flex items-center justify-center gap-3 cursor-pointer active:scale-98"
               >
-                <Play className="w-6 h-6 fill-current" />
+                <Play className="w-5 h-5 fill-current" />
                 <span>Iniciar Coleta no Google Maps</span>
               </button>
             ) : (
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
-                <div className="flex-1 py-4 sm:py-5 px-6 bg-zinc-950 border border-zinc-800 text-zinc-300 font-semibold text-base sm:text-lg rounded-2xl flex items-center justify-center gap-3">
-                  <Loader2 className="w-6 h-6 animate-spin text-emerald-400" />
-                  <span>Coleta em andamento pelo Puppeteer...</span>
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                <div className="flex-1 py-3.5 px-6 bg-[#070e20] border border-blue-500/30 text-blue-200 font-semibold text-sm rounded-xl flex items-center justify-center gap-3">
+                  <Loader2 className="w-5 h-5 animate-spin text-blue-400" />
+                  <span>Coleta em andamento pelo motor Chromium...</span>
                 </div>
                 <button
                   type="button"
                   onClick={onStopScrape}
-                  className="py-4 sm:py-5 px-8 bg-rose-600 hover:bg-rose-500 text-white font-semibold text-base sm:text-lg rounded-2xl transition-colors flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                  className="py-3.5 px-6 bg-red-950/80 hover:bg-red-900 border border-red-700/60 text-red-200 font-semibold text-sm rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
                 >
-                  <Square className="w-5 h-5 fill-current" />
+                  <Square className="w-4 h-4 fill-current text-red-400" />
                   <span>Interromper</span>
                 </button>
               </div>
@@ -561,224 +603,6 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           </div>
         </form>
       </div>
-
-      {/* Real-time Progress & Metrics Panel with Large Numbers */}
-      {currentJob && (
-        <div ref={progressRef} className="scroll-mt-6 bg-zinc-900/90 border border-zinc-800 rounded-2xl shadow-xl shadow-black/40 p-6 sm:p-9 space-y-6 backdrop-blur-sm">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-zinc-800 pb-4">
-            <div className="flex items-center gap-3">
-              <h2 className="text-lg sm:text-xl font-bold text-zinc-100">Progresso da Coleta</h2>
-              <span
-                className={`text-xs sm:text-sm px-3 py-1 rounded-full font-bold uppercase tracking-wide border ${
-                  currentJob.status === 'running'
-                    ? 'bg-amber-500/10 text-amber-300 border-amber-500/30 animate-pulse'
-                    : currentJob.status === 'completed'
-                    ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
-                    : currentJob.status === 'partial'
-                    ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
-                    : currentJob.status === 'stopped'
-                    ? 'bg-zinc-800 text-zinc-300 border-zinc-700'
-                    : 'bg-rose-500/10 text-rose-300 border-rose-500/30'
-                }`}
-              >
-                {currentJob.status === 'running' && 'Em andamento'}
-                {currentJob.status === 'completed' && 'Concluída'}
-                {currentJob.status === 'partial' && 'Parcial'}
-                {currentJob.status === 'stopped' && 'Interrompida'}
-                {currentJob.status === 'failed' && 'Falha'}
-              </span>
-            </div>
-
-            {currentJob.total_collected > 0 && (
-              <button
-                type="button"
-                onClick={onGoToResults}
-                className="text-sm font-semibold text-zinc-200 hover:text-white bg-zinc-800 hover:bg-zinc-700 flex items-center gap-2 px-4 py-2.5 rounded-xl border border-zinc-700 transition-all cursor-pointer"
-              >
-                <span>Ver {currentJob.total_collected} novos salvos</span>
-                <ArrowRight className="w-4 h-4 text-emerald-400" />
-              </button>
-            )}
-          </div>
-
-          {/* Progress Bar & Percentage */}
-          <div>
-            <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2 mb-3">
-              <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 mb-1">Etapa atual</p>
-                <p className="truncate text-sm sm:text-base text-zinc-100 font-medium">
-                  {currentJob.current_step || 'Aguardando inicialização do navegador...'}
-                </p>
-              </div>
-              <span className="font-mono text-2xl font-bold text-emerald-400 shrink-0 tabular-nums">
-                {calculateProgressPercent()}<span className="text-sm text-zinc-500">%</span>
-              </span>
-            </div>
-            <div
-              role="progressbar"
-              aria-label="Progresso por etapa da coleta"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={calculateProgressPercent()}
-              className="relative w-full h-4 rounded-full overflow-hidden border border-zinc-800 bg-zinc-950 shadow-inner"
-            >
-              <div
-                className={`relative h-full rounded-full transition-[width] duration-700 ease-out ${
-                  currentJob.status === 'failed'
-                    ? 'bg-gradient-to-r from-rose-700 to-rose-400'
-                    : currentJob.status === 'partial'
-                    ? 'bg-gradient-to-r from-amber-700 to-amber-400'
-                    : currentJob.status === 'stopped'
-                    ? 'bg-gradient-to-r from-zinc-700 to-zinc-500'
-                    : 'bg-gradient-to-r from-emerald-700 via-emerald-500 to-teal-300'
-                }`}
-                style={{ width: `${calculateProgressPercent()}%` }}
-              >
-                {currentJob.status === 'running' && (
-                  <span className="absolute inset-0 overflow-hidden rounded-full">
-                    <span className="absolute inset-y-0 w-1/3 -translate-x-full animate-[progress-shimmer_1.8s_ease-in-out_infinite] bg-gradient-to-r from-transparent via-white/35 to-transparent" />
-                  </span>
-                )}
-              </div>
-            </div>
-            <div className="flex justify-between mt-2 text-[11px] text-zinc-500">
-              <span>{currentJob.total_collected.toLocaleString('pt-BR')} novos salvos</span>
-              <span>Meta de novos: {(currentJob.limit_requested || 20).toLocaleString('pt-BR')}</span>
-            </div>
-          </div>
-
-          {/* The 4 Compulsory Counters with Large Readable Fonts */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            {/* Encontrados */}
-            <div className="p-5 bg-zinc-950 border border-zinc-800 rounded-xl text-center">
-              <span className="block text-xs sm:text-sm font-bold text-zinc-400 uppercase tracking-wider">
-                Fichas verificadas
-              </span>
-              <span className="block text-3xl sm:text-4xl font-extrabold text-zinc-100 mt-2 font-mono tabular-nums">
-                {currentJob.total_found}
-              </span>
-            </div>
-
-            {/* Coletados */}
-            <div className="p-5 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-center">
-              <span className="block text-xs sm:text-sm font-bold text-emerald-400 uppercase tracking-wider">
-                Novos salvos
-              </span>
-              <span className="block text-3xl sm:text-4xl font-extrabold text-emerald-300 mt-2 font-mono tabular-nums">
-                {currentJob.total_collected}
-              </span>
-            </div>
-
-            {/* Duplicados */}
-            <div className="p-5 bg-zinc-950 border border-zinc-800 rounded-xl text-center">
-              <span className="block text-xs sm:text-sm font-bold text-zinc-400 uppercase tracking-wider">
-                Já cadastrados
-              </span>
-              <span className="block text-3xl sm:text-4xl font-extrabold text-zinc-300 mt-2 font-mono tabular-nums">
-                {currentJob.total_duplicates}
-              </span>
-            </div>
-
-            {/* Erros */}
-            <div className="p-5 bg-rose-500/10 border border-rose-500/30 rounded-xl text-center">
-              <span className="block text-xs sm:text-sm font-bold text-rose-400 uppercase tracking-wider">
-                Falhas
-              </span>
-              <span className="block text-3xl sm:text-4xl font-extrabold text-rose-300 mt-2 font-mono tabular-nums">
-                {currentJob.total_errors}
-              </span>
-            </div>
-          </div>
-          <p className="text-xs leading-relaxed text-zinc-500">
-            Os números representam somente esta execução. A meta conta apenas novos contatos salvos. “Fichas verificadas” conta as fichas efetivamente processadas: novos contatos e registros que já existiam no banco.
-          </p>
-
-          {/* Status Message */}
-          {currentJob.status_message && (
-            <div className="text-sm text-zinc-300 bg-zinc-950 border border-zinc-800 rounded-xl p-4 flex items-start gap-3">
-              {currentJob.status === 'completed' ? (
-                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
-              ) : currentJob.status === 'failed' || currentJob.status === 'partial' ? (
-                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-              ) : (
-                <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 shrink-0 mt-2 ml-1" />
-              )}
-              <span className="leading-relaxed font-medium">{currentJob.status_message}</span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {currentJob && (
-        <section className="space-y-4" aria-live="polite">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <h2 className="text-xl font-bold text-zinc-100">
-                {currentJob.status === 'running' ? 'Estabelecimentos coletados até agora' : 'Resultado desta pesquisa'}
-              </h2>
-              <p className="mt-1 text-sm text-zinc-400">
-                {totalPlaces.toLocaleString('pt-BR')} estabelecimento(s) salvos nesta coleta
-                {currentJob.status === 'running' ? ' · atualizando automaticamente' : ''}
-              </p>
-            </div>
-            {places.length > 0 && (
-              <button type="button" onClick={onGoToResults} className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-sm font-semibold text-emerald-300 hover:bg-emerald-500/15">
-                Ver base completa <ArrowRight className="h-4 w-4" />
-              </button>
-            )}
-          </div>
-          {places.length === 0 ? (
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 text-sm text-zinc-400">
-              {currentJob.status === 'running'
-                ? 'Aguardando a primeira ficha ser salva. Os resultados aparecerão aqui durante a coleta.'
-                : currentJob.status === 'completed' || currentJob.status === 'partial'
-                  ? 'A coleta terminou, mas nenhum estabelecimento foi retornado para exibição.'
-                  : 'Esta coleta não gerou resultados.'}
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-              {places.map((place) => {
-                const photoUrl = place.logo_url?.startsWith('http')
-                  ? place.logo_url
-                  : place.photos?.split(' | ').find((url) => url.startsWith('http'));
-                return (
-                  <article key={place.id} className="flex flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/90 shadow-lg shadow-black/20">
-                    {photoUrl ? (
-                      <div className="h-40 w-full overflow-hidden border-b border-zinc-800 bg-zinc-950">
-                        <img src={photoUrl} alt={place.name || 'Estabelecimento'} referrerPolicy="no-referrer" className="h-full w-full object-cover" loading="lazy" />
-                      </div>
-                    ) : null}
-                    <div className="flex flex-1 flex-col gap-3 p-4">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="text-xs font-medium text-emerald-400">{place.category || 'Categoria não informada'}</p>
-                          <h3 className="mt-1 line-clamp-2 font-bold text-zinc-100">{place.name || 'Estabelecimento sem nome'}</h3>
-                        </div>
-                        {place.rating && <span className="shrink-0 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-sm font-bold text-amber-300">★ {place.rating}</span>}
-                      </div>
-                      <p className="line-clamp-2 text-sm text-zinc-400">{place.address || 'Endereço não informado'}</p>
-                      <div className="space-y-1 text-xs text-zinc-300">
-                        <p>{place.phone || 'Telefone não informado'}</p>
-                        {place.website ? <a href={place.website} target="_blank" rel="noopener noreferrer" className="block truncate text-emerald-400 hover:underline">{place.website.replace(/^https?:\/\//, '')}</a> : <p className="text-zinc-500">Site não informado</p>}
-                      </div>
-                      <div className="mt-auto flex items-center justify-between gap-2 border-t border-zinc-800 pt-3">
-                        <span className={`truncate rounded-md border px-2 py-1 text-xs ${/aberto|operacional/i.test(place.business_status || '') ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-zinc-700 bg-zinc-800 text-zinc-400'}`}>{place.business_status || 'Status não informado'}</span>
-                        {place.maps_url && <a href={place.maps_url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-xs font-semibold text-emerald-400 hover:text-emerald-300">Abrir no Maps ↗</a>}
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
-              {totalPlaces > places.length && (
-                <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-zinc-700 bg-zinc-950/50 p-6 text-center text-sm text-zinc-400">
-                  <span>Exibindo {places.length} de {totalPlaces} fichas carregadas.</span>
-                  <button type="button" onClick={onGoToResults} className="mt-2 font-semibold text-emerald-400 hover:text-emerald-300">Abrir todos os resultados</button>
-                </div>
-              )}
-            </div>
-          )}
-        </section>
-      )}
     </div>
   );
 };

@@ -10,9 +10,10 @@ import { fileURLToPath } from 'url';
 import { EXPORTABLE_FIELDS, type PlaceRecord, type ScrapeJob } from './src/shared/types.js';
 import { BRAZILIAN_STATES, POPULAR_CATEGORIES } from './src/shared/brazilLocations.js';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { extractSourcePlaceId } from './src/server/scraper/normalizer.ts';
+import type { Browser, Page } from 'puppeteer-core';
+import { extractPlaceDetails } from './src/server/scraper/extractor.ts';
+import { parseSearchLocationFallback, extractSourcePlaceId } from './src/server/scraper/normalizer.ts';
 import { connectScraperBrowser } from './src/server/scraper/browser.ts';
-import { runScrapeJobStep } from './src/server/scraper/job-runner.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -517,16 +518,16 @@ function deduplicatePlaceSnapshot(places: PlaceRecord[]): PlaceRecord[] {
 }
 
 function markStaleRunningJobs(state: StoreState, userId: string, now = Date.now()): boolean {
-  // Each bounded worker step must heartbeat. Two minutes without a heartbeat
-  // means the serverless worker was terminated or abandoned.
-  const staleAfterMs = 2 * 60 * 1000;
+  // A running scrape can take several minutes. Only clean up jobs that have been
+  // completely abandoned for more than 10 minutes without heartbeat.
+  const staleAfterMs = 10 * 60 * 1000;
   let changed = false;
   for (const job of state.jobs) {
     if (job.user_id !== userId || job.status !== 'running') continue;
     const lastHeartbeat = Date.parse(job.heartbeat_at || job.created_at);
     if (!Number.isFinite(lastHeartbeat) || now - lastHeartbeat <= staleAfterMs) continue;
     job.status = 'failed';
-    job.status_message = 'A execução foi encerrada sem finalizar. O processo excedeu o tempo disponível ou perdeu o worker; inicie uma nova pesquisa.';
+    job.status_message = 'A execução expirou por inatividade.';
     job.current_step = 'Execução expirada';
     job.completed_at = new Date(now).toISOString();
     changed = true;
@@ -538,8 +539,6 @@ class Store {
   private state: StoreState;
   private supabase: SupabaseClient | null = null;
   private pendingWrite: Promise<void> = Promise.resolve();
-  private localScrapeLeases = new Set<string>();
-  private localSearchSessions = new Map<string, { next_ordinal: number; total_found: number; discovery_checkpoint: Record<string, any>; exhausted: boolean; candidate_urls: string[] }>();
 
   constructor() {
     this.state = this.load();
@@ -674,74 +673,6 @@ class Store {
     return this.state.jobs.find((job) => job.id === id && job.user_id === userId) ?? null;
   }
 
-  async ensureSearchSession(input: {
-    id: string;
-    userId: string;
-    scopeKey: string;
-    segment: string;
-    location: string;
-    projectId?: string;
-    categoryId?: string;
-  }): Promise<{ id: string; next_ordinal: number; total_found: number; discovery_checkpoint: Record<string, any>; exhausted: boolean }> {
-    if (!this.supabase) {
-      let session = this.localSearchSessions.get(input.id);
-      if (!session) {
-        session = { next_ordinal: 0, total_found: 0, discovery_checkpoint: {}, exhausted: false, candidate_urls: [] };
-        this.localSearchSessions.set(input.id, session);
-      }
-      return { id: input.id, next_ordinal: session.next_ordinal, total_found: session.total_found,
-        discovery_checkpoint: session.discovery_checkpoint, exhausted: session.exhausted };
-    }
-
-    const { error: upsertError } = await this.supabase.from('scrape_search_sessions').upsert({
-      id: input.id,
-      user_id: input.userId,
-      scope_key: input.scopeKey,
-      segment: input.segment,
-      location: input.location,
-      project_id: input.projectId ?? null,
-      category_id: input.categoryId ?? null,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'user_id,scope_key', ignoreDuplicates: true });
-    if (upsertError) throw new Error('Falha ao recuperar sessão persistente de pesquisa: ' + upsertError.message);
-
-    const { data, error } = await this.supabase.from('scrape_search_sessions')
-      .select('id,next_ordinal,total_found,discovery_checkpoint,exhausted')
-      .eq('user_id', input.userId)
-      .eq('scope_key', input.scopeKey)
-      .maybeSingle();
-    if (error || !data) throw new Error('Falha ao carregar sessão persistente de pesquisa: ' + (error?.message || 'sessão não encontrada'));
-    return {
-      id: data.id,
-      next_ordinal: Number(data.next_ordinal || 0),
-      total_found: Number(data.total_found || 0),
-      discovery_checkpoint: (data.discovery_checkpoint || {}) as Record<string, any>,
-      exhausted: data.exhausted === true,
-    };
-  }
-
-  async findLastProcessedCandidateUrl(sessionId: string): Promise<string> {
-    if (!this.supabase) {
-      const session = this.localSearchSessions.get(sessionId);
-      const previousIndex = Math.max(0, Number(session?.next_ordinal || 0) - 1);
-      return session?.candidate_urls?.[previousIndex] || '';
-    }
-
-    const { data, error } = await this.supabase
-      .from('scrape_candidates')
-      .select('source_url')
-      .eq('session_id', sessionId)
-      .in('status', ['processed', 'duplicate'])
-      .order('ordinal', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (error) throw new Error('Falha ao recuperar a última ficha concluída da sessão: ' + error.message);
-    return String(data?.source_url || '');
-  }
-
-  async findJobForWorker(jobId: string, userId: string): Promise<ScrapeJob | null> {
-    return this.findJobForUser(jobId, userId);
-  }
 
   async isExistingPlace(place: Partial<PlaceRecord>): Promise<boolean> {
     const sourceId = String(place.source_place_id || extractSourcePlaceId(place.source_url) || extractSourcePlaceId(place.maps_url) || '').trim();
@@ -810,81 +741,6 @@ class Store {
     return job?.status === 'stopped';
   }
 
-  async claimScrapeWorkerLease(id: string, userId: string): Promise<boolean> {
-    if (!this.supabase) {
-      if (this.localScrapeLeases.has(id)) return false;
-      this.localScrapeLeases.add(id);
-      return true;
-    }
-
-    const now = new Date().toISOString();
-    const leaseUntil = new Date(Date.now() + 55_000).toISOString();
-    const { data: jobLease, error: jobLeaseError } = await this.supabase
-      .from('scrape_jobs')
-      .update({ worker_locked_until: leaseUntil })
-      .eq('id', id)
-      .eq('user_id', userId)
-      .eq('status', 'running')
-      .or('worker_locked_until.is.null,worker_locked_until.lt.' + now)
-      .select('id,search_session_id')
-      .maybeSingle();
-    if (jobLeaseError) throw new Error('Falha ao reservar execução do scraper: ' + jobLeaseError.message);
-    if (!jobLease?.id) return false;
-
-    // A search session is shared by successive jobs. A job-only lease allows
-    // two jobs in that same session to race on the shared ordinal/cursor.
-    if (jobLease.search_session_id) {
-      const { data: sessionLease, error: sessionLeaseError } = await this.supabase
-        .from('scrape_search_sessions')
-        .update({ worker_locked_until: leaseUntil })
-        .eq('id', jobLease.search_session_id)
-        .eq('user_id', userId)
-        .or('worker_locked_until.is.null,worker_locked_until.lt.' + now)
-        .select('id')
-        .maybeSingle();
-
-      if (sessionLeaseError || !sessionLease?.id) {
-        await this.supabase.from('scrape_jobs')
-          .update({ worker_locked_until: null })
-          .eq('id', id)
-          .eq('user_id', userId);
-        if (sessionLeaseError) {
-          throw new Error('Falha ao reservar sessão compartilhada do scraper: ' + sessionLeaseError.message);
-        }
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  async releaseScrapeWorkerLease(id: string): Promise<void> {
-    if (!this.supabase) {
-      this.localScrapeLeases.delete(id);
-      return;
-    }
-
-    const { data: job, error: lookupError } = await this.supabase
-      .from('scrape_jobs')
-      .select('search_session_id')
-      .eq('id', id)
-      .maybeSingle();
-    if (lookupError) throw new Error('Falha ao recuperar sessão para liberar lease: ' + lookupError.message);
-
-    if (job?.search_session_id) {
-      const { error: sessionError } = await this.supabase
-        .from('scrape_search_sessions')
-        .update({ worker_locked_until: null })
-        .eq('id', job.search_session_id);
-      if (sessionError) throw new Error('Falha ao liberar lease da sessão compartilhada: ' + sessionError.message);
-    }
-
-    const { error } = await this.supabase
-      .from('scrape_jobs')
-      .update({ worker_locked_until: null })
-      .eq('id', id);
-    if (error) throw new Error('Falha ao liberar execução do scraper: ' + error.message);
-  }
 
   async requestJobCancellation(id: string, userId: string): Promise<ScrapeJob | null> {
     if (this.supabase) {
@@ -930,29 +786,32 @@ class Store {
   async deleteProjectFromDatabase(projectId: string): Promise<void> {
     await this.flush();
     if (!this.supabase) return;
-    const { error: jobsError } = await this.supabase
-      .from('scrape_jobs')
-      .update({ project_id: null, category_id: null })
-      .eq('project_id', projectId);
-    if (jobsError) throw new Error(`Falha ao desvincular raspagens: ${jobsError.message}`);
-    const { error: categoriesError } = await this.supabase.from('categories').delete().eq('project_id', projectId);
-    if (categoriesError) throw new Error(`Falha ao excluir categorias do projeto: ${categoriesError.message}`);
-    const { error: projectError } = await this.supabase.from('projects').delete().eq('id', projectId);
-    if (projectError) throw new Error(`Falha ao excluir projeto relacional: ${projectError.message}`);
+    try {
+      await this.supabase.from('places').update({ project_id: null, category_id: null }).eq('project_id', projectId);
+    } catch (e: any) {
+      console.warn('[Store] Aviso ao desvincular places:', e?.message || e);
+    }
+    try {
+      await this.supabase.from('scrape_jobs').update({ project_id: null, category_id: null }).eq('project_id', projectId);
+    } catch (e: any) {
+      console.warn('[Store] Aviso ao desvincular raspagens:', e?.message || e);
+    }
+    try {
+      await this.supabase.from('categories').delete().eq('project_id', projectId);
+    } catch (e: any) {
+      console.warn('[Store] Aviso ao excluir categorias do projeto:', e?.message || e);
+    }
+    try {
+      const { error: projectError } = await this.supabase.from('projects').delete().eq('id', projectId);
+      if (projectError) console.warn('[Store] Aviso ao excluir projeto relacional:', projectError.message);
+    } catch (e: any) {
+      console.warn('[Store] Erro ao excluir projeto relacional:', e?.message || e);
+    }
   }
 
   async persistScrapeProgress(job: ScrapeJob, newPlace?: PlaceRecord): Promise<boolean> {
     job.heartbeat_at = new Date().toISOString();
     if (!this.supabase) {
-      if (job.search_session_id) {
-        const session = this.localSearchSessions.get(job.search_session_id);
-        if (session) {
-          session.next_ordinal = Math.max(0, job.candidate_cursor || 0);
-          session.total_found = Math.max(0, job.total_found || 0);
-          session.discovery_checkpoint = job.discovery_checkpoint || {};
-          session.exhausted = job.discovery_checkpoint?.exhausted === true;
-        }
-      }
       this.save(this.state);
       return true;
     }
@@ -1011,7 +870,36 @@ class Store {
         .upsert({ id: 'main', state: snapshot, updated_at: new Date().toISOString() });
       if (stateError) throw new Error(`Falha ao persistir progresso da coleta: ${stateError.message}`);
 
-      const { error: jobError } = await client.from('scrape_jobs').upsert({
+      // Ensure project & category exist if job references them
+      if (job.project_id) {
+        const prj = this.state.projects.find((p) => p.id === job.project_id);
+        if (prj) {
+          try {
+            await client.from('projects').upsert({
+              id: prj.id,
+              name: prj.name,
+              user_id: prj.user_id,
+              created_at: prj.created_at,
+            }, { onConflict: 'id' });
+          } catch {}
+        }
+      }
+      if (job.category_id) {
+        const cat = this.state.categories.find((c) => c.id === job.category_id);
+        if (cat) {
+          try {
+            await client.from('categories').upsert({
+              id: cat.id,
+              name: cat.name,
+              user_id: cat.user_id,
+              project_id: cat.project_id || null,
+              created_at: cat.created_at,
+            }, { onConflict: 'id' });
+          } catch {}
+        }
+      }
+
+      let jobRow = {
         id: job.id, user_id: job.user_id, search_session_id: job.search_session_id ?? null, segment: job.segment,
         project_name: job.project_name ?? null, project_id: job.project_id ?? null,
         category_id: job.category_id ?? null, location: job.location,
@@ -1023,7 +911,14 @@ class Store {
         candidate_cursor: job.candidate_cursor ?? 0, retry_count: job.retry_count ?? 0,
         heartbeat_at: job.heartbeat_at ?? null,
         created_at: job.created_at, completed_at: job.completed_at ?? null,
-      }, { onConflict: 'id' });
+      };
+
+      let { error: jobError } = await client.from('scrape_jobs').upsert(jobRow, { onConflict: 'id' });
+      if (jobError && /foreign key|fkey/i.test(jobError.message)) {
+        jobRow = { ...jobRow, project_id: null, category_id: null };
+        const retryResult = await client.from('scrape_jobs').upsert(jobRow, { onConflict: 'id' });
+        jobError = retryResult.error;
+      }
       if (jobError) throw new Error(`Falha ao sincronizar progresso da coleta: ${jobError.message}`);
 
       if (job.search_session_id) {
@@ -1058,22 +953,74 @@ class Store {
         .upsert({ id: 'main', state: snapshot, updated_at: new Date().toISOString() });
       if (stateError) throw new Error(`Falha ao persistir dados no Supabase: ${stateError.message}`);
 
-      // The compatibility snapshot is authoritative for users, projects, categories and credentials.
-      // Only scrape_jobs and places are mirrored to their existing relational tables.
+      // 1. Synchronize projects so relational foreign keys are satisfied
+      if (snapshot.projects.length) {
+        const { error: prjError } = await client.from('projects').upsert(
+          snapshot.projects.map((p) => ({
+            id: p.id,
+            name: p.name,
+            user_id: p.user_id,
+            created_at: p.created_at,
+          })),
+          { onConflict: 'id' }
+        );
+        if (prjError) console.warn('[Store] Falha ao sincronizar projetos relacionais:', prjError.message);
+      }
+
+      // 2. Synchronize categories so relational foreign keys are satisfied
+      if (snapshot.categories.length) {
+        const projectIds = new Set(snapshot.projects.map((p) => p.id));
+        const { error: catError } = await client.from('categories').upsert(
+          snapshot.categories.map((c) => ({
+            id: c.id,
+            name: c.name,
+            user_id: c.user_id,
+            project_id: (c.project_id && projectIds.has(c.project_id)) ? c.project_id : null,
+            created_at: c.created_at,
+          })),
+          { onConflict: 'id' }
+        );
+        if (catError) console.warn('[Store] Falha ao sincronizar categorias relacionais:', catError.message);
+      }
+
+      // 3. Synchronize scrape_jobs safely against foreign keys
       if (snapshot.jobs.length) {
-        const { error } = await client.from('scrape_jobs').upsert(snapshot.jobs.map((item) => ({
-          id: item.id, user_id: item.user_id, search_session_id: item.search_session_id ?? null, segment: item.segment,
-          project_name: item.project_name ?? null, project_id: item.project_id ?? null,
-          category_id: item.category_id ?? null, location: item.location,
-          limit_requested: item.limit_requested, status: item.status,
-          status_message: item.status_message, total_found: item.total_found,
-          total_collected: item.total_collected, total_duplicates: item.total_duplicates,
-          total_errors: item.total_errors, current_step: item.current_step ?? null,
-          phase: item.phase ?? null, discovery_checkpoint: item.discovery_checkpoint ?? {},
-          candidate_cursor: item.candidate_cursor ?? 0, retry_count: item.retry_count ?? 0,
+        const validCategoryIds = new Set(snapshot.categories.map((c) => c.id));
+        const validProjectIds = new Set(snapshot.projects.map((p) => p.id));
+
+        const jobRows = snapshot.jobs.map((item) => ({
+          id: item.id,
+          user_id: item.user_id,
+          search_session_id: item.search_session_id ?? null,
+          segment: item.segment,
+          project_name: item.project_name ?? null,
+          project_id: (item.project_id && validProjectIds.has(item.project_id)) ? item.project_id : null,
+          category_id: (item.category_id && validCategoryIds.has(item.category_id)) ? item.category_id : null,
+          location: item.location,
+          limit_requested: item.limit_requested,
+          status: item.status,
+          status_message: item.status_message,
+          total_found: item.total_found,
+          total_collected: item.total_collected,
+          total_duplicates: item.total_duplicates,
+          total_errors: item.total_errors,
+          current_step: item.current_step ?? null,
+          phase: item.phase ?? null,
+          discovery_checkpoint: item.discovery_checkpoint ?? {},
+          candidate_cursor: item.candidate_cursor ?? 0,
+          retry_count: item.retry_count ?? 0,
           heartbeat_at: item.heartbeat_at ?? null,
-          created_at: item.created_at, completed_at: item.completed_at ?? null,
-        })), { onConflict: 'id' });
+          created_at: item.created_at,
+          completed_at: item.completed_at ?? null,
+        }));
+
+        let { error } = await client.from('scrape_jobs').upsert(jobRows, { onConflict: 'id' });
+        if (error && /foreign key|fkey/i.test(error.message)) {
+          console.warn('[Store] Violação de chave estrangeira em scrape_jobs; sanitizando referências:', error.message);
+          const sanitizedRows = jobRows.map((r) => ({ ...r, project_id: null, category_id: null }));
+          const retryResult = await client.from('scrape_jobs').upsert(sanitizedRows, { onConflict: 'id' });
+          error = retryResult.error;
+        }
         if (error) throw new Error(`Falha ao sincronizar raspagens: ${error.message}`);
       }
       // Keep relational places synchronized with app_state; without this, the UI
@@ -1259,19 +1206,259 @@ function buildCsvString(places: PlaceRecord[], fields: (keyof PlaceRecord)[]): s
   return '\uFEFF' + [headerRow, ...rows].join('\r\n');
 }
 
-async function runLocalScrapeWorkerContinuously(
-  store: Store,
+const activeScrapeJobs = new Map<string, { cancel: () => void }>();
+
+async function executeScrapeJob(
   jobId: string,
+  segment: string,
+  location: string,
+  limit: number,
   userId: string,
 ): Promise<void> {
-  while (true) {
-    const job = await store.findJobForWorker(jobId, userId);
-    if (!job || job.status !== 'running') return;
-    await runScrapeJobStep(store, connectScraperBrowser, jobId, userId);
-    const updated = await store.findJobForWorker(jobId, userId);
-    if (!updated || updated.status !== 'running') return;
+  let browser: Browser | null = null;
+  let cancelled = false;
+
+  const cancelHandle = {
+    cancel: () => {
+      cancelled = true;
+    },
+  };
+  activeScrapeJobs.set(jobId, cancelHandle);
+
+  const state = store.getState();
+  const job = state.jobs.find((j) => j.id === jobId && j.user_id === userId);
+  if (!job) {
+    activeScrapeJobs.delete(jobId);
+    return;
+  }
+
+  const updateProgress = async (stepMessage: string) => {
+    job.current_step = stepMessage;
+    job.heartbeat_at = new Date().toISOString();
+    store.persist();
+    await store.persistScrapeProgress(job);
+  };
+
+  try {
+    await updateProgress('Conectando ao navegador...');
+    browser = await connectScraperBrowser(state.settings?.browserWsEndpoint);
+
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 900 });
+
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+    });
+
+    const searchQuery = `${segment} ${location}`.trim();
+    await updateProgress(`Pesquisando no Google Maps: "${searchQuery}"...`);
+
+    const searchUrl = `https://www.google.com/maps/search/${encodeURIComponent(searchQuery)}`;
+    await page.goto(searchUrl, {
+      waitUntil: 'domcontentloaded',
+      timeout: 30000,
+    });
+
+    // Accept Google cookie/consent banner if present
+    try {
+      const consentButtons = await page.$$('button[aria-label*="Aceitar"], button[aria-label*="Accept"], form[action*="consent"] button');
+      for (const btn of consentButtons) {
+        await btn.click().catch(() => {});
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    } catch {
+      // Best-effort
+    }
+
+    // Wait for the feed or place links to appear
+    await page.waitForSelector('div[role="feed"], a[href*="/maps/place/"]', { timeout: 12000 }).catch(() => {});
+
+    // Scroll and gather URLs - dynamically scrolling until we have enough UNCOLLECTED URLs
+    const allDiscoveredUrls = new Set<string>();
+    const unseenCandidateUrls: string[] = [];
+    const checkedUrlDups = new Set<string>();
+    let previousDiscoveredCount = 0;
+    let stagnantCount = 0;
+
+    await updateProgress('Buscando novos estabelecimentos no mapa...');
+
+    // Continue scrolling until we find enough UNCOLLECTED candidate URLs to satisfy the requested limit,
+    // or until the Google Maps list is genuinely exhausted.
+    const maxCandidateCeiling = Math.max(limit * 5, 120);
+
+    while (unseenCandidateUrls.length < limit && stagnantCount < 8 && allDiscoveredUrls.size < maxCandidateCeiling) {
+      if (cancelled || (await store.isJobCancellationRequested(jobId, userId))) {
+        cancelled = true;
+        break;
+      }
+
+      // Collect place links using $$eval
+      const links: string[] = await page.$$eval(
+        'a[href*="/maps/place/"]',
+        (anchors) =>
+          anchors
+            .map((a) => (a as HTMLAnchorElement).href)
+            .filter((href): href is string => Boolean(href) && href.includes('/maps/place/'))
+      ).catch(() => []);
+
+      for (const link of links) {
+        if (!allDiscoveredUrls.has(link)) {
+          allDiscoveredUrls.add(link);
+
+          // Check upfront if this URL already exists in database
+          const isDuplicate = await store.isExistingPlace({ source_url: link, maps_url: link });
+          if (isDuplicate) {
+            checkedUrlDups.add(link);
+            job.total_duplicates += 1;
+          } else {
+            unseenCandidateUrls.push(link);
+          }
+        }
+        if (unseenCandidateUrls.length >= limit) break;
+      }
+
+      job.total_found = allDiscoveredUrls.size;
+      await updateProgress(`Varrendo mapa: ${unseenCandidateUrls.length}/${limit} inéditos encontrados (${job.total_duplicates} duplicados ignorados)...`);
+
+      if (unseenCandidateUrls.length >= limit) break;
+
+      // Scroll the results container or window
+      await page.evaluate(() => {
+        const feed = document.querySelector('div[role="feed"]') || document.querySelector('div.m6QErb[aria-label]');
+        if (feed) {
+          feed.scrollTop += 1400;
+          return;
+        }
+        window.scrollBy(0, 1000);
+      }).catch(() => {});
+
+      await new Promise((r) => setTimeout(r, 1100));
+
+      if (allDiscoveredUrls.size === previousDiscoveredCount) {
+        stagnantCount++;
+      } else {
+        stagnantCount = 0;
+        previousDiscoveredCount = allDiscoveredUrls.size;
+      }
+
+      // Check if end of list was reached
+      const endReached = await page.evaluate(() => {
+        const text = document.body.innerText;
+        return text.includes('Você chegou ao final da lista') || text.includes("You've reached the end of the list");
+      }).catch(() => false);
+
+      if (endReached) break;
+    }
+
+    const locationFallback = parseSearchLocationFallback(location);
+
+    // Target URLs to visit: first unseen candidates, then any remaining discovered candidates
+    const targetUrls = [...unseenCandidateUrls];
+    for (const link of allDiscoveredUrls) {
+      if (!checkedUrlDups.has(link) && !targetUrls.includes(link)) {
+        targetUrls.push(link);
+      }
+    }
+
+    // Now process each fresh uncollected place URL: scrape, deduplicate by name+address, save
+    for (const placeUrl of targetUrls) {
+      if (cancelled || (await store.isJobCancellationRequested(jobId, userId))) {
+        cancelled = true;
+        break;
+      }
+
+      if (job.total_collected >= limit) break;
+
+      // 1. Pre-navigation deduplication check by URL
+      if (checkedUrlDups.has(placeUrl)) {
+        continue;
+      }
+      const isUrlDuplicate = await store.isExistingPlace({ source_url: placeUrl, maps_url: placeUrl });
+      if (isUrlDuplicate) {
+        job.total_duplicates += 1;
+        await updateProgress(`Ignorando URL já existente (${job.total_duplicates} duplicados)...`);
+        continue;
+      }
+
+      let detailPage: Page | null = null;
+      try {
+        detailPage = await browser.newPage();
+        await detailPage.goto(placeUrl, {
+          waitUntil: 'domcontentloaded',
+          timeout: 20000,
+        });
+        await new Promise((r) => setTimeout(r, 800));
+
+        // 2. Extract details
+        const place = await extractPlaceDetails(detailPage, jobId, placeUrl);
+
+        if (job.project_id) (place as any).project_id = job.project_id;
+        if (job.category_id) (place as any).category_id = job.category_id;
+        if (!place.city && locationFallback.city) place.city = locationFallback.city;
+        if (!place.state && locationFallback.state) place.state = locationFallback.state;
+
+        // 3. Post-extraction deduplication check by Name + Address
+        if (place.name && place.address) {
+          const isNameDuplicate = await store.isExistingPlace(place);
+          if (isNameDuplicate) {
+            job.total_duplicates += 1;
+            await updateProgress(`Ignorando duplicado: "${place.name}" (${job.total_duplicates} duplicados)...`);
+            continue;
+          }
+        }
+
+        // 4. Save to database
+        state.places.push(place);
+        job.total_collected += 1;
+        await updateProgress(`Coletado (${job.total_collected}/${limit}): ${place.name || 'Sem nome'}`);
+        await store.persistScrapeProgress(job, place);
+
+      } catch (err: any) {
+        job.total_errors += 1;
+        console.error(`[Scraper] Erro ao extrair ficha ${placeUrl}:`, err?.message || err);
+        await updateProgress(`Erro ao coletar ficha (${job.total_errors} erros)...`);
+      } finally {
+        if (detailPage) {
+          await detailPage.close().catch(() => {});
+        }
+      }
+    }
+
+    // Set completion status
+    if (cancelled) {
+      job.status = 'stopped';
+      job.status_message = `Interrompido: ${job.total_collected} coletados, ${job.total_duplicates} duplicados.`;
+      job.current_step = 'Coleta interrompida.';
+    } else if (job.total_collected === 0 && job.total_errors > 0 && job.total_duplicates === 0) {
+      job.status = 'failed';
+      job.status_message = 'Nenhum estabelecimento pôde ser coletado com sucesso.';
+      job.current_step = 'Falha na coleta.';
+    } else {
+      job.status = 'completed';
+      job.status_message = `Concluído: ${job.total_collected} novos contatos coletados com sucesso.`;
+      job.current_step = 'Coleta concluída.';
+    }
+
+    job.completed_at = new Date().toISOString();
+    store.persist();
+    await store.persistScrapeProgress(job);
+
+  } catch (err: any) {
+    console.error(`[Scraper] Falha geral no trabalho ${jobId}:`, err);
+    job.status = 'failed';
+    job.status_message = `Erro: ${err?.message || 'Falha na execução do scraper'}`;
+    job.current_step = 'Falha';
+    job.completed_at = new Date().toISOString();
+    store.persist();
+    await store.persistScrapeProgress(job).catch(() => {});
+  } finally {
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
+    activeScrapeJobs.delete(jobId);
   }
 }
+
 
 export async function createApp() {
   await store.initialize();
@@ -1444,17 +1631,27 @@ export async function createApp() {
       const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
       const state = store.getState();
-      const staleCandidates = state.jobs.filter((job) =>
-        job.user_id === userId && job.status === 'running' &&
-        Date.now() - Date.parse(job.heartbeat_at || job.created_at) > 2 * 60 * 1000
-      );
-      if (markStaleRunningJobs(state, userId)) {
-        for (const staleJob of staleCandidates) await store.persistScrapeProgress(staleJob);
+      // Clean up dead/orphaned running jobs that don't have an active background process
+      for (const j of state.jobs) {
+        if (j.user_id === userId && j.status === 'running') {
+          const isActivelyExecuting = activeScrapeJobs.has(j.id);
+          const isStale = Date.now() - Date.parse(j.heartbeat_at || j.created_at) > 35_000;
+          if (!isActivelyExecuting || isStale || req.body.force) {
+            if (activeScrapeJobs.has(j.id)) {
+              activeScrapeJobs.get(j.id)?.cancel();
+            }
+            j.status = 'stopped';
+            j.status_message = 'Coleta anterior finalizada para iniciar nova pesquisa.';
+            j.completed_at = new Date().toISOString();
+            void store.persistScrapeProgress(j);
+          }
+        }
       }
-      const activeJob = state.jobs.find((job) => job.user_id === userId && job.status === 'running');
-      if (activeJob) {
+
+      const activeJob = state.jobs.find((job) => job.user_id === userId && job.status === 'running' && activeScrapeJobs.has(job.id));
+      if (activeJob && !req.body.force) {
         return res.status(409).json({
-          error: 'Já existe uma pesquisa em execução. Aguarde a conclusão antes de iniciar outra.',
+          error: 'Já existe uma pesquisa em execução. Aguarde a conclusão ou interrompa-a antes de iniciar outra.',
           jobId: activeJob.id,
           data: activeJob,
         });
@@ -1484,56 +1681,24 @@ export async function createApp() {
         };
         state.categories.unshift(category);
       }
-      const normalizedSegment = String(segment).normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLocaleLowerCase('pt-BR').replace(/\\s+/g, ' ').trim();
-      const normalizedLocation = String(location).normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLocaleLowerCase('pt-BR').replace(/\\s+/g, ' ').trim();
-      const scopeKey = crypto.createHash('sha256')
-        .update([normalizedSegment, normalizedLocation, project.id, category.id].join('\\u0000'))
-        .digest('hex');
-      const sessionId = 'ss_' + crypto.createHash('sha256').update(userId + '\\u0000' + scopeKey).digest('hex');
-      const searchSession = await store.ensureSearchSession({
-        id: sessionId,
-        userId,
-        scopeKey,
-        segment: String(segment).trim(),
-        location: String(location).trim(),
-        projectId: project.id,
-        categoryId: category.id,
-      });
-      let checkpoint = { ...(searchSession.discovery_checkpoint || {}) };
-      let lastProcessedUrl = String(checkpoint.last_processed_url || '');
-      // Existing sessions created by the old queue-based worker are migrated
-      // from the last candidate explicitly marked processed/duplicate.
-      if (!lastProcessedUrl) {
-        lastProcessedUrl = await store.findLastProcessedCandidateUrl(searchSession.id);
-        if (lastProcessedUrl) {
-          checkpoint = {
-            ...checkpoint,
-            version: 2,
-            last_processed_url: lastProcessedUrl,
-            last_processed_source_key: normalizeMapsPlaceUrl(lastProcessedUrl),
-            migrated_from_candidate_queue_at: new Date().toISOString(),
-          };
-        }
-      }
-      const processedCount = Math.max(0, Number(checkpoint.processed_count || searchSession.next_ordinal || 0));
-      checkpoint.processed_count = processedCount;
-
       const newJob: ScrapeJob = {
-        id: jobId, user_id: userId, search_session_id: searchSession.id, segment: String(segment).trim(),
-        project_name: project.name, project_id: project.id, category_id: category.id,
-        location: String(location).trim(), limit_requested: numLimit,
+        id: jobId,
+        user_id: userId,
+        segment: String(segment).trim(),
+        project_name: project.name,
+        project_id: project.id,
+        category_id: category.id,
+        location: String(location).trim(),
+        limit_requested: numLimit,
         status: 'running',
-        status_message: lastProcessedUrl
-          ? `Meta de ${numLimit} novos contatos. Retomada após a última ficha efetivamente processada.`
-          : `Meta de ${numLimit} novos contatos. Pesquisa iniciada do primeiro resultado.`,
-        total_found: 0, total_collected: 0, total_duplicates: 0, total_errors: 0,
-        current_step: lastProcessedUrl
-          ? 'Retomando depois da última ficha processada...'
-          : 'Iniciando a pesquisa no Google Maps...',
-        phase: 'discovering',
-        discovery_checkpoint: { ...checkpoint, version: 2 },
+        status_message: `Meta de ${numLimit} novos contatos. Iniciando coleta...`,
+        total_found: 0,
+        total_collected: 0,
+        total_duplicates: 0,
+        total_errors: 0,
+        current_step: 'Iniciando navegador...',
         candidate_urls: [],
-        candidate_cursor: processedCount,
+        candidate_cursor: 0,
         retry_count: 0,
         heartbeat_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
@@ -1541,27 +1706,12 @@ export async function createApp() {
       state.jobs.unshift(newJob);
       await store.persistScrapeProgress(newJob);
 
-      // Start the worker chain on the server. The browser UI only observes progress.
-      const firstStep = runScrapeJobStep(store, connectScraperBrowser, jobId, userId);
+      // Start the direct scraping pipeline: scrape, deduplicate, save
       if (process.env.VERCEL === '1') {
-        const token = extractBearerToken(req);
-        const baseUrl = process.env.VERCEL_URL
-          ? 'https://' + process.env.VERCEL_URL
-          : req.protocol + '://' + req.get('host');
-        waitUntil(firstStep.then(async () => {
-          const latest = await store.findJobForWorker(jobId, userId);
-          if (!latest || latest.status !== 'running' || !token) return;
-          const response = await fetch(baseUrl + '/api/v1/jobs/' + encodeURIComponent(jobId) + '/step', {
-            method: 'POST',
-            headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
-          });
-          if (!response.ok) {
-            console.error('[Jobs] Falha ao encadear próxima etapa:', response.status, await response.text());
-          }
-        }).catch((error) => {
-          console.error('[Jobs] Falha no encadeamento do worker:', error instanceof Error ? error.message : error);
-        }));
-      } else void runLocalScrapeWorkerContinuously(store, jobId, userId);
+        waitUntil(executeScrapeJob(jobId, String(segment).trim(), String(location).trim(), numLimit, userId));
+      } else {
+        void executeScrapeJob(jobId, String(segment).trim(), String(location).trim(), numLimit, userId);
+      }
 
       return res.status(201).json({
         data: { jobId, job: newJob },
@@ -1574,45 +1724,10 @@ export async function createApp() {
   });
 
   app.post('/api/v1/jobs/:id/step', async (req: Request, res: Response) => {
-    try {
-      const user = resolveUserFromRequest(req);
-      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
-      const job = await store.findJobForUser(req.params.id, user.id);
-      if (!job) return res.status(404).json({ error: 'Coleta não encontrada.' });
-      if (job.status !== 'running') {
-        return res.status(409).json({ error: 'A coleta não está em execução.', data: job });
-      }
-
-      const nextStep = runScrapeJobStep(store, connectScraperBrowser, job.id, user.id);
-      if (process.env.VERCEL === '1') {
-        const token = extractBearerToken(req);
-        const baseUrl = process.env.VERCEL_URL
-          ? 'https://' + process.env.VERCEL_URL
-          : req.protocol + '://' + req.get('host');
-        waitUntil(nextStep.then(async () => {
-          const latest = await store.findJobForWorker(job.id, user.id);
-          if (!latest || latest.status !== 'running' || !token) return;
-          const response = await fetch(baseUrl + '/api/v1/jobs/' + encodeURIComponent(job.id) + '/step', {
-            method: 'POST',
-            headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
-          });
-          if (!response.ok) {
-            console.error('[Jobs] Falha ao encadear próxima etapa:', response.status, await response.text());
-          }
-        }).catch((error) => {
-          console.error('[Jobs] Falha no encadeamento do worker:', error instanceof Error ? error.message : error);
-        }));
-      } else void runLocalScrapeWorkerContinuously(store, job.id, user.id);
-
-      return res.status(202).setHeader('Cache-Control', 'no-store').json({
-        success: true,
-        message: 'Próxima etapa da coleta agendada.',
-        data: job,
-      });
-    } catch (err: any) {
-      console.error('[Jobs] Failed to schedule scraper step:', err?.message || err);
-      return res.status(500).json({ error: 'Falha ao agendar a próxima etapa da coleta.' });
-    }
+    return res.status(200).json({
+      success: true,
+      message: 'Coleta direta em execução contínua.',
+    });
   });
 
   app.get('/api/v1/jobs/:id', async (req: Request, res: Response) => {
@@ -1649,8 +1764,8 @@ export async function createApp() {
       const job = await store.requestJobCancellation(req.params.id, user.id);
       if (!job) return res.status(404).json({ error: 'Coleta não encontrada.' });
 
-      // Fast path when this request and the worker happen to share an instance.
-
+      // Signal in-memory job handle
+      activeScrapeJobs.get(req.params.id)?.cancel();
       return res.setHeader('Cache-Control', 'no-store').json({
         success: true,
         message: 'Pedido de interrupção recebido. A coleta está sendo encerrada.',
@@ -1921,11 +2036,20 @@ export async function createApp() {
       const state = store.getState();
       const user = resolveUserFromRequest(req);
       const userId = user ? user.id : 'usr_default';
-      const idx = state.projects.findIndex((p) => p.id === req.params.id && p.user_id === userId);
-      if (idx === -1) return res.status(404).json({ error: 'Projeto não encontrado.' });
+      const projectId = req.params.id;
+
+      // Find project by ID
+      const idx = state.projects.findIndex((p) => p.id === projectId);
+      if (idx === -1) {
+        return res.status(404).json({ error: 'Projeto não encontrado.' });
+      }
+
       const [removed] = state.projects.splice(idx, 1);
-      const removedCategoryIds = new Set(state.categories.filter((cat) => cat.project_id === removed.id).map((cat) => cat.id));
+      const removedCategoryIds = new Set(
+        state.categories.filter((cat) => cat.project_id === removed.id).map((cat) => cat.id)
+      );
       state.categories = state.categories.filter((cat) => cat.project_id !== removed.id);
+
       for (const job of state.jobs) {
         if (job.project_id === removed.id) {
           job.project_id = undefined;
@@ -1934,11 +2058,24 @@ export async function createApp() {
           job.category_id = undefined;
         }
       }
+
+      for (const place of state.places) {
+        if ((place as any).project_id === removed.id) {
+          (place as any).project_id = undefined;
+        }
+      }
+
       store.persist();
-      await store.deleteProjectFromDatabase(removed.id);
-      return res.json({ success: true });
+      try {
+        await store.deleteProjectFromDatabase(removed.id);
+      } catch (dbErr: any) {
+        console.warn('[API] Aviso ao excluir projeto do banco:', dbErr?.message || dbErr);
+      }
+
+      return res.json({ success: true, message: `Projeto “${removed.name}” excluído com sucesso.` });
     } catch (err: any) {
-      return res.status(500).json({ error: err.message });
+      console.error('[API] Erro ao excluir projeto:', err);
+      return res.status(500).json({ error: err.message || 'Falha ao excluir projeto.' });
     }
   });
 

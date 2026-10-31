@@ -248,15 +248,15 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
       {/* Header Bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-zinc-850 pb-5">
         <div>
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold uppercase tracking-wider mb-2">
-            <Compass className="w-3.5 h-3.5" />
-            <span>Base Local de Leads</span>
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/25 text-blue-300 text-xs font-semibold uppercase tracking-wider mb-2 font-mono">
+            <Compass className="w-3.5 h-3.5 text-blue-400" />
+            <span>Base Consolidada de Leads</span>
           </div>
-          <h1 className="text-3xl sm:text-4xl font-bold text-zinc-100 tracking-tight">
-            Resultados Coletados
+          <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+            Base de Leads
           </h1>
-          <p className="mt-1 text-base sm:text-lg text-zinc-400">
-            {totalPlaces.toLocaleString('pt-BR')} estabelecimentos cadastrados no SQLite com extração direta.
+          <p className="mt-1 text-base text-slate-300">
+            {totalPlaces.toLocaleString('pt-BR')} estabelecimentos cadastrados e deduplicados automaticamente.
           </p>
         </div>
 
@@ -265,7 +265,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
           <button
             type="button"
             onClick={onGoToExport}
-            className="flex items-center gap-2.5 px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm sm:text-base shadow-lg shadow-emerald-950/40 hover:shadow-emerald-900/50 transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:outline-none"
+            className="flex items-center gap-2.5 px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm sm:text-base shadow-xl shadow-blue-600/30 transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:outline-none active:scale-95"
           >
             <FileDown className="w-5 h-5" />
             <span>
@@ -278,23 +278,23 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
       </div>
 
       {/* Field Coverage Strip */}
-      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/90 p-5 backdrop-blur-sm shadow-xl shadow-black/20">
+      <div className="rounded-2xl border border-[#17274f] bg-[#0b1429] p-5 shadow-xl shadow-blue-950/20">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600/20 border border-blue-500/30 text-blue-400">
               <Info className="h-5 w-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-zinc-200">Qualidade e Cobertura de Campos</span>
+                <span className="text-sm font-semibold text-slate-200">Qualidade e Cobertura de Campos</span>
                 {coverage && (
-                  <span className="rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 text-xs font-bold font-mono">
+                  <span className="rounded-md bg-blue-600/25 text-blue-200 border border-blue-500/40 px-2 py-0.5 text-xs font-bold font-mono">
                     {coverage.averageCoverage}% preenchidos
                   </span>
                 )}
               </div>
-              <p className="text-xs text-zinc-400 mt-0.5">
-                Calculada a partir dos dados persistidos no banco de dados SQLite
+              <p className="text-xs text-slate-400 mt-0.5">
+                Calculada a partir dos dados persistidos no banco de dados
               </p>
             </div>
           </div>
@@ -302,7 +302,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
           <button
             type="button"
             onClick={() => setShowCoverageSection(!showCoverageSection)}
-            className="text-xs sm:text-sm font-semibold text-zinc-300 hover:text-emerald-400 underline underline-offset-4 cursor-pointer transition-colors"
+            className="text-xs sm:text-sm font-semibold text-slate-300 hover:text-blue-400 underline underline-offset-4 cursor-pointer transition-colors"
           >
             {showCoverageSection ? 'Ocultar detalhes de cobertura' : 'Ver cobertura por campo (18 campos)'}
           </button>

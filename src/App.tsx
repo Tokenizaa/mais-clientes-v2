@@ -355,13 +355,16 @@ export default function App() {
     };
   }, []);
 
+  const [appNotification, setAppNotification] = useState<{ message: string; type: 'error' | 'success' | 'info' } | null>(null);
+
   // Handlers
   const handleStartScrape = async (projectName: string, categoryName: string, segment: string, location: string, limit: number) => {
     try {
+      setAppNotification(null);
       const res = await apiFetch('/api/v1/jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectName, categoryName, segment, location, limit }),
+        body: JSON.stringify({ projectName, categoryName, segment, location, limit, force: true }),
       });
 
       const contentType = res.headers.get('content-type') || '';
@@ -379,15 +382,21 @@ export default function App() {
       if (!res.ok) {
         const detail = data?.error || data?.message ||
           (responseText.trim().startsWith('<')
-            ? 'O servidor retornou uma página HTML em vez de JSON. Verifique o roteamento da API na Vercel.'
+            ? 'O servidor retornou uma resposta inesperada. Verifique se o backend está ativo.'
             : responseText.trim().slice(0, 240));
-        alert(`Falha ao iniciar coleta (HTTP ${res.status}): ${detail || res.statusText}`);
+        setAppNotification({
+          message: `Não foi possível iniciar a coleta: ${detail || res.statusText}`,
+          type: 'error',
+        });
         return;
       }
 
       const jobId = data?.data?.jobId ?? data?.jobId;
       if (!jobId || typeof jobId !== 'string') {
-        alert(`Resposta inválida do servidor (HTTP ${res.status}). Esperava JSON com jobId; Content-Type: ${contentType || 'ausente'}.`);
+        setAppNotification({
+          message: 'Resposta inesperada do servidor ao iniciar a pesquisa.',
+          type: 'error',
+        });
         return;
       }
 
@@ -398,9 +407,16 @@ export default function App() {
       setIsScraping(true);
       setSelectedJobId(jobId);
       subscribeToJobStream(jobId);
-      loadHistory();
+      void loadHistory();
+      setAppNotification({
+        message: `Coleta iniciada para "${segment}" em "${location}"!`,
+        type: 'success',
+      });
     } catch (err: any) {
-      alert(`Falha na comunicação com o servidor: ${err.message}`);
+      setAppNotification({
+        message: `Falha na comunicação com o servidor: ${err.message}`,
+        type: 'error',
+      });
     }
   };
 
@@ -423,10 +439,17 @@ export default function App() {
         status_message: 'Pedido recebido. Encerrando a coleta com segurança...',
         current_step: 'Interrompendo...',
       } : job);
-      await loadHistory();
+      void loadHistory();
+      setAppNotification({
+        message: 'Pedido de interrupção enviado ao motor de extração.',
+        type: 'info',
+      });
     } catch (err: any) {
       console.error('Stop error:', err);
-      alert(err instanceof Error ? err.message : 'Não foi possível interromper a coleta.');
+      setAppNotification({
+        message: err instanceof Error ? err.message : 'Não foi possível interromper a coleta.',
+        type: 'error',
+      });
     }
   };
 
@@ -476,21 +499,21 @@ export default function App() {
   };
 
   const tabLabels: Record<ScreenTab, string> = {
-    dashboard: 'Visão geral',
-    projects: 'Projetos',
+    dashboard: 'Painel Geral',
+    projects: 'Projetos & Campanhas',
     credentials: 'Credenciais de API',
-    search: 'Pesquisar',
-    results: 'Resultados',
-    export: 'Exportar CSV',
-    history: 'Histórico',
-    logs: 'Auditoria & Logs',
+    search: 'Nova Coleta',
+    results: 'Base de Leads',
+    export: 'Exportação de Leads',
+    history: 'Projetos & Histórico',
+    logs: 'Auditoria & Sistema',
   };
 
   // If user is not authenticated, show AuthScreen
   if (!hasApiKey) return <AuthScreen onAuthenticated={handleAuthenticated} />;
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans antialiased selection:bg-emerald-500/20 selection:text-emerald-300">
+    <div className="min-h-screen bg-[#060b18] text-slate-100 flex flex-col font-sans antialiased selection:bg-blue-600/30 selection:text-blue-200">
       {/* Sidebar Navigation */}
       <Sidebar
         currentTab={currentTab}
@@ -507,13 +530,13 @@ export default function App() {
 
       {/* Main Content Area with Desktop Sidebar Offset */}
       <div className="lg:pl-72 flex-1 flex flex-col min-w-0">
-        {/* Minimalist Linear / Stripe Top Bar */}
-        <header className="h-16 px-4 sm:px-8 border-b border-zinc-850/80 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-30 flex items-center justify-between">
+        {/* Modern Dark Navy Top Bar */}
+        <header className="h-16 px-4 sm:px-8 border-b border-[#152347] bg-[#070e20]/90 backdrop-blur-md sticky top-0 z-30 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={() => setIsMobileSidebarOpen(true)}
-              className="lg:hidden p-2 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-850 transition-colors"
+              className="lg:hidden p-2 rounded-lg text-slate-400 hover:text-white hover:bg-[#0e1b38] transition-colors"
               aria-label="Abrir menu lateral"
             >
               <Menu className="w-5 h-5" />
@@ -521,17 +544,17 @@ export default function App() {
 
             {/* Contextual Breadcrumb trail */}
             <div className="flex items-center gap-2 text-sm">
-              <span className="font-semibold text-zinc-400">MapScrape</span>
-              <ChevronRight className="w-3.5 h-3.5 text-zinc-600" />
-              <span className="font-medium text-zinc-100 text-base">{tabLabels[currentTab]}</span>
+              <span className="font-bold text-slate-400">MapScrape</span>
+              <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
+              <span className="font-bold text-white text-base">{tabLabels[currentTab]}</span>
             </div>
           </div>
 
           {/* Top Actions & Quick Indicators */}
           <div className="flex items-center gap-3">
             {isScraping && (
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-medium">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-600/20 border border-blue-500/40 text-blue-300 text-xs font-semibold">
+                <span className="w-2 h-2 rounded-full bg-blue-400 animate-ping inline-block" />
                 <span>Coleta ativa</span>
               </div>
             )}
@@ -540,10 +563,10 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setCurrentTab('results')}
-                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-zinc-100 hover:bg-zinc-850 text-xs font-medium transition-colors"
+                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0b1429] border border-[#1d3162] text-slate-300 hover:text-white hover:bg-[#122247] text-xs font-semibold transition-colors cursor-pointer"
               >
-                <Database className="w-3.5 h-3.5 text-emerald-400" />
-                <span>{totalPlaces} salvos</span>
+                <Database className="w-3.5 h-3.5 text-blue-400" />
+                <span>{totalPlaces.toLocaleString('pt-BR')} salvos</span>
               </button>
             )}
 
@@ -551,7 +574,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setCurrentTab('export')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-colors shadow-sm shadow-emerald-950/40"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-all shadow-md shadow-blue-600/30 cursor-pointer"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5" />
                 <span>Exportar ({selectedPlaceIds.size})</span>
@@ -560,15 +583,40 @@ export default function App() {
           </div>
         </header>
 
+        {/* Floating in-app notification banner */}
+        {appNotification && (
+          <div className="px-4 sm:px-8 pt-4">
+            <div
+              className={`p-3.5 rounded-xl border flex items-center justify-between text-xs sm:text-sm font-semibold shadow-lg ${
+                appNotification.type === 'error'
+                  ? 'bg-red-950/80 border-red-500/50 text-red-200'
+                  : appNotification.type === 'success'
+                  ? 'bg-blue-950/80 border-blue-500/50 text-blue-200'
+                  : 'bg-[#0d1c3e] border-blue-600/40 text-slate-200'
+              }`}
+            >
+              <span>{appNotification.message}</span>
+              <button
+                type="button"
+                onClick={() => setAppNotification(null)}
+                className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Main Content Area */}
         <main className="flex-1 p-4 sm:p-6 lg:p-10">
           {hasApiKey ? (
             <div className="mb-4 flex justify-end">
-              <span className="mr-3 text-xs text-zinc-400">{authUser?.name || authUser?.email || 'Sessão de API'}</span><button type="button" onClick={handleDisconnectApiKey} className="text-xs text-zinc-400 hover:text-zinc-100">Sair da conta</button>
+              <span className="mr-3 text-xs text-slate-400 font-mono">{authUser?.name || authUser?.email || 'Sessão Conectada'}</span>
+              <button type="button" onClick={handleDisconnectApiKey} className="text-xs text-blue-400 hover:text-blue-300 font-medium">Sair da conta</button>
             </div>
           ) : (
             <div className="mb-4 flex justify-end">
-              <span className="mr-3 text-xs text-zinc-400">Não autenticado</span>
+              <span className="mr-3 text-xs text-slate-400">Não autenticado</span>
             </div>
           )}
           {currentTab === 'dashboard' && <DashboardScreen totalPlaces={totalPlaces} jobs={jobs} currentJob={currentJob} isScraping={isScraping} onNavigate={setCurrentTab} />}
