@@ -21,7 +21,6 @@ export interface ScrapeRuntimeStore {
   claimScrapeWorkerLease(jobId: string, userId: string): Promise<boolean>;
   findJobForWorker(jobId: string, userId: string): Promise<ScrapeJob | null>;
   releaseScrapeWorkerLease(jobId: string): Promise<void>;
-  isExistingPlace(place: Partial<PlaceRecord>): Promise<boolean>;
   findLastProcessedCandidateUrl(sessionId: string): Promise<string>;
 }
 
@@ -263,11 +262,9 @@ async function finishJob(store: ScrapeRuntimeStore, job: ScrapeJob): Promise<voi
     ? (job.total_errors > 0 ? 'partial' : 'completed')
     : (job.total_found > 0 || job.total_duplicates > 0 ? 'partial' : 'failed');
   job.status_message = reachedTarget
-    ? 'Meta atingida: ' + job.total_collected + '/' + job.limit_requested +
-      ' novos contatos salvos; ' + job.total_duplicates + ' já cadastrados.'
+    ? 'Meta atingida: ' + job.total_collected + '/' + job.limit_requested + ' estabelecimentos salvos.'
     : 'Fim dos resultados disponíveis nesta pesquisa: ' + job.total_collected +
-      ' novos contatos salvos, ' + job.total_duplicates + ' já cadastrados e ' +
-      job.total_errors + ' falha(s). O checkpoint foi preservado.';
+      ' estabelecimentos salvos e ' + job.total_errors + ' falha(s). O checkpoint foi preservado.';
   job.current_step = job.status === 'completed' ? 'Meta atingida' : 'Pesquisa finalizada';
   job.completed_at = new Date().toISOString();
   setHeartbeat(job);
@@ -289,7 +286,7 @@ async function checkpointPlace(
   store: ScrapeRuntimeStore,
   job: ScrapeJob,
   placeUrl: string,
-  outcome: 'saved' | 'duplicate',
+  outcome: 'saved',
   place?: PlaceRecord,
 ): Promise<void> {
   const processedAt = new Date().toISOString();
@@ -344,16 +341,6 @@ async function processOnePlace(
   const normalizedUrl = normalizeMapsPlaceUrl(placeUrl);
   const sourceId = extractSourcePlaceId(placeUrl);
 
-  if (await store.isExistingPlace({
-    source_place_id: sourceId,
-    source_url: normalizedUrl,
-    maps_url: placeUrl,
-  })) {
-    job.total_duplicates += 1;
-    await checkpointPlace(store, job, placeUrl, 'duplicate');
-    return;
-  }
-
   const detailPage = await browser.newPage();
   try {
     await configurePage(detailPage);
@@ -371,12 +358,6 @@ async function processOnePlace(
     }
     if (!place.address && !place.phone && !place.website && !place.source_place_id) {
       throw new Error('A ficha não apresentou endereço, telefone, site ou identificador verificável.');
-    }
-
-    if (await store.isExistingPlace(place)) {
-      job.total_duplicates += 1;
-      await checkpointPlace(store, job, placeUrl, 'duplicate');
-      return;
     }
 
     place.source_place_id = place.source_place_id || sourceId;
@@ -402,7 +383,7 @@ async function processOnePlace(
 /**
  * One simple sequential flow:
  * open the Maps search -> find the next card after the last completed URL ->
- * extract -> deduplicate -> save -> checkpoint. No discovery queue or ordinal
+ * extract -> save -> checkpoint. No database duplicate lookup is performed.
  * candidate processing is required.
  */
 export async function runScrapeJobStep(
