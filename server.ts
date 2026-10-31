@@ -644,15 +644,29 @@ class Store {
         if (!snapshotJob) return data as unknown as ScrapeJob;
         return {
           ...(data as unknown as ScrapeJob),
-          phase: snapshotJob.phase,
+          phase: (data as any).phase ?? snapshotJob.phase,
+          discovery_checkpoint: (data as any).discovery_checkpoint ?? snapshotJob.discovery_checkpoint,
           candidate_urls: snapshotJob.candidate_urls,
-          candidate_cursor: snapshotJob.candidate_cursor,
-          retry_count: snapshotJob.retry_count,
-          heartbeat_at: snapshotJob.heartbeat_at,
+          candidate_cursor: (data as any).candidate_cursor ?? snapshotJob.candidate_cursor,
+          retry_count: (data as any).retry_count ?? snapshotJob.retry_count,
+          heartbeat_at: (data as any).heartbeat_at ?? snapshotJob.heartbeat_at,
         };
       }
     }
     return this.state.jobs.find((job) => job.id === id && job.user_id === userId) ?? null;
+  }
+
+  async loadScrapeCandidates(jobId: string): Promise<string[]> {
+    if (!this.supabase) {
+      return this.state.jobs.find((job) => job.id === jobId)?.candidate_urls || [];
+    }
+    const { data, error } = await this.supabase
+      .from('scrape_candidates')
+      .select('source_url')
+      .eq('job_id', jobId)
+      .order('ordinal', { ascending: true });
+    if (error) throw new Error('Falha ao recuperar fila de fichas da coleta: ' + error.message);
+    return (data || []).map((row: { source_url: string }) => row.source_url).filter(Boolean);
   }
 
   async isJobCancellationRequested(id: string, userId: string): Promise<boolean> {
@@ -770,6 +784,33 @@ class Store {
     this.pendingWrite = this.pendingWrite.catch(() => undefined).then(async () => {
       const client = this.supabase!;
 
+      const candidateUrls = job.candidate_urls || [];
+      if (candidateUrls.length) {
+        const candidateRows = candidateUrls.map((sourceUrl, ordinal) => {
+          let sourceKey = sourceUrl;
+          try {
+            const parsed = new URL(sourceUrl);
+            parsed.search = '';
+            parsed.hash = '';
+            sourceKey = parsed.toString().replace(/\\/+$/, '');
+          } catch {
+            sourceKey = sourceUrl.split(/[?#]/, 1)[0].replace(/\\/+$/, '');
+          }
+          return {
+            id: job.id + ':candidate:' + ordinal,
+            job_id: job.id,
+            user_id: job.user_id,
+            source_key: sourceKey,
+            source_url: sourceUrl,
+            ordinal,
+          };
+        });
+        const { error: candidatesError } = await client
+          .from('scrape_candidates')
+          .upsert(candidateRows, { onConflict: 'job_id,source_key', ignoreDuplicates: true });
+        if (candidatesError) throw new Error('Falha ao persistir fila de fichas: ' + candidatesError.message);
+      }
+
       if (newPlace) {
         const p = newPlace;
         const sourceUrl = String(p.source_url || p.maps_url || '').trim();
@@ -819,6 +860,9 @@ class Store {
         status_message: job.status_message, total_found: job.total_found,
         total_collected: job.total_collected, total_duplicates: job.total_duplicates,
         total_errors: job.total_errors, current_step: job.current_step ?? null,
+        phase: job.phase ?? null, discovery_checkpoint: job.discovery_checkpoint ?? {},
+        candidate_cursor: job.candidate_cursor ?? 0, retry_count: job.retry_count ?? 0,
+        heartbeat_at: job.heartbeat_at ?? null,
         created_at: job.created_at, completed_at: job.completed_at ?? null,
       }, { onConflict: 'id' });
       if (jobError) throw new Error(`Falha ao sincronizar progresso da coleta: ${jobError.message}`);
@@ -853,6 +897,9 @@ class Store {
           status_message: item.status_message, total_found: item.total_found,
           total_collected: item.total_collected, total_duplicates: item.total_duplicates,
           total_errors: item.total_errors, current_step: item.current_step ?? null,
+          phase: item.phase ?? null, discovery_checkpoint: item.discovery_checkpoint ?? {},
+          candidate_cursor: item.candidate_cursor ?? 0, retry_count: item.retry_count ?? 0,
+          heartbeat_at: item.heartbeat_at ?? null,
           created_at: item.created_at, completed_at: item.completed_at ?? null,
         })), { onConflict: 'id' });
         if (error) throw new Error(`Falha ao sincronizar raspagens: ${error.message}`);
