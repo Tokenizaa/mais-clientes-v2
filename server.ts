@@ -1355,6 +1355,7 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
       job.status = 'stopped';
       job.status_message = 'Coleta interrompida pelo operador. ' + collectedCount + '/' + limit + ' novos estabelecimentos foram salvos.';
       job.current_step = 'Interrompido';
+      job.completed_at = new Date().toISOString();
       await store.persistScrapeProgress(job);
       return;
     }
@@ -1363,6 +1364,7 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
       job.status = 'failed';
       job.status_message = 'Nenhum estabelecimento encontrado no Google Maps para esta busca.';
       job.current_step = 'Sem resultados';
+      job.completed_at = new Date().toISOString();
       state.logs.unshift({
         id: 'log_' + Date.now() + '_err',
         created_at: new Date().toISOString(),
@@ -1422,6 +1424,7 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
       job.status = 'stopped';
       job.status_message = 'Coleta interrompida pelo usuário.';
       job.current_step = 'Interrompido';
+      job.completed_at = new Date().toISOString();
       await store.persistScrapeProgress(job);
       return;
     }
@@ -1430,6 +1433,7 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
     job.status_message = `Erro durante a execução da coleta: ${error?.message || 'Falha desconhecida'}`;
     job.total_errors += 1;
     job.current_step = 'Falha';
+    job.completed_at = new Date().toISOString();
 
     state.logs.unshift({
       id: `log_${Date.now()}_err`,
@@ -1649,6 +1653,7 @@ export async function createApp() {
       const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
       const state = store.getState();
+      markStaleRunningJobs(state, userId);
       const normalizedProjectName = String(projectName || `${segment} · ${location}`).trim();
       let project = state.projects.find((item) =>
         item.user_id === userId && item.name.toLocaleLowerCase('pt-BR') === normalizedProjectName.toLocaleLowerCase('pt-BR')
