@@ -230,19 +230,6 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
 
   return (
     <div className="max-w-5xl mx-auto py-2 sm:py-6 space-y-8">
-      {/* Real-time Evolution HUD (Placed prominently at the top when active) */}
-      {currentJob && (
-        <div ref={progressRef}>
-          <ScrapeEvolutionHUD
-            currentJob={currentJob}
-            isScraping={isScraping}
-            onStopScrape={onStopScrape}
-            onGoToResults={onGoToResults}
-            recentPlaces={places}
-          />
-        </div>
-      )}
-
       {/* Intro Header */}
       <div>
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/25 text-blue-300 text-xs font-semibold uppercase tracking-wider mb-3">
@@ -603,6 +590,20 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           </div>
         </form>
       </div>
+
+      {/* Real-time Evolution HUD: displayed directly below the search controls. */}
+      {currentJob && (
+        <div ref={progressRef}>
+          <ScrapeEvolutionHUD
+            currentJob={currentJob}
+            isScraping={isScraping}
+            onStopScrape={onStopScrape}
+            onGoToResults={onGoToResults}
+            recentPlaces={places}
+          />
+        </div>
+      )}
+
     </div>
   );
 };
