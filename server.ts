@@ -1048,7 +1048,7 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
   try {
     job.status = 'running';
     job.current_step = 'Iniciando navegador para coleta real...';
-    store.persist();
+    await store.persistScrapeProgress(job);
 
     // Log job start
     state.logs.unshift({
@@ -1062,7 +1062,7 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
       metadata: JSON.stringify({ segment, location, limit, remoteBrowser: Boolean(process.env.BROWSERLESS_TOKEN || process.env.BROWSER_WS_ENDPOINT || state.settings?.browserWsEndpoint) }),
       user_id: userId,
     });
-    store.persist();
+    await store.persistScrapeProgress(job);
 
     activeBrowser = await connectScraperBrowser();
     const searchPage = await activeBrowser.newPage();
@@ -1075,7 +1075,7 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
     });
 
     job.current_step = `Navegando no Google Maps para: "${searchQuery}"...`;
-    store.persist();
+    await store.persistScrapeProgress(job);
 
     await searchPage.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await new Promise((r) => setTimeout(r, 2000));
@@ -1089,8 +1089,7 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
       if (consentBtn) consentBtn.click();
     }).catch(() => {});
 
-    // The selected quantity is the maximum number of unique Maps fiches
-    // checked in this execution, including fiches already present in the base.
+    // The selected quantity is the target of NEW leads; old records are skipped.
     const placeUrls = new Map<string, string>();
     const knownPlaceIds = new Set<string>();
     const knownUrlKeys = new Set<string>();
@@ -1115,11 +1114,6 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
     job.current_step = 'Buscando fichas no Google Maps para completar a meta de novos cadastros...';
     await store.persistScrapeProgress(job);
 
-    if (searchPage.url().includes('/maps/place/')) {
-      const key = normalizeMapsPlaceUrl(searchPage.url());
-      if (key) placeUrls.set(key, searchPage.url());
-    }
-
     while (
       collectedCount < limit &&
       placeUrls.size < maxCandidates &&
@@ -1135,6 +1129,7 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
         console.warn('[Scraper] Falha ao ler links das fichas no Google Maps:', error?.message || error);
         return [];
       });
+      if (searchPage.url().includes('/maps/place/')) links.unshift(searchPage.url());
 
       const countBeforeRound = placeUrls.size;
       for (const placeUrl of links) {
@@ -1262,8 +1257,9 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
             ' · já cadastrados: ' + job.total_duplicates +
             ' · fichas verificadas: ' + processedCount + '/' + placeUrls.size;
 
+          const extractedLogId = 'log_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
           state.logs.unshift({
-            id: 'log_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+            id: extractedLogId,
             created_at: new Date().toISOString(),
             level: 'info',
             category: 'scraper',
@@ -1286,9 +1282,9 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
           const inserted = await store.persistScrapeProgress(job, place);
           if (!inserted) {
             state.places = state.places.filter((item) => item.id !== place.id);
+            state.logs = state.logs.filter((item) => item.id !== extractedLogId);
             placeAddedToState = false;
             collectedCount -= 1;
-            processedCount += 0;
             job.total_collected = collectedCount;
             job.total_duplicates += 1;
             job.current_step =
