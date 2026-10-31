@@ -1465,7 +1465,7 @@ export async function createApp() {
           ? 'Retomando a fila persistida a partir da ficha ' + (resumeCursor + 1) + '...'
           : 'Retomando a descoberta no último checkpoint salvo...',
         phase: resumePhase,
-        discovery_checkpoint: searchSession.discovery_checkpoint || {},
+        discovery_checkpoint: { ...(searchSession.discovery_checkpoint || {}), stalled_passes: 0 },
         candidate_urls: [],
         candidate_cursor: resumeCursor,
         retry_count: 0,
