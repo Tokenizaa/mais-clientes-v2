@@ -522,7 +522,7 @@ function markStaleRunningJobs(state: StoreState, userId: string, now = Date.now(
   const staleAfterMs = 2 * 60 * 1000;
   let changed = false;
   for (const job of state.jobs) {
-    if (job.user_id !== userId || job.status !== 'running') continue;
+    if (job.user_id !== userId || job.status !== 'running' || job.phase) continue;
     const lastHeartbeat = Date.parse(job.heartbeat_at || job.created_at);
     if (!Number.isFinite(lastHeartbeat) || now - lastHeartbeat <= staleAfterMs) continue;
     job.status = 'failed';
@@ -1183,7 +1183,7 @@ export async function createApp() {
       const user = resolveUserFromRequest(req);
       if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
       const staleCandidates = state.jobs.filter((job) =>
-        job.user_id === user.id && job.status === 'running' &&
+        job.user_id === user.id && job.status === 'running' && !job.phase &&
         Date.now() - Date.parse(job.heartbeat_at || job.created_at) > 2 * 60 * 1000
       );
       if (markStaleRunningJobs(state, user.id)) {
