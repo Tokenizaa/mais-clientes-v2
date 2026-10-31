@@ -583,6 +583,22 @@ class Store {
       await this.flush();
     }
 
+    // The relational places table is the source of truth. app_state is a
+    // compatibility snapshot and can lag behind successful relational inserts.
+    // Hydrate every page before serving leads or doing in-memory comparisons.
+    const relationalPlaces: PlaceRecord[] = [];
+    for (let offset = 0; ; offset += 500) {
+      const { data: placeRows, error: placesError } = await this.supabase
+        .from('places')
+        .select('*')
+        .order('collected_at', { ascending: false })
+        .range(offset, offset + 499);
+      if (placesError) throw new Error('Falha ao carregar estabelecimentos do banco: ' + placesError.message);
+      relationalPlaces.push(...((placeRows || []) as unknown as PlaceRecord[]));
+      if (!placeRows || placeRows.length < 500) break;
+    }
+    this.state.places = relationalPlaces;
+
     const currentPlaces = this.state.places || [];
     const deduplicatedPlaces = deduplicatePlaceSnapshot(currentPlaces);
     if (deduplicatedPlaces.length !== currentPlaces.length) {
