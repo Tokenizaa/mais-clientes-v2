@@ -11,5 +11,5 @@ revoke all on table public.app_state from anon, authenticated;
 grant all on table public.app_state to service_role;
 
 -- The application persists cancellation requests alongside each search job.
-alter table public.searches
+alter table public.scrape_jobs
   add column if not exists cancel_requested boolean not null default false;
