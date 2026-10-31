@@ -1623,9 +1623,12 @@ export async function createApp() {
       const state = store.getState();
       const user = resolveUserFromRequest(req);
       if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+      const staleCandidates = state.jobs.filter((job) =>
+        job.user_id === user.id && job.status === 'running' &&
+        Date.now() - Date.parse(job.created_at) > 5 * 60 * 1000
+      );
       if (markStaleRunningJobs(state, user.id)) {
-        store.persist();
-        await store.flush();
+        for (const staleJob of staleCandidates) await store.persistScrapeProgress(staleJob);
       }
       const ownedJobs = state.jobs.filter((job) => job.user_id === user.id);
       const sorted = [...ownedJobs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
@@ -1649,7 +1652,13 @@ export async function createApp() {
       const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
       const state = store.getState();
-      markStaleRunningJobs(state, userId);
+      const staleCandidates = state.jobs.filter((job) =>
+        job.user_id === userId && job.status === 'running' &&
+        Date.now() - Date.parse(job.created_at) > 5 * 60 * 1000
+      );
+      if (markStaleRunningJobs(state, userId)) {
+        for (const staleJob of staleCandidates) await store.persistScrapeProgress(staleJob);
+      }
       const normalizedProjectName = String(projectName || `${segment} · ${location}`).trim();
       let project = state.projects.find((item) =>
         item.user_id === userId && item.name.toLocaleLowerCase('pt-BR') === normalizedProjectName.toLocaleLowerCase('pt-BR')
@@ -1711,9 +1720,12 @@ export async function createApp() {
       if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
       // Read durable job state instead of trusting this function instance's snapshot.
       const state = store.getState();
+      const staleCandidates = state.jobs.filter((job) =>
+        job.user_id === user.id && job.status === 'running' &&
+        Date.now() - Date.parse(job.created_at) > 5 * 60 * 1000
+      );
       if (markStaleRunningJobs(state, user.id)) {
-        store.persist();
-        await store.flush();
+        for (const staleJob of staleCandidates) await store.persistScrapeProgress(staleJob);
       }
       const job = await store.findJobForUser(req.params.id, user.id);
       if (!job) {
