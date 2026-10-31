@@ -3,13 +3,37 @@
 @source "../index.html";
 
 @layer base {
+
+  /* Shared dark-navy surfaces and accessible focus states. */
+  :root {
+    --app-bg: #050a16;
+    --app-surface: #0b1429;
+    --app-surface-raised: #101e39;
+    --app-border: #20365f;
+    --app-accent: #3b82f6;
+    --app-accent-strong: #2563eb;
+    --app-success: #10b981;
+    --app-warning: #f59e0b;
+    --app-danger: #f43f5e;
+  }
+
+  :where(button, input, select, textarea):focus-visible {
+    outline: 2px solid var(--app-accent);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: rgb(59 130 246 / 35%);
+    color: #fff;
+  }
+
   :root {
     color-scheme: dark;
     font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   }
 
   body {
-    background-color: #060b18;
+    background-color: #050a16;
     color: #f1f5f9;
     overflow-x: hidden;
   }
@@ -20,14 +44,14 @@
     height: 6px;
   }
   ::-webkit-scrollbar-track {
-    background: #060b18;
+    background: #050a16;
   }
   ::-webkit-scrollbar-thumb {
-    background: #1e2e4e;
+    background: #263b61;
     border-radius: 9999px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #2d4575;
+    background: #3b5b91;
   }
 }
 
