@@ -522,7 +522,7 @@ function markStaleRunningJobs(state: StoreState, userId: string, now = Date.now(
   const staleAfterMs = 2 * 60 * 1000;
   let changed = false;
   for (const job of state.jobs) {
-    if (job.user_id !== userId || job.status !== 'running' || job.phase) continue;
+    if (job.user_id !== userId || job.status !== 'running') continue;
     const lastHeartbeat = Date.parse(job.heartbeat_at || job.created_at);
     if (!Number.isFinite(lastHeartbeat) || now - lastHeartbeat <= staleAfterMs) continue;
     job.status = 'failed';
@@ -718,6 +718,25 @@ class Store {
       discovery_checkpoint: (data.discovery_checkpoint || {}) as Record<string, any>,
       exhausted: data.exhausted === true,
     };
+  }
+
+  async findLastProcessedCandidateUrl(sessionId: string): Promise<string> {
+    if (!this.supabase) {
+      const session = this.localSearchSessions.get(sessionId);
+      const previousIndex = Math.max(0, Number(session?.next_ordinal || 0) - 1);
+      return session?.candidate_urls?.[previousIndex] || '';
+    }
+
+    const { data, error } = await this.supabase
+      .from('scrape_candidates')
+      .select('source_url')
+      .eq('session_id', sessionId)
+      .in('status', ['processed', 'duplicate'])
+      .order('ordinal', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error('Falha ao recuperar a última ficha concluída da sessão: ' + error.message);
+    return String(data?.source_url || '');
   }
 
   async persistDiscoveredCandidates(job: ScrapeJob, urls: string[]): Promise<void> {
@@ -1539,7 +1558,7 @@ export async function createApp() {
       const state = store.getState();
       const staleCandidates = state.jobs.filter((job) =>
         job.user_id === userId && job.status === 'running' &&
-        Date.now() - Date.parse(job.created_at) > 5 * 60 * 1000
+        Date.now() - Date.parse(job.heartbeat_at || job.created_at) > 2 * 60 * 1000
       );
       if (markStaleRunningJobs(state, userId)) {
         for (const staleJob of staleCandidates) await store.persistScrapeProgress(staleJob);
@@ -1592,24 +1611,40 @@ export async function createApp() {
         projectId: project.id,
         categoryId: category.id,
       });
-      const knownCandidates = Math.max(0, searchSession.total_found || 0);
-      const resumeCursor = Math.min(Math.max(0, searchSession.next_ordinal || 0), knownCandidates);
-      const resumePhase = resumeCursor < knownCandidates ? 'processing' : 'discovering';
+      let checkpoint = { ...(searchSession.discovery_checkpoint || {}) };
+      let lastProcessedUrl = String(checkpoint.last_processed_url || '');
+      // Existing sessions created by the old queue-based worker are migrated
+      // from the last candidate explicitly marked processed/duplicate.
+      if (!lastProcessedUrl) {
+        lastProcessedUrl = await store.findLastProcessedCandidateUrl(searchSession.id);
+        if (lastProcessedUrl) {
+          checkpoint = {
+            ...checkpoint,
+            version: 2,
+            last_processed_url: lastProcessedUrl,
+            last_processed_source_key: normalizeMapsPlaceUrl(lastProcessedUrl),
+            migrated_from_candidate_queue_at: new Date().toISOString(),
+          };
+        }
+      }
+      const processedCount = Math.max(0, Number(checkpoint.processed_count || searchSession.next_ordinal || 0));
 
       const newJob: ScrapeJob = {
         id: jobId, user_id: userId, search_session_id: searchSession.id, segment: String(segment).trim(),
         project_name: project.name, project_id: project.id, category_id: category.id,
         location: String(location).trim(), limit_requested: numLimit,
         status: 'running',
-        status_message: `Meta de ${numLimit} novos estabelecimentos. Sessão retomada: ${resumeCursor} fichas já processadas de ${knownCandidates} descobertas; fichas já cadastradas serão ignoradas.`,
-        total_found: knownCandidates, total_collected: 0, total_duplicates: 0, total_errors: 0,
-        current_step: resumeCursor < knownCandidates
-          ? 'Retomando a fila persistida a partir da ficha ' + (resumeCursor + 1) + '...'
-          : 'Retomando a descoberta no último checkpoint salvo...',
-        phase: resumePhase,
-        discovery_checkpoint: { ...(searchSession.discovery_checkpoint || {}), stalled_passes: 0 },
+        status_message: lastProcessedUrl
+          ? `Meta de ${numLimit} novos contatos. Retomada após a última ficha efetivamente processada.`
+          : `Meta de ${numLimit} novos contatos. Pesquisa iniciada do primeiro resultado.`,
+        total_found: 0, total_collected: 0, total_duplicates: 0, total_errors: 0,
+        current_step: lastProcessedUrl
+          ? 'Retomando depois da última ficha processada...'
+          : 'Iniciando a pesquisa no Google Maps...',
+        phase: 'discovering',
+        discovery_checkpoint: { ...checkpoint, version: 2 },
         candidate_urls: [],
-        candidate_cursor: resumeCursor,
+        candidate_cursor: processedCount,
         retry_count: 0,
         heartbeat_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
@@ -1632,6 +1667,31 @@ export async function createApp() {
     }
   });
 
+  app.post('/api/v1/jobs/:id/step', async (req: Request, res: Response) => {
+    try {
+      const user = resolveUserFromRequest(req);
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+      const job = await store.findJobForUser(req.params.id, user.id);
+      if (!job) return res.status(404).json({ error: 'Coleta não encontrada.' });
+      if (job.status !== 'running') {
+        return res.status(409).json({ error: 'A coleta não está em execução.', data: job });
+      }
+
+      const nextStep = runScrapeJobStep(store, connectScraperBrowser, job.id, user.id);
+      if (process.env.VERCEL === '1') waitUntil(nextStep);
+      else void nextStep;
+
+      return res.status(202).setHeader('Cache-Control', 'no-store').json({
+        success: true,
+        message: 'Próxima etapa da coleta agendada.',
+        data: job,
+      });
+    } catch (err: any) {
+      console.error('[Jobs] Failed to schedule scraper step:', err?.message || err);
+      return res.status(500).json({ error: 'Falha ao agendar a próxima etapa da coleta.' });
+    }
+  });
+
   app.get('/api/v1/jobs/:id', async (req: Request, res: Response) => {
     try {
       const user = resolveUserFromRequest(req);
@@ -1640,7 +1700,7 @@ export async function createApp() {
       const state = store.getState();
       const staleCandidates = state.jobs.filter((job) =>
         job.user_id === user.id && job.status === 'running' &&
-        Date.now() - Date.parse(job.created_at) > 5 * 60 * 1000
+        Date.now() - Date.parse(job.heartbeat_at || job.created_at) > 2 * 60 * 1000
       );
       if (markStaleRunningJobs(state, user.id)) {
         for (const staleJob of staleCandidates) await store.persistScrapeProgress(staleJob);
@@ -1650,11 +1710,7 @@ export async function createApp() {
         console.warn('[Jobs] Job lookup miss', { jobId: req.params.id, userId: user.id, snapshotContainsId: store.getState().jobs.some((item) => item.id === req.params.id) });
         return res.status(404).json({ error: 'Coleta não encontrada.' });
       }
-      if (job.status === 'running') {
-        const nextStep = runScrapeJobStep(store, connectScraperBrowser, job.id, user.id);
-        if (process.env.VERCEL === '1') waitUntil(nextStep);
-        else void nextStep;
-      }
+      // GET is read-only: polling progress must never start browser work.
       return res.setHeader('Cache-Control', 'no-store').json({ data: job, ...job });
     } catch (err: any) {
       console.error('[Jobs] Failed to read job progress:', err?.message || err);
