@@ -26,7 +26,7 @@ A API roda em Vercel Functions com maxDuration de 60 segundos. Uma execução mo
 ## Limites e operação
 
 - Cada invocação processa uma ficha, para caber no limite de 60 segundos mesmo com uma navegação lenta.
-- A execução continua enquanto a tela de progresso mantém o polling do job. Se o usuário fechar a página, o job pausa entre lotes e retoma quando essa tela voltar a consultar o job.
+- A execução continua enquanto a tela de progresso mantém o polling do job. Se o usuário fechar a página, o job pausa entre lotes; ao reabrir o app, o App restaura o job ativo do histórico e retoma o polling.
 - A conexão Browserless tem timeout de 8 segundos por tentativa e no máximo duas tentativas.
 - Erros em uma ficha são registrados e avançam o cursor; falhas de infraestrutura são tentadas novamente até três vezes.
 - Não executar coletas de produção como teste automatizado. Validar primeiro com uma busca pequena e conferir scrape_jobs, app_state e places.
