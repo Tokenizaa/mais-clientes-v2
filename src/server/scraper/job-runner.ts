@@ -44,7 +44,7 @@ function delay(ms: number): Promise<void> {
  * the actual position. If it cannot be restored, fail this bounded invocation
  * while keeping the durable checkpoint; never silently restart discovery at 0.
  */
-async function restoreMapsFeedPosition(page: Page, targetScrollTop: number): Promise<void> {
+async function restoreMapsFeedPosition(page: Page, targetScrollTop: number, expectedSourceKey = ''): Promise<void> {
   const target = Math.max(0, Math.floor(targetScrollTop));
   if (target === 0) return;
 
@@ -81,13 +81,30 @@ async function restoreMapsFeedPosition(page: Page, targetScrollTop: number): Pro
         return (feed as HTMLElement).scrollTop;
       }, target);
       await delay(350);
-      const verified = await page.evaluate(() => {
+      const verified = await page.evaluate((expectedKey) => {
         const feed = document.querySelector('div[role="feed"]') ||
           document.querySelector('div.m6QErb[aria-label]') ||
           document.querySelector('div.TFQHme');
-        return feed ? (feed as HTMLElement).scrollTop : -1;
-      });
-      if (restored >= 0 && verified >= 0 && Math.abs(verified - target) <= Math.max(120, lastState.clientHeight * 0.35)) {
+        if (!feed) return { scrollTop: -1, anchorFound: !expectedKey };
+        const links = Array.from(feed.querySelectorAll('a[href*="/maps/place/"]'))
+          .map((anchor) => {
+            try {
+              const parsed = new URL((anchor as HTMLAnchorElement).href);
+              parsed.search = '';
+              parsed.hash = '';
+              return parsed.toString().replace(/\\/+$/, '');
+            } catch {
+              return (anchor as HTMLAnchorElement).href.split(/[?#]/, 1)[0].replace(/\\/+$/, '');
+            }
+          });
+        return {
+          scrollTop: (feed as HTMLElement).scrollTop,
+          anchorFound: !expectedKey || links.includes(expectedKey),
+        };
+      }, expectedSourceKey);
+      const offsetVerified = restored >= 0 && verified.scrollTop >= 0 &&
+        Math.abs(verified.scrollTop - target) <= Math.max(120, lastState.clientHeight * 0.35);
+      if (offsetVerified && verified.anchorFound) {
         return;
       }
     }
@@ -266,7 +283,7 @@ async function discoverCandidates(
       job.current_step = 'Restaurando a posição salva da descoberta (' + Math.floor(resumeScrollTop) + ' px)...';
       setHeartbeat(job);
       await store.persistScrapeProgress(job);
-      await restoreMapsFeedPosition(page, resumeScrollTop);
+      await restoreMapsFeedPosition(page, resumeScrollTop, String(job.discovery_checkpoint?.last_seen_source_key || ''));
       job.discovery_checkpoint = {
         ...(job.discovery_checkpoint || {}),
         resume_position_verified: true,
