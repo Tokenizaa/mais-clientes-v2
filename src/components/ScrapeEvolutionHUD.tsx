@@ -41,6 +41,7 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
   const isCompleted = currentJob.status === 'completed';
   const isStopped = currentJob.status === 'stopped';
   const isFailed = currentJob.status === 'failed';
+  const isPartial = currentJob.status === 'partial';
 
   // Radius for SVG circular progress
   const radius = 64;
@@ -67,6 +68,8 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
                   ? 'bg-blue-600/20 border-blue-400/40 text-blue-400 shadow-blue-500/20'
                   : isCompleted
                   ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-400 shadow-emerald-500/20'
+                  : isPartial || isFailed
+                  ? 'bg-rose-500/20 border-rose-400/40 text-rose-300 shadow-rose-500/20'
                   : 'bg-amber-500/20 border-amber-400/40 text-amber-400 shadow-amber-500/20'
               }`}
             >
@@ -89,7 +92,7 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold uppercase tracking-wider text-blue-400 font-mono">
-                {isRunning ? 'Radar de Coleta em Tempo Real' : isCompleted ? 'Coleta Finalizada com Sucesso' : 'Coleta Encerrada'}
+                {isRunning ? 'Radar de Coleta em Tempo Real' : isCompleted ? 'Coleta Finalizada com Sucesso' : isPartial ? 'Coleta Concluída com Falhas' : isFailed ? 'Coleta Não Concluída' : 'Coleta Encerrada'}
               </span>
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-900/60 border border-blue-700/50 text-blue-200 font-mono">
                 ID: {currentJob.id.slice(0, 12)}
