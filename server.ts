@@ -9,11 +9,10 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { EXPORTABLE_FIELDS, type PlaceRecord, type ScrapeJob } from './src/shared/types.js';
 import { BRAZILIAN_STATES, POPULAR_CATEGORIES } from './src/shared/brazilLocations.js';
-import puppeteer from 'puppeteer-core';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import type { Browser, Page } from 'puppeteer-core';
-import { extractPlaceDetails } from './src/server/scraper/extractor.ts';
-import { extractSourcePlaceId, parseSearchLocationFallback } from './src/server/scraper/normalizer.ts';
+import { extractSourcePlaceId } from './src/server/scraper/normalizer.ts';
+import { connectScraperBrowser } from './src/server/scraper/browser.ts';
+import { runScrapeJobStep } from './src/server/scraper/job-runner.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -518,14 +517,14 @@ function deduplicatePlaceSnapshot(places: PlaceRecord[]): PlaceRecord[] {
 }
 
 function markStaleRunningJobs(state: StoreState, userId: string, now = Date.now()): boolean {
-  // Vercel function maxDuration is 60 seconds. A job still marked running
-  // after five minutes has lost its worker and must not remain stuck forever.
-  const staleAfterMs = 5 * 60 * 1000;
+  // Each bounded worker step must heartbeat. Two minutes without a heartbeat
+  // means the serverless worker was terminated or abandoned.
+  const staleAfterMs = 2 * 60 * 1000;
   let changed = false;
   for (const job of state.jobs) {
     if (job.user_id !== userId || job.status !== 'running') continue;
-    const createdAt = Date.parse(job.created_at);
-    if (!Number.isFinite(createdAt) || now - createdAt <= staleAfterMs) continue;
+    const lastHeartbeat = Date.parse(job.heartbeat_at || job.created_at);
+    if (!Number.isFinite(lastHeartbeat) || now - lastHeartbeat <= staleAfterMs) continue;
     job.status = 'failed';
     job.status_message = 'A execução foi encerrada sem finalizar. O processo excedeu o tempo disponível ou perdeu o worker; inicie uma nova pesquisa.';
     job.current_step = 'Execução expirada';
@@ -539,6 +538,7 @@ class Store {
   private state: StoreState;
   private supabase: SupabaseClient | null = null;
   private pendingWrite: Promise<void> = Promise.resolve();
+  private localScrapeLeases = new Set<string>();
 
   constructor() {
     this.state = this.load();
@@ -639,7 +639,18 @@ class Store {
         .eq('user_id', userId)
         .maybeSingle();
       if (error) throw new Error('Falha ao consultar coleta no Supabase: ' + error.message);
-      if (data) return data as unknown as ScrapeJob;
+      if (data) {
+        const snapshotJob = this.state.jobs.find((job) => job.id === id && job.user_id === userId);
+        if (!snapshotJob) return data as unknown as ScrapeJob;
+        return {
+          ...(data as unknown as ScrapeJob),
+          phase: snapshotJob.phase,
+          candidate_urls: snapshotJob.candidate_urls,
+          candidate_cursor: snapshotJob.candidate_cursor,
+          retry_count: snapshotJob.retry_count,
+          heartbeat_at: snapshotJob.heartbeat_at,
+        };
+      }
     }
     return this.state.jobs.find((job) => job.id === id && job.user_id === userId) ?? null;
   }
@@ -657,6 +668,39 @@ class Store {
     }
     const job = this.state.jobs.find((item) => item.id === id && item.user_id === userId);
     return job?.status === 'stopped';
+  }
+
+  async claimScrapeWorkerLease(id: string, userId: string): Promise<boolean> {
+    if (!this.supabase) {
+      if (this.localScrapeLeases.has(id)) return false;
+      this.localScrapeLeases.add(id);
+      return true;
+    }
+    const now = new Date().toISOString();
+    const leaseUntil = new Date(Date.now() + 55_000).toISOString();
+    const { data, error } = await this.supabase
+      .from('scrape_jobs')
+      .update({ worker_locked_until: leaseUntil })
+      .eq('id', id)
+      .eq('user_id', userId)
+      .eq('status', 'running')
+      .or('worker_locked_until.is.null,worker_locked_until.lt.' + now)
+      .select('id')
+      .maybeSingle();
+    if (error) throw new Error('Falha ao reservar execução do scraper: ' + error.message);
+    return Boolean(data?.id);
+  }
+
+  async releaseScrapeWorkerLease(id: string): Promise<void> {
+    if (!this.supabase) {
+      this.localScrapeLeases.delete(id);
+      return;
+    }
+    const { error } = await this.supabase
+      .from('scrape_jobs')
+      .update({ worker_locked_until: null })
+      .eq('id', id);
+    if (error) throw new Error('Falha ao liberar execução do scraper: ' + error.message);
   }
 
   async requestJobCancellation(id: string, userId: string): Promise<ScrapeJob | null> {
@@ -715,6 +759,7 @@ class Store {
   }
 
   async persistScrapeProgress(job: ScrapeJob, newPlace?: PlaceRecord): Promise<boolean> {
+    job.heartbeat_at = new Date().toISOString();
     if (!this.supabase) {
       this.save(this.state);
       return true;
@@ -966,503 +1011,6 @@ function resolveUserFromRequest(req: Request): UserProfile | null {
 // REAL SCRAPING ENGINE (Google Maps DOM Extractor with Cloudflare Browser Support)
 // =========================================================================
 
-const activeScrapeJobs = new Map<string, { cancel: () => void }>();
-
-async function connectScraperBrowser(): Promise<Browser> {
-  const state = store.getState();
-  const browserlessToken = process.env.BROWSERLESS_TOKEN?.trim();
-  const legacyEndpoint = (state.settings?.browserWsEndpoint || process.env.BROWSER_WS_ENDPOINT || '').trim();
-  const wsEndpoint = browserlessToken
-    ? `wss://production-sfo.browserless.io?token=${encodeURIComponent(browserlessToken)}`
-    : legacyEndpoint;
-
-  if (wsEndpoint) {
-    let lastError: any = null;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        console.log(`[Scraper] Conectando ao Browserless / Chromium remoto (${browserlessToken ? 'Browserless' : 'endpoint legado'}) — tentativa ${attempt + 1}/3...`);
-        return await puppeteer.connect({
-          browserWSEndpoint: wsEndpoint,
-          protocolTimeout: 60000,
-        });
-      } catch (err: any) {
-        lastError = err;
-        const message = err?.message || 'erro desconhecido';
-        const retryable = /429|502|503|504|ECONNRESET|ETIMEDOUT|connection closed/i.test(message);
-        console.error(`[Scraper] Falha na conexão com o navegador remoto (tentativa ${attempt + 1}/3): ${message}`);
-        if (!retryable || attempt === 2) break;
-        await new Promise((resolve) => setTimeout(resolve, 1500 * (2 ** attempt)));
-      }
-    }
-
-    const message = lastError?.message || 'erro desconhecido';
-    if (process.env.VERCEL === '1' || process.env.NODE_ENV === 'production') {
-      throw new Error(`Não foi possível conectar ao Browserless após 3 tentativas. Verifique BROWSERLESS_TOKEN, limite de sessões e região da conta. Detalhe: ${message}`);
-    }
-  }
-
-  if (process.env.VERCEL === '1' || process.env.NODE_ENV === 'production') {
-    throw new Error('Browser remoto obrigatório em produção. Configure BROWSERLESS_TOKEN nas variáveis de ambiente da Vercel.');
-  }
-
-  // Chromium local somente no desenvolvimento.
-  console.log('[Scraper] Iniciando Chromium local para desenvolvimento...');
-  const localPuppeteer = await import('puppeteer');
-  return await localPuppeteer.default.launch({
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--lang=pt-BR,pt',
-    ],
-  }) as unknown as Browser;
-}
-
-async function executeScrapeJob(jobId: string, segment: string, location: string, limit: number, userId: string) {
-  const state = store.getState();
-  const job = state.jobs.find((j) => j.id === jobId);
-  if (!job) return;
-
-  let isCancelled = false;
-  let activeBrowser: Browser | null = null;
-
-  activeScrapeJobs.set(jobId, {
-    cancel: () => {
-      isCancelled = true;
-      if (activeBrowser) activeBrowser.close().catch(() => {});
-    },
-  });
-
-  // A stop request must reach the worker even when Vercel routes it to another instance.
-  const cancellationPoll = setInterval(async () => {
-    if (isCancelled) return;
-    try {
-      if (await store.isJobCancellationRequested(jobId, userId)) {
-        isCancelled = true;
-        if (activeBrowser) await activeBrowser.close().catch(() => {});
-      }
-    } catch (error: any) {
-      console.error('[Scraper] Falha ao consultar pedido de interrupção:', error?.message || error);
-    }
-  }, 1500);
-
-  const searchQuery = `${segment} ${location}`.trim();
-  const searchUrl = `https://www.google.com/maps/search/${encodeURIComponent(searchQuery)}`;
-
-  try {
-    job.status = 'running';
-    job.current_step = 'Iniciando navegador para coleta real...';
-    await store.persistScrapeProgress(job);
-
-    // Log job start
-    state.logs.unshift({
-      id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      created_at: new Date().toISOString(),
-      level: 'info',
-      category: 'scraper',
-      event: 'job_started',
-      message: `Iniciada coleta real de "${segment}" em "${location}" (limite: ${limit})`,
-      job_id: jobId,
-      metadata: JSON.stringify({ segment, location, limit, remoteBrowser: Boolean(process.env.BROWSERLESS_TOKEN || process.env.BROWSER_WS_ENDPOINT || state.settings?.browserWsEndpoint) }),
-      user_id: userId,
-    });
-    await store.persistScrapeProgress(job);
-
-    activeBrowser = await connectScraperBrowser();
-    const searchPage = await activeBrowser.newPage();
-    await searchPage.setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    );
-    await searchPage.setViewport({ width: 1280, height: 900 });
-    await searchPage.setExtraHTTPHeaders({
-      'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-    });
-
-    job.current_step = `Navegando no Google Maps para: "${searchQuery}"...`;
-    await store.persistScrapeProgress(job);
-
-    await searchPage.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await new Promise((r) => setTimeout(r, 2000));
-
-    // Handle Google consent banner if displayed
-    await searchPage.evaluate(() => {
-      const btns = Array.from(document.querySelectorAll('button'));
-      const consentBtn = btns.find((b) =>
-        /aceitar|concordo|accept all|i agree/i.test(b.innerText || '')
-      );
-      if (consentBtn) consentBtn.click();
-    }).catch(() => {});
-
-    // The selected quantity is the target of NEW leads; old records are skipped.
-    const placeUrls = new Map<string, string>();
-    const knownPlaceIds = new Set<string>();
-    const knownUrlKeys = new Set<string>();
-    const knownNameAddressKeys = new Set<string>();
-
-    for (const existing of state.places) {
-      const identity = getPlaceIdentity(existing);
-      if (identity.sourceId) knownPlaceIds.add(identity.sourceId);
-      identity.urlKeys.forEach((key) => knownUrlKeys.add(key));
-      if (identity.nameAddressKey) knownNameAddressKeys.add(identity.nameAddressKey);
-    }
-
-    let previousCount = 0;
-    let stagnantRounds = 0;
-    let processedCount = 0;
-    let collectedCount = 0;
-    // The requested quantity is the target of NEW records. Duplicates are skipped,
-    // and the feed keeps being paged until that target is reached or the source ends.
-    const maxCandidates = Math.min(500, Math.max(limit * 5, limit + 50));
-
-    job.status_message = 'Meta de ' + limit + ' novos estabelecimentos. Fichas já cadastradas serão ignoradas e a busca continuará procurando outras.';
-    job.current_step = 'Buscando fichas no Google Maps para completar a meta de novos cadastros...';
-    await store.persistScrapeProgress(job);
-
-    while (
-      collectedCount < limit &&
-      placeUrls.size < maxCandidates &&
-      stagnantRounds < 12
-    ) {
-      if (isCancelled) break;
-
-      const links: string[] = await searchPage.evaluate(() =>
-        Array.from(document.querySelectorAll('a[href*="/maps/place/"]'))
-          .map((anchor) => (anchor as HTMLAnchorElement).href)
-          .filter((href): href is string => Boolean(href) && href.includes('/maps/place/'))
-      ).catch((error) => {
-        console.warn('[Scraper] Falha ao ler links das fichas no Google Maps:', error?.message || error);
-        return [];
-      });
-      if (searchPage.url().includes('/maps/place/')) links.unshift(searchPage.url());
-
-      const countBeforeRound = placeUrls.size;
-      for (const placeUrl of links) {
-        if (collectedCount >= limit || placeUrls.size >= maxCandidates) break;
-        const urlKey = normalizeMapsPlaceUrl(placeUrl);
-        if (!urlKey || placeUrls.has(urlKey)) continue;
-
-        placeUrls.set(urlKey, placeUrl);
-        job.total_found = placeUrls.size;
-        const candidateSourceId = extractSourcePlaceId(placeUrl);
-        const alreadyKnown =
-          (candidateSourceId && knownPlaceIds.has(candidateSourceId)) ||
-          knownUrlKeys.has(urlKey);
-
-        if (alreadyKnown) {
-          processedCount += 1;
-          job.total_duplicates += 1;
-          knownUrlKeys.add(urlKey);
-          if (candidateSourceId) knownPlaceIds.add(candidateSourceId);
-          job.current_step =
-            'Verificadas ' + processedCount + ' fichas: ' + job.total_duplicates +
-            ' já cadastradas; ' + collectedCount + '/' + limit + ' novos. Buscando mais resultados...';
-          await store.persistScrapeProgress(job);
-          continue;
-        }
-
-        let detailPage: Page | null = null;
-        let placeAddedToState = false;
-        let extractedPlace: PlaceRecord | null = null;
-        let extractedLogId: string | null = null;
-        try {
-          let navigationError: any = null;
-          for (let attempt = 0; attempt < 2; attempt += 1) {
-            try {
-              if (!activeBrowser) activeBrowser = await connectScraperBrowser();
-              detailPage = await activeBrowser.newPage();
-              await detailPage.setUserAgent(
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-              );
-              await detailPage.setViewport({ width: 1280, height: 900 });
-              await detailPage.setExtraHTTPHeaders({
-                'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-              });
-              await detailPage.goto(placeUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-              navigationError = null;
-              break;
-            } catch (error) {
-              navigationError = error;
-              if (detailPage) await detailPage.close().catch(() => {});
-              detailPage = null;
-              if (attempt === 0) {
-                await activeBrowser?.close().catch(() => {});
-                activeBrowser = await connectScraperBrowser();
-              }
-            }
-          }
-          if (navigationError) throw navigationError;
-          if (!detailPage) throw new Error('Não foi possível abrir a ficha do estabelecimento no Google Maps.');
-          await new Promise((resolve) => setTimeout(resolve, 900));
-
-          const place = await extractPlaceDetails(detailPage, jobId, placeUrl);
-          extractedPlace = place;
-          if (!isValidMapsBusinessName(place.name)) {
-            throw new Error('Ficha descartada: o Google Maps não apresentou um nome válido de estabelecimento (' + String(place.name || 'vazio') + ').');
-          }
-
-          const identity = getPlaceIdentity(place);
-          if (!place.address && !identity.sourceId && !place.phone && !place.website) {
-            throw new Error('Ficha descartada: não foi possível confirmar endereço, telefone, site ou identificador da ficha.');
-          }
-
-          const duplicateAfterExtraction =
-            (identity.sourceId && knownPlaceIds.has(identity.sourceId)) ||
-            identity.urlKeys.some((key) => knownUrlKeys.has(key)) ||
-            (identity.nameAddressKey && knownNameAddressKeys.has(identity.nameAddressKey));
-
-          if (duplicateAfterExtraction) {
-            processedCount += 1;
-            job.total_duplicates += 1;
-            if (identity.sourceId) knownPlaceIds.add(identity.sourceId);
-            identity.urlKeys.forEach((key) => knownUrlKeys.add(key));
-            if (identity.nameAddressKey) knownNameAddressKeys.add(identity.nameAddressKey);
-            job.current_step =
-              'Verificadas ' + processedCount + ' fichas: ' + job.total_duplicates +
-              ' já cadastradas; ' + collectedCount + '/' + limit + ' novos. Buscando mais resultados...';
-            await store.persistScrapeProgress(job);
-            continue;
-          }
-
-          place.source_place_id = identity.sourceId || place.source_place_id || '';
-          place.source_url = place.source_url || place.maps_url || placeUrl;
-          place.maps_url = place.maps_url || placeUrl;
-
-          // Search-area enrichment is allowed only for an unambiguous Brazilian
-          // city/state pattern. Never promote a lone neighborhood or search phrase to city.
-          const locationFallback = parseSearchLocationFallback(location);
-          let fieldStatus: Record<string, any> = {};
-          try {
-            fieldStatus = place.field_status ? JSON.parse(place.field_status) : {};
-          } catch {
-            fieldStatus = {};
-          }
-          const enrichedAt = new Date().toISOString();
-          if (!place.city && locationFallback.city) {
-            place.city = locationFallback.city;
-            fieldStatus.city = {
-              status: 'enriched_from_search_location',
-              source: 'scrape_job.location',
-              observed_at: enrichedAt,
-            };
-          }
-          if (!place.state && locationFallback.state) {
-            place.state = locationFallback.state;
-            fieldStatus.state = {
-              status: 'enriched_from_search_location',
-              source: 'scrape_job.location',
-              observed_at: enrichedAt,
-            };
-          }
-          place.field_status = JSON.stringify(fieldStatus);
-
-          state.places.push(place);
-          placeAddedToState = true;
-          collectedCount += 1;
-          processedCount += 1;
-          job.total_collected = collectedCount;
-          job.current_step =
-            'Novos salvos: ' + collectedCount + '/' + limit +
-            ' · já cadastrados: ' + job.total_duplicates +
-            ' · fichas verificadas: ' + processedCount + '/' + placeUrls.size;
-
-          extractedLogId = 'log_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
-          state.logs.unshift({
-            id: extractedLogId,
-            created_at: new Date().toISOString(),
-            level: 'info',
-            category: 'scraper',
-            event: 'place_extracted',
-            message: 'Ficha extraída: "' + place.name + '" | Categoria: "' + (place.category || '—') +
-              '" | Tel: ' + (place.phone || '—') + ' | Endereço: ' + (place.address || '—'),
-            job_id: jobId,
-            metadata: JSON.stringify({
-              name: place.name,
-              rating: place.rating,
-              reviews: place.review_count,
-              phone: place.phone,
-              website: place.website,
-              address: place.address,
-              coords: { lat: place.latitude, lng: place.longitude },
-            }),
-            user_id: userId,
-          });
-
-          const inserted = await store.persistScrapeProgress(job, place);
-          if (!inserted) {
-            state.places = state.places.filter((item) => item.id !== place.id);
-            state.logs = state.logs.filter((item) => item.id !== extractedLogId);
-            placeAddedToState = false;
-            collectedCount -= 1;
-            job.total_collected = collectedCount;
-            job.total_duplicates += 1;
-            if (identity.sourceId) knownPlaceIds.add(identity.sourceId);
-            identity.urlKeys.forEach((key) => knownUrlKeys.add(key));
-            if (identity.nameAddressKey) knownNameAddressKeys.add(identity.nameAddressKey);
-            job.current_step =
-              'Já cadastrado no banco: ' + job.total_duplicates +
-              ' · novos salvos: ' + collectedCount + '/' + limit + '. Buscando mais resultados...';
-            await store.persistScrapeProgress(job);
-          } else {
-            if (identity.sourceId) knownPlaceIds.add(identity.sourceId);
-            identity.urlKeys.forEach((key) => knownUrlKeys.add(key));
-            if (identity.nameAddressKey) knownNameAddressKeys.add(identity.nameAddressKey);
-          }
-        } catch (extractErr: any) {
-          if (placeAddedToState && extractedPlace) {
-            state.places = state.places.filter((item) => item.id !== extractedPlace!.id);
-          }
-          if (extractedLogId) state.logs = state.logs.filter((item) => item.id !== extractedLogId);
-          processedCount += 1;
-          job.total_errors += 1;
-          job.current_step =
-            'Falhas: ' + job.total_errors + ' · novos salvos: ' + collectedCount + '/' + limit +
-            ' · já cadastrados: ' + job.total_duplicates;
-          console.error('Erro ao coletar ficha ' + placeUrl + ':', extractErr.message);
-          state.logs.unshift({
-            id: 'log_' + Date.now() + '_err',
-            created_at: new Date().toISOString(),
-            level: 'warn',
-            category: 'scraper',
-            event: 'place_error',
-            message: 'Erro na extração da ficha: ' + extractErr.message,
-            job_id: jobId,
-            metadata: JSON.stringify({ url: placeUrl, error: extractErr.message }),
-            user_id: userId,
-          });
-          await store.persistScrapeProgress(job);
-        } finally {
-          if (detailPage) await detailPage.close().catch(() => {});
-        }
-
-        if (collectedCount >= limit) break;
-      }
-
-      if (collectedCount >= limit || placeUrls.size >= maxCandidates) break;
-
-      await searchPage.evaluate(() => {
-        const feed =
-          document.querySelector('div[role="feed"]') ||
-          document.querySelector('div.m6QErb[aria-label]') ||
-          document.querySelector('div.TFQHme');
-        if (feed) (feed as HTMLElement).scrollTop = feed.scrollHeight;
-        else window.scrollTo(0, document.body.scrollHeight);
-      }).catch(() => {});
-
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-
-      if (placeUrls.size === countBeforeRound) stagnantRounds += 1;
-      else stagnantRounds = 0;
-    }
-
-    await searchPage.close().catch(() => {});
-
-    if (isCancelled) {
-      job.status = 'stopped';
-      job.status_message = 'Coleta interrompida pelo operador. ' + collectedCount + '/' + limit + ' novos estabelecimentos foram salvos.';
-      job.current_step = 'Interrompido';
-      job.completed_at = new Date().toISOString();
-      await store.persistScrapeProgress(job);
-      return;
-    }
-
-    if (placeUrls.size === 0) {
-      job.status = 'failed';
-      job.status_message = 'Nenhum estabelecimento encontrado no Google Maps para esta busca.';
-      job.current_step = 'Sem resultados';
-      job.completed_at = new Date().toISOString();
-      state.logs.unshift({
-        id: 'log_' + Date.now() + '_err',
-        created_at: new Date().toISOString(),
-        level: 'warn',
-        category: 'scraper',
-        event: 'no_results',
-        message: 'A busca por "' + searchQuery + '" não retornou nenhuma ficha pública no Google Maps.',
-        job_id: jobId,
-        metadata: JSON.stringify({ query: searchQuery }),
-        user_id: userId,
-      });
-      await store.persistScrapeProgress(job);
-      return;
-    }
-
-    // The selected limit is a target of new records, not a cap on duplicate checks.
-    job.total_found = placeUrls.size;
-    job.total_collected = collectedCount;
-    const targetReached = collectedCount >= limit;
-    job.status = targetReached
-      ? (job.total_errors > 0 ? 'partial' : 'completed')
-      : (collectedCount > 0 || job.total_duplicates > 0 ? 'partial' : 'failed');
-    job.status_message = targetReached
-      ? 'Meta atingida: ' + collectedCount + '/' + limit + ' novos estabelecimentos salvos; ' +
-        job.total_duplicates + ' já cadastrados ignorados; ' + job.total_errors + ' falha(s).'
-      : 'Meta parcial: ' + collectedCount + '/' + limit + ' novos estabelecimentos salvos após verificar ' +
-        processedCount + ' fichas (' + job.total_duplicates + ' já cadastradas e ' + job.total_errors +
-        ' falha(s)). O Google Maps não apresentou mais resultados dentro do limite operacional.';
-    job.current_step = targetReached
-      ? (job.status === 'partial' ? 'Meta atingida com ressalvas' : 'Meta atingida')
-      : (job.status === 'partial' ? 'Pesquisa parcial' : 'Falha');
-    job.completed_at = new Date().toISOString();
-
-    state.logs.unshift({
-      id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      created_at: new Date().toISOString(),
-      level: job.status === 'failed' ? 'error' : job.status === 'partial' ? 'warn' : 'info',
-      category: 'scraper',
-      event: 'job_completed',
-      message: `Pesquisa finalizada para "${segment}": ${placeUrls.size} fichas verificadas, ${collectedCount} novas salvas, ${job.total_duplicates} já cadastradas e ${job.total_errors} falha(s). Limite: ${limit}.`,
-      job_id: jobId,
-      metadata: JSON.stringify({
-        limit_requested: limit,
-        total_found: placeUrls.size,
-        total_processed: processedCount,
-        total_collected: collectedCount,
-        total_duplicates: job.total_duplicates,
-        total_errors: job.total_errors,
-      }),
-      user_id: userId,
-    });
-
-    await store.persistScrapeProgress(job);
-  } catch (error: any) {
-    const cancellationWasRequested = isCancelled || await store.isJobCancellationRequested(jobId, userId).catch(() => false);
-    if (cancellationWasRequested) {
-      job.status = 'stopped';
-      job.status_message = 'Coleta interrompida pelo usuário.';
-      job.current_step = 'Interrompido';
-      job.completed_at = new Date().toISOString();
-      await store.persistScrapeProgress(job);
-      return;
-    }
-
-    job.status = 'failed';
-    job.status_message = `Erro durante a execução da coleta: ${error?.message || 'Falha desconhecida'}`;
-    job.total_errors += 1;
-    job.current_step = 'Falha';
-    job.completed_at = new Date().toISOString();
-
-    state.logs.unshift({
-      id: `log_${Date.now()}_err`,
-      created_at: new Date().toISOString(),
-      level: 'error',
-      category: 'scraper',
-      event: 'job_error',
-      message: `Erro na coleta ${jobId}: ${error?.message}`,
-      job_id: jobId,
-      metadata: JSON.stringify({ error: error?.message }),
-      user_id: userId,
-    });
-    await store.persistScrapeProgress(job).catch((persistError) => console.error('[Scraper] Falha ao salvar estado final:', persistError));
-  } finally {
-    clearInterval(cancellationPoll);
-    if (activeBrowser) {
-      await activeBrowser.close().catch(() => {});
-    }
-    activeScrapeJobs.delete(jobId);
-  }
-}
-
 // CSV Builder with BOM & Formula Injection Defense
 function buildCsvString(places: PlaceRecord[], fields: (keyof PlaceRecord)[]): string {
   const headerKeys = fields.length > 0 ? fields : (EXPORTABLE_FIELDS.map((f) => f.key) as (keyof PlaceRecord)[]);
@@ -1636,7 +1184,7 @@ export async function createApp() {
       if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
       const staleCandidates = state.jobs.filter((job) =>
         job.user_id === user.id && job.status === 'running' &&
-        Date.now() - Date.parse(job.created_at) > 5 * 60 * 1000
+        Date.now() - Date.parse(job.heartbeat_at || job.created_at) > 2 * 60 * 1000
       );
       if (markStaleRunningJobs(state, user.id)) {
         for (const staleJob of staleCandidates) await store.persistScrapeProgress(staleJob);
@@ -1710,19 +1258,21 @@ export async function createApp() {
         status: 'running',
         status_message: `Meta de ${numLimit} novos estabelecimentos. Fichas já cadastradas serão ignoradas e a busca continuará procurando outras em "${location}".`,
         total_found: 0, total_collected: 0, total_duplicates: 0, total_errors: 0,
-        current_step: 'Conectando ao mecanismo de busca...',
+        current_step: 'Preparando a busca no Google Maps...',
+        phase: 'discovering',
+        candidate_urls: [],
+        candidate_cursor: 0,
+        retry_count: 0,
+        heartbeat_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
       };
       state.jobs.unshift(newJob);
       await store.persistScrapeProgress(newJob);
 
-      // Respond immediately; Vercel waitUntil keeps the scrape alive after response.
-      // Awaiting Puppeteer here made the Start button block for the whole scrape.
-      if (process.env.VERCEL === '1') {
-        waitUntil(executeScrapeJob(jobId, newJob.segment, newJob.location, numLimit, userId));
-      } else {
-        void executeScrapeJob(jobId, newJob.segment, newJob.location, numLimit, userId);
-      }
+      // Run one bounded stage now. Further polling requests schedule the next batch.
+      const firstStep = runScrapeJobStep(store, connectScraperBrowser, jobId, userId);
+      if (process.env.VERCEL === '1') waitUntil(firstStep);
+      else void firstStep;
 
       return res.status(201).json({
         data: { jobId, job: newJob },
@@ -1752,6 +1302,11 @@ export async function createApp() {
         console.warn('[Jobs] Job lookup miss', { jobId: req.params.id, userId: user.id, snapshotContainsId: store.getState().jobs.some((item) => item.id === req.params.id) });
         return res.status(404).json({ error: 'Coleta não encontrada.' });
       }
+      if (job.status === 'running') {
+        const nextStep = runScrapeJobStep(store, connectScraperBrowser, job.id, user.id);
+        if (process.env.VERCEL === '1') waitUntil(nextStep);
+        else void nextStep;
+      }
       return res.setHeader('Cache-Control', 'no-store').json({ data: job, ...job });
     } catch (err: any) {
       console.error('[Jobs] Failed to read job progress:', err?.message || err);
@@ -1768,7 +1323,6 @@ export async function createApp() {
       if (!job) return res.status(404).json({ error: 'Coleta não encontrada.' });
 
       // Fast path when this request and the worker happen to share an instance.
-      activeScrapeJobs.get(req.params.id)?.cancel();
 
       return res.setHeader('Cache-Control', 'no-store').json({
         success: true,
@@ -1790,9 +1344,10 @@ export async function createApp() {
         return res.status(404).json({ error: 'Coleta não encontrada.' });
       }
 
-      // Stop if active
-      const active = activeScrapeJobs.get(req.params.id);
-      if (active) active.cancel();
+      // Do not delete the durable cursor while a worker can still be processing it.
+      if (state.jobs[index].status === 'running') {
+        return res.status(409).json({ error: 'Interrompa a coleta antes de excluir o histórico.' });
+      }
 
       // Remove job & associated places
       state.jobs.splice(index, 1);
