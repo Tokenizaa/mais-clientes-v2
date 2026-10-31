@@ -86,14 +86,21 @@ export interface ScrapeJob {
   current_step?: string;
   /** Stable user/search-scope session shared by successive jobs. */
   search_session_id?: string;
-  /** Persisted worker phase; discovery and extraction run in separate Vercel invocations. */
+  /** Kept for compatibility with historical jobs; new jobs use one sequential flow. */
   phase?: 'discovering' | 'processing';
-  /** Durable navigation checkpoint; URLs are also mirrored to scrape_candidates. */
+  /** Durable resume checkpoint: the last listing fully processed and saved/recognized. */
   discovery_checkpoint?: {
     version?: number;
     scroll_round?: number;
     last_seen_source_key?: string;
     last_seen_url?: string;
+    last_processed_url?: string;
+    last_processed_source_key?: string;
+    last_processed_name?: string;
+    last_processed_outcome?: 'saved' | 'duplicate';
+    last_processed_at?: string;
+    processed_count?: number;
+    migrated_from_candidate_queue_at?: string;
     last_checkpoint_at?: string;
     stagnant_rounds?: number;
     [key: string]: unknown;
