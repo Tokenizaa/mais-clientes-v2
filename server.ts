@@ -582,9 +582,10 @@ class Store {
       await this.flush();
     }
 
-    const deduplicatedPlaces = deduplicatePlaceSnapshot(this.state.places || []);
-    if (deduplicatedPlaces.length !== this.state.places.length) {
-      console.warn(`[Store] Removendo ${this.state.places.length - deduplicatedPlaces.length} duplicidade(s) do snapshot local de estabelecimentos.`);
+    const currentPlaces = this.state.places || [];
+    const deduplicatedPlaces = deduplicatePlaceSnapshot(currentPlaces);
+    if (deduplicatedPlaces.length !== currentPlaces.length) {
+      console.warn(`[Store] Removendo ${currentPlaces.length - deduplicatedPlaces.length} duplicidade(s) do snapshot local de estabelecimentos.`);
       this.state.places = deduplicatedPlaces;
       this.persist();
       await this.flush();
@@ -1183,6 +1184,7 @@ async function executeScrapeJob(jobId: string, segment: string, location: string
             }
           }
           if (navigationError) throw navigationError;
+          if (!detailPage) throw new Error('Não foi possível abrir a ficha do estabelecimento no Google Maps.');
           await new Promise((resolve) => setTimeout(resolve, 900));
 
           const place = await extractPlaceDetails(detailPage, jobId, placeUrl);
