@@ -86,6 +86,16 @@ export interface ScrapeJob {
   current_step?: string;
   /** Persisted worker phase; discovery and extraction run in separate Vercel invocations. */
   phase?: 'discovering' | 'processing';
+  /** Durable navigation checkpoint; URLs are also mirrored to scrape_candidates. */
+  discovery_checkpoint?: {
+    version?: number;
+    scroll_round?: number;
+    last_seen_source_key?: string;
+    last_seen_url?: string;
+    last_checkpoint_at?: string;
+    stagnant_rounds?: number;
+    [key: string]: unknown;
+  };
   candidate_urls?: string[];
   candidate_cursor?: number;
   retry_count?: number;
