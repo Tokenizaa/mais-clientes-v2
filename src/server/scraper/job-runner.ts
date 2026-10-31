@@ -92,9 +92,9 @@ async function restoreMapsFeedPosition(page: Page, targetScrollTop: number, expe
               const parsed = new URL((anchor as HTMLAnchorElement).href);
               parsed.search = '';
               parsed.hash = '';
-              return parsed.toString().replace(/\\/+$/, '');
+              return parsed.toString().replace(/\/+$/, '');
             } catch {
-              return (anchor as HTMLAnchorElement).href.split(/[?#]/, 1)[0].replace(/\\/+$/, '');
+              return (anchor as HTMLAnchorElement).href.split(/[?#]/, 1)[0].replace(/\/+$/, '');
             }
           });
         return {
