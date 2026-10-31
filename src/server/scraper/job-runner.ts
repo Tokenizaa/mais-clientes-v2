@@ -322,11 +322,12 @@ async function checkpointPlace(
     const state = store.getState();
     state.places = state.places.filter((item) => item.id !== place.id);
     job.total_collected = Math.max(0, job.total_collected - 1);
-    job.total_duplicates += 1;
+    job.total_errors += 1;
     job.discovery_checkpoint = {
       ...(job.discovery_checkpoint || {}),
-      last_processed_outcome: 'duplicate',
+      last_processed_outcome: 'save_conflict',
     };
+    job.status_message = 'Uma ficha não pôde ser inserida pelo banco. A coleta seguirá para o próximo resultado.';
     await store.persistScrapeProgress(job);
   }
 }
@@ -338,7 +339,6 @@ async function processOnePlace(
   placeUrl: string,
 ): Promise<void> {
   const state = store.getState();
-  const normalizedUrl = normalizeMapsPlaceUrl(placeUrl);
   const sourceId = extractSourcePlaceId(placeUrl);
 
   const detailPage = await browser.newPage();
