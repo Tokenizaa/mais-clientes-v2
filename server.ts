@@ -531,7 +531,7 @@ class Store {
     await this.flush();
     if (this.supabase) {
       const { data, error } = await this.supabase
-        .from('scrape_jobs')
+        .from('searches')
         .select('*')
         .eq('id', id)
         .eq('user_id', userId)
@@ -545,7 +545,7 @@ class Store {
   async isJobCancellationRequested(id: string, userId: string): Promise<boolean> {
     if (this.supabase) {
       const { data, error } = await this.supabase
-        .from('scrape_jobs')
+        .from('searches')
         .select('cancel_requested')
         .eq('id', id)
         .eq('user_id', userId)
@@ -560,7 +560,7 @@ class Store {
   async requestJobCancellation(id: string, userId: string): Promise<ScrapeJob | null> {
     if (this.supabase) {
       const { data, error } = await this.supabase
-        .from('scrape_jobs')
+        .from('searches')
         .update({
           cancel_requested: true,
           status: 'stopped',
@@ -602,7 +602,7 @@ class Store {
     await this.flush();
     if (!this.supabase) return;
     const { error: jobsError } = await this.supabase
-      .from('scrape_jobs')
+      .from('searches')
       .update({ project_id: null, category_id: null })
       .eq('project_id', projectId);
     if (jobsError) throw new Error(`Falha ao desvincular raspagens: ${jobsError.message}`);
@@ -663,7 +663,7 @@ class Store {
         if (error) throw new Error(`Falha ao sincronizar categorias: ${error.message}`);
       }
       if (snapshot.jobs.length) {
-        const { error } = await client.from('scrape_jobs').upsert(snapshot.jobs.map((item) => ({
+        const { error } = await client.from('searches').upsert(snapshot.jobs.map((item) => ({
           id: item.id, user_id: item.user_id, segment: item.segment,
           project_name: item.project_name ?? null, project_id: item.project_id ?? null,
           category_id: item.category_id ?? null, location: item.location,
