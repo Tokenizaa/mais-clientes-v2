@@ -1427,17 +1427,38 @@ export async function createApp() {
         };
         state.categories.unshift(category);
       }
+      const normalizedSegment = String(segment).normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLocaleLowerCase('pt-BR').replace(/\\s+/g, ' ').trim();
+      const normalizedLocation = String(location).normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLocaleLowerCase('pt-BR').replace(/\\s+/g, ' ').trim();
+      const scopeKey = crypto.createHash('sha256')
+        .update([normalizedSegment, normalizedLocation, project.id, category.id].join('\\u0000'))
+        .digest('hex');
+      const searchSession = await store.ensureSearchSession({
+        id: 'ss_' + scopeKey,
+        userId,
+        scopeKey,
+        segment: String(segment).trim(),
+        location: String(location).trim(),
+        projectId: project.id,
+        categoryId: category.id,
+      });
+      const resumeCursor = Math.max(0, searchSession.next_ordinal || 0);
+      const knownCandidates = Math.max(0, searchSession.total_found || 0);
+      const resumePhase = resumeCursor < knownCandidates ? 'processing' : 'discovering';
+
       const newJob: ScrapeJob = {
-        id: jobId, user_id: userId, segment: String(segment).trim(),
+        id: jobId, user_id: userId, search_session_id: searchSession.id, segment: String(segment).trim(),
         project_name: project.name, project_id: project.id, category_id: category.id,
         location: String(location).trim(), limit_requested: numLimit,
         status: 'running',
-        status_message: `Meta de ${numLimit} novos estabelecimentos. Fichas já cadastradas serão ignoradas e a busca continuará procurando outras em "${location}".`,
-        total_found: 0, total_collected: 0, total_duplicates: 0, total_errors: 0,
-        current_step: 'Preparando a busca no Google Maps...',
-        phase: 'discovering',
+        status_message: `Meta de ${numLimit} novos estabelecimentos. Sessão retomada: ${resumeCursor} fichas já processadas de ${knownCandidates} descobertas; fichas já cadastradas serão ignoradas.`,
+        total_found: knownCandidates, total_collected: 0, total_duplicates: 0, total_errors: 0,
+        current_step: resumeCursor < knownCandidates
+          ? 'Retomando a fila persistida a partir da ficha ' + (resumeCursor + 1) + '...'
+          : 'Retomando a descoberta no último checkpoint salvo...',
+        phase: resumePhase,
+        discovery_checkpoint: searchSession.discovery_checkpoint || {},
         candidate_urls: [],
-        candidate_cursor: 0,
+        candidate_cursor: resumeCursor,
         retry_count: 0,
         heartbeat_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
