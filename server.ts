@@ -1451,7 +1451,7 @@ export async function createApp() {
         projectId: project.id,
         categoryId: category.id,
       });
-      const resumeCursor = Math.max(0, searchSession.next_ordinal || 0);
+      const resumeCursor = Math.min(Math.max(0, searchSession.next_ordinal || 0), knownCandidates);
       const knownCandidates = Math.max(0, searchSession.total_found || 0);
       const resumePhase = resumeCursor < knownCandidates ? 'processing' : 'discovering';
 
