@@ -322,12 +322,11 @@ async function checkpointPlace(
     const state = store.getState();
     state.places = state.places.filter((item) => item.id !== place.id);
     job.total_collected = Math.max(0, job.total_collected - 1);
-    job.total_errors += 1;
+    job.total_duplicates += 1;
     job.discovery_checkpoint = {
       ...(job.discovery_checkpoint || {}),
-      last_processed_outcome: 'save_conflict',
+      last_processed_outcome: 'duplicate',
     };
-    job.status_message = 'Uma ficha não pôde ser inserida pelo banco. A coleta seguirá para o próximo resultado.';
     await store.persistScrapeProgress(job);
   }
 }
@@ -366,15 +365,16 @@ async function processOnePlace(
 
     state.places.push(place);
     job.total_collected += 1;
-    addLog(state, job, 'info', 'place_extracted', 'Contato extraído e salvo: "' + place.name + '"', {
-      name: place.name,
-      address: place.address,
-      phone: place.phone,
-      website: place.website,
-      source_url: place.source_url,
-    });
-
     await checkpointPlace(store, job, placeUrl, 'saved', place);
+    if (job.discovery_checkpoint?.last_processed_outcome === 'saved') {
+      addLog(state, job, 'info', 'place_extracted', 'Contato extraído e salvo: "' + place.name + '"', {
+        name: place.name,
+        address: place.address,
+        phone: place.phone,
+        website: place.website,
+        source_url: place.source_url,
+      });
+    }
   } finally {
     await withTimeout(detailPage.close(), 1_500, 'Fechamento da ficha').catch(() => {});
   }
