@@ -1397,7 +1397,7 @@ export async function createApp() {
       const user = resolveUserFromRequest(req);
       if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
       const staleCandidates = state.jobs.filter((job) =>
-        job.user_id === user.id && job.status === 'running' && !job.phase &&
+        job.user_id === user.id && job.status === 'running' &&
         Date.now() - Date.parse(job.heartbeat_at || job.created_at) > 2 * 60 * 1000
       );
       if (markStaleRunningJobs(state, user.id)) {
@@ -1497,6 +1497,7 @@ export async function createApp() {
         }
       }
       const processedCount = Math.max(0, Number(checkpoint.processed_count || searchSession.next_ordinal || 0));
+      checkpoint.processed_count = processedCount;
 
       const newJob: ScrapeJob = {
         id: jobId, user_id: userId, search_session_id: searchSession.id, segment: String(segment).trim(),
