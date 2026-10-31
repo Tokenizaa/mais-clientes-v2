@@ -741,13 +741,16 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
         </div>
       )}
 
-      {currentJob && currentJob.status !== 'running' && (
+      {currentJob && (currentJob.status === 'running' || currentJob.status !== 'running') && (
         <section className="space-y-4" aria-live="polite">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
-              <h2 className="text-xl font-bold text-zinc-100">Resultado desta pesquisa</h2>
+              <h2 className="text-xl font-bold text-zinc-100">
+                {currentJob.status === 'running' ? 'Estabelecimentos coletados até agora' : 'Resultado desta pesquisa'}
+              </h2>
               <p className="mt-1 text-sm text-zinc-400">
-                {totalPlaces.toLocaleString('pt-BR')} estabelecimento(s) encontrados nesta coleta
+                {totalPlaces.toLocaleString('pt-BR')} estabelecimento(s) salvos nesta coleta
+                {currentJob.status === 'running' ? ' · atualizando automaticamente' : ''}
               </p>
             </div>
             {places.length > 0 && (
@@ -758,35 +761,56 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           </div>
           {places.length === 0 ? (
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 text-sm text-zinc-400">
-              {currentJob.status === 'completed' || currentJob.status === 'partial'
-                ? 'A coleta terminou, mas nenhum estabelecimento foi retornado para exibição.'
-                : 'Esta coleta não gerou resultados.'}
+              {currentJob.status === 'running'
+                ? 'Aguardando a primeira ficha ser salva. Os resultados aparecerão aqui durante a coleta.'
+                : currentJob.status === 'completed' || currentJob.status === 'partial'
+                  ? 'A coleta terminou, mas nenhum estabelecimento foi retornado para exibição.'
+                  : 'Esta coleta não gerou resultados.'}
             </div>
           ) : (
-            <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/80 divide-y divide-zinc-800">
-              {places.slice(0, 25).map((place) => (
-                <article key={place.id} className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0">
-                    <h3 className="truncate font-semibold text-zinc-100">{place.name || 'Estabelecimento sem nome'}</h3>
-                    <p className="mt-0.5 truncate text-sm text-zinc-400">{place.category || 'Categoria não informada'}{place.address ? ` · ${place.address}` : ''}</p>
-                    <p className="mt-1 text-xs text-zinc-500">{place.phone || place.website || 'Sem telefone ou site informado'}</p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-3">
-                    {place.rating && <span className="text-sm font-medium text-amber-300">★ {place.rating}</span>}
-                    {place.maps_url && <a href={place.maps_url} target="_blank" rel="noreferrer" className="text-sm font-semibold text-emerald-400 hover:text-emerald-300">Abrir mapa ↗</a>}
-                  </div>
-                </article>
-              ))}
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+              {places.map((place) => {
+                const photoUrl = place.logo_url?.startsWith('http')
+                  ? place.logo_url
+                  : place.photos?.split(' | ').find((url) => url.startsWith('http'));
+                return (
+                  <article key={place.id} className="flex flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/90 shadow-lg shadow-black/20">
+                    {photoUrl ? (
+                      <div className="h-40 w-full overflow-hidden border-b border-zinc-800 bg-zinc-950">
+                        <img src={photoUrl} alt={place.name || 'Estabelecimento'} referrerPolicy="no-referrer" className="h-full w-full object-cover" loading="lazy" />
+                      </div>
+                    ) : null}
+                    <div className="flex flex-1 flex-col gap-3 p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium text-emerald-400">{place.category || 'Categoria não informada'}</p>
+                          <h3 className="mt-1 line-clamp-2 font-bold text-zinc-100">{place.name || 'Estabelecimento sem nome'}</h3>
+                        </div>
+                        {place.rating && <span className="shrink-0 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-sm font-bold text-amber-300">★ {place.rating}</span>}
+                      </div>
+                      <p className="line-clamp-2 text-sm text-zinc-400">{place.address || 'Endereço não informado'}</p>
+                      <div className="space-y-1 text-xs text-zinc-300">
+                        <p>{place.phone || 'Telefone não informado'}</p>
+                        {place.website ? <a href={place.website} target="_blank" rel="noopener noreferrer" className="block truncate text-emerald-400 hover:underline">{place.website.replace(/^https?:\\/\\//, '')}</a> : <p className="text-zinc-500">Site não informado</p>}
+                      </div>
+                      <div className="mt-auto flex items-center justify-between gap-2 border-t border-zinc-800 pt-3">
+                        <span className={`truncate rounded-md border px-2 py-1 text-xs ${/aberto|operacional/i.test(place.business_status || '') ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-zinc-700 bg-zinc-800 text-zinc-400'}`}>{place.business_status || 'Status não informado'}</span>
+                        {place.maps_url && <a href={place.maps_url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-xs font-semibold text-emerald-400 hover:text-emerald-300">Abrir no Maps ↗</a>}
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
               {totalPlaces > places.length && (
-                <div className="flex flex-wrap items-center justify-between gap-3 bg-zinc-950/60 px-4 py-3 text-xs text-zinc-400">
-                  <span>Exibindo {places.length} de {totalPlaces} resultados.</span>
-                  <button type="button" onClick={onGoToResults} className="font-semibold text-emerald-400 hover:text-emerald-300">Abrir todos os resultados</button>
+                <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-zinc-700 bg-zinc-950/50 p-6 text-center text-sm text-zinc-400">
+                  <span>Exibindo {places.length} de {totalPlaces} fichas carregadas.</span>
+                  <button type="button" onClick={onGoToResults} className="mt-2 font-semibold text-emerald-400 hover:text-emerald-300">Abrir todos os resultados</button>
                 </div>
               )}
             </div>
           )}
         </section>
-      )}
+      )}}
     </div>
   );
 };
