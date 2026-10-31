@@ -123,7 +123,7 @@ async function finishJob(store: ScrapeRuntimeStore, job: ScrapeJob): Promise<voi
       ' novos estabelecimentos salvos; ' + job.total_duplicates + ' já cadastrados; ' +
       job.total_errors + ' falha(s).'
     : 'Pesquisa finalizada antes da meta: ' + job.total_collected + '/' + job.limit_requested +
-      ' novos salvos após verificar ' + (job.candidate_urls?.length || 0) +
+      ' novos salvos após verificar ' + (job.total_found || 0) +
       ' fichas; ' + job.total_duplicates + ' já cadastrados e ' + job.total_errors + ' falha(s).';
   job.current_step = job.status === 'completed' ? 'Meta atingida' :
     job.status === 'partial' ? 'Pesquisa parcial' : 'Nenhum estabelecimento válido foi salvo';
@@ -177,7 +177,7 @@ async function discoverCandidates(
     // unique (job_id, source_key) key deduplicates across worker restarts.
     const found = new Map<string, string>();
     const startedAt = Date.now();
-    const initialCandidateCount = await store.countScrapeCandidates(job.id);
+    const initialCandidateCount = await store.countScrapeCandidates(job.search_session_id || job.id);
     // Stagnation is measured within this uninterrupted browser pass only.
     // A serverless restart must not inherit a partially accumulated counter.
     let stagnantRounds = 0;
@@ -223,7 +223,7 @@ async function discoverCandidates(
 
       // Persist only new discoveries before advancing the Maps feed.
       await store.persistDiscoveredCandidates(job, newlyFound);
-      job.total_found = await store.countScrapeCandidates(job.id);
+      job.total_found = await store.countScrapeCandidates(job.search_session_id || job.id);
       job.discovery_checkpoint = {
         ...(job.discovery_checkpoint || {}),
         version: 1,
@@ -263,7 +263,7 @@ async function discoverCandidates(
         stagnant_rounds: stagnantRounds,
         last_checkpoint_at: new Date().toISOString(),
       };
-      job.total_found = await store.countScrapeCandidates(job.id);
+      job.total_found = await store.countScrapeCandidates(job.search_session_id || job.id);
       setHeartbeat(job);
       await store.persistScrapeProgress(job);
     }
@@ -273,7 +273,7 @@ async function discoverCandidates(
     job.candidate_cursor = Math.max(0, job.candidate_cursor || 0);
     job.phase = 'processing';
     job.retry_count = 0;
-    job.total_found = await store.countScrapeCandidates(job.id);
+    job.total_found = await store.countScrapeCandidates(job.search_session_id || job.id);
     job.discovery_checkpoint = {
       ...(job.discovery_checkpoint || {}),
       version: 1,
@@ -505,7 +505,7 @@ export async function runScrapeJobStep(
     job.phase = job.phase || 'discovering';
     if (job.phase === 'processing') {
       job.candidate_urls = await store.loadScrapeCandidates(
-        job.id, Math.max(0, job.candidate_cursor || 0), CANDIDATES_PER_STEP
+        job.search_session_id || job.id, Math.max(0, job.candidate_cursor || 0), CANDIDATES_PER_STEP
       );
     } else if (!job.candidate_urls) {
       // Preserve the full in-memory queue in local development. Production
