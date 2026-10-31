@@ -678,7 +678,7 @@ class Store {
   async getOrCreateSearchSession(input: {
     userId: string; segment: string; location: string; projectId?: string; categoryId?: string;
   }): Promise<{ id: string; next_ordinal: number; total_found: number; discovery_checkpoint: Record<string, any>; exhausted: boolean }> {
-    const normalize = (value: string) => value.normalize('NFKC').trim().replace(/\\s+/g, ' ').toLocaleLowerCase('pt-BR');
+    const normalize = (value: string) => value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('pt-BR');
     const scopeKey = crypto.createHash('sha256').update([
       normalize(input.segment), normalize(input.location), input.projectId || '', input.categoryId || '',
     ].join('|')).digest('hex');
