@@ -656,6 +656,50 @@ class Store {
     return this.state.jobs.find((job) => job.id === id && job.user_id === userId) ?? null;
   }
 
+  async persistDiscoveredCandidates(job: ScrapeJob, urls: string[]): Promise<void> {
+    if (!urls.length) return;
+    if (!this.supabase) {
+      job.candidate_urls = Array.from(new Set([...(job.candidate_urls || []), ...urls]));
+      this.save(this.state);
+      return;
+    }
+
+    const client = this.supabase;
+    const { data: lastCandidate, error: lastError } = await client
+      .from('scrape_candidates')
+      .select('ordinal')
+      .eq('job_id', job.id)
+      .order('ordinal', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (lastError) throw new Error('Falha ao consultar posição da fila de fichas: ' + lastError.message);
+
+    let ordinal = Number(lastCandidate?.ordinal ?? -1) + 1;
+    const rows = urls.map((sourceUrl) => {
+      let sourceKey = sourceUrl;
+      try {
+        const parsed = new URL(sourceUrl);
+        parsed.search = '';
+        parsed.hash = '';
+        sourceKey = parsed.toString().replace(/\/+$/, '');
+      } catch {
+        sourceKey = sourceUrl.split(/[?#]/, 1)[0].replace(/\/+$/, '');
+      }
+      return {
+        id: job.id + ':candidate:' + ordinal,
+        job_id: job.id,
+        user_id: job.user_id,
+        source_key: sourceKey,
+        source_url: sourceUrl,
+        ordinal: ordinal++,
+      };
+    });
+    const { error } = await client
+      .from('scrape_candidates')
+      .upsert(rows, { onConflict: 'job_id,source_key', ignoreDuplicates: true });
+    if (error) throw new Error('Falha ao persistir fichas recém-descobertas: ' + error.message);
+  }
+
   async loadScrapeCandidates(jobId: string): Promise<string[]> {
     if (!this.supabase) {
       return this.state.jobs.find((job) => job.id === jobId)?.candidate_urls || [];
@@ -783,33 +827,6 @@ class Store {
     let placeInserted = true;
     this.pendingWrite = this.pendingWrite.catch(() => undefined).then(async () => {
       const client = this.supabase!;
-
-      const candidateUrls = job.candidate_urls || [];
-      if (candidateUrls.length) {
-        const candidateRows = candidateUrls.map((sourceUrl, ordinal) => {
-          let sourceKey = sourceUrl;
-          try {
-            const parsed = new URL(sourceUrl);
-            parsed.search = '';
-            parsed.hash = '';
-            sourceKey = parsed.toString().replace(/\\/+$/, '');
-          } catch {
-            sourceKey = sourceUrl.split(/[?#]/, 1)[0].replace(/\\/+$/, '');
-          }
-          return {
-            id: job.id + ':candidate:' + ordinal,
-            job_id: job.id,
-            user_id: job.user_id,
-            source_key: sourceKey,
-            source_url: sourceUrl,
-            ordinal,
-          };
-        });
-        const { error: candidatesError } = await client
-          .from('scrape_candidates')
-          .upsert(candidateRows, { onConflict: 'job_id,source_key', ignoreDuplicates: true });
-        if (candidatesError) throw new Error('Falha ao persistir fila de fichas: ' + candidatesError.message);
-      }
 
       if (newPlace) {
         const p = newPlace;
