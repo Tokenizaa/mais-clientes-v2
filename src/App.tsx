@@ -219,7 +219,6 @@ export default function App() {
   const [isLoadingPlaces, setIsLoadingPlaces] = useState<boolean>(false);
 
   const progressPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const lastStepRequestRef = useRef(0);
 
   // Load past searches history
   const loadHistory = useCallback(async () => {
