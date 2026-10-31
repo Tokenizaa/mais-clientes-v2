@@ -915,6 +915,15 @@ class Store {
   async persistScrapeProgress(job: ScrapeJob, newPlace?: PlaceRecord): Promise<boolean> {
     job.heartbeat_at = new Date().toISOString();
     if (!this.supabase) {
+      if (job.search_session_id) {
+        const session = this.localSearchSessions.get(job.search_session_id);
+        if (session) {
+          session.next_ordinal = Math.max(0, job.candidate_cursor || 0);
+          session.total_found = Math.max(0, job.total_found || 0);
+          session.discovery_checkpoint = job.discovery_checkpoint || {};
+          session.exhausted = job.discovery_checkpoint?.exhausted === true;
+        }
+      }
       this.save(this.state);
       return true;
     }
