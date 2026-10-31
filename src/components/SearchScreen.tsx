@@ -741,7 +741,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
         </div>
       )}
 
-      {currentJob && (currentJob.status === 'running' || currentJob.status !== 'running') && (
+      {currentJob && (
         <section className="space-y-4" aria-live="polite">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
@@ -791,7 +791,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                       <p className="line-clamp-2 text-sm text-zinc-400">{place.address || 'Endereço não informado'}</p>
                       <div className="space-y-1 text-xs text-zinc-300">
                         <p>{place.phone || 'Telefone não informado'}</p>
-                        {place.website ? <a href={place.website} target="_blank" rel="noopener noreferrer" className="block truncate text-emerald-400 hover:underline">{place.website.replace(/^https?:\\/\\//, '')}</a> : <p className="text-zinc-500">Site não informado</p>}
+                        {place.website ? <a href={place.website} target="_blank" rel="noopener noreferrer" className="block truncate text-emerald-400 hover:underline">{place.website.replace(/^https?:\/\//, '')}</a> : <p className="text-zinc-500">Site não informado</p>}
                       </div>
                       <div className="mt-auto flex items-center justify-between gap-2 border-t border-zinc-800 pt-3">
                         <span className={`truncate rounded-md border px-2 py-1 text-xs ${/aberto|operacional/i.test(place.business_status || '') ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-zinc-700 bg-zinc-800 text-zinc-400'}`}>{place.business_status || 'Status não informado'}</span>
@@ -810,7 +810,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             </div>
           )}
         </section>
-      )}}
+      )}
     </div>
   );
 };
