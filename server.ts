@@ -1259,6 +1259,20 @@ function buildCsvString(places: PlaceRecord[], fields: (keyof PlaceRecord)[]): s
   return '\uFEFF' + [headerRow, ...rows].join('\r\n');
 }
 
+async function runLocalScrapeWorkerContinuously(
+  store: Store,
+  jobId: string,
+  userId: string,
+): Promise<void> {
+  while (true) {
+    const job = await store.findJobForWorker(jobId, userId);
+    if (!job || job.status !== 'running') return;
+    await runScrapeJobStep(store, connectScraperBrowser, jobId, userId);
+    const updated = await store.findJobForWorker(jobId, userId);
+    if (!updated || updated.status !== 'running') return;
+  }
+}
+
 export async function createApp() {
   await store.initialize();
   const app = express();
@@ -1547,7 +1561,7 @@ export async function createApp() {
         }).catch((error) => {
           console.error('[Jobs] Falha no encadeamento do worker:', error instanceof Error ? error.message : error);
         }));
-      } else void firstStep;
+      } else void runLocalScrapeWorkerContinuously(store, jobId, userId);
 
       return res.status(201).json({
         data: { jobId, job: newJob },
@@ -1588,7 +1602,7 @@ export async function createApp() {
         }).catch((error) => {
           console.error('[Jobs] Falha no encadeamento do worker:', error instanceof Error ? error.message : error);
         }));
-      } else void nextStep;
+      } else void runLocalScrapeWorkerContinuously(store, job.id, user.id);
 
       return res.status(202).setHeader('Cache-Control', 'no-store').json({
         success: true,
