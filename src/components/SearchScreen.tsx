@@ -666,7 +666,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             {/* Encontrados */}
             <div className="p-5 bg-zinc-950 border border-zinc-800 rounded-xl text-center">
               <span className="block text-xs sm:text-sm font-bold text-zinc-400 uppercase tracking-wider">
-                Encontrados
+                Fichas encontradas
               </span>
               <span className="block text-3xl sm:text-4xl font-extrabold text-zinc-100 mt-2 font-mono tabular-nums">
                 {currentJob.total_found}
@@ -676,7 +676,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             {/* Coletados */}
             <div className="p-5 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-center">
               <span className="block text-xs sm:text-sm font-bold text-emerald-400 uppercase tracking-wider">
-                Coletados
+                Novos salvos
               </span>
               <span className="block text-3xl sm:text-4xl font-extrabold text-emerald-300 mt-2 font-mono tabular-nums">
                 {currentJob.total_collected}
@@ -686,7 +686,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             {/* Duplicados */}
             <div className="p-5 bg-zinc-950 border border-zinc-800 rounded-xl text-center">
               <span className="block text-xs sm:text-sm font-bold text-zinc-400 uppercase tracking-wider">
-                Duplicados
+                Já cadastrados
               </span>
               <span className="block text-3xl sm:text-4xl font-extrabold text-zinc-300 mt-2 font-mono tabular-nums">
                 {currentJob.total_duplicates}
@@ -696,7 +696,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             {/* Erros */}
             <div className="p-5 bg-rose-500/10 border border-rose-500/30 rounded-xl text-center">
               <span className="block text-xs sm:text-sm font-bold text-rose-400 uppercase tracking-wider">
-                Erros
+                Falhas
               </span>
               <span className="block text-3xl sm:text-4xl font-extrabold text-rose-300 mt-2 font-mono tabular-nums">
                 {currentJob.total_errors}
