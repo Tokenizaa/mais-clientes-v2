@@ -830,19 +830,46 @@ class Store {
       this.localScrapeLeases.add(id);
       return true;
     }
+
     const now = new Date().toISOString();
     const leaseUntil = new Date(Date.now() + 55_000).toISOString();
-    const { data, error } = await this.supabase
+    const { data: jobLease, error: jobLeaseError } = await this.supabase
       .from('scrape_jobs')
       .update({ worker_locked_until: leaseUntil })
       .eq('id', id)
       .eq('user_id', userId)
       .eq('status', 'running')
       .or('worker_locked_until.is.null,worker_locked_until.lt.' + now)
-      .select('id')
+      .select('id,search_session_id')
       .maybeSingle();
-    if (error) throw new Error('Falha ao reservar execução do scraper: ' + error.message);
-    return Boolean(data?.id);
+    if (jobLeaseError) throw new Error('Falha ao reservar execução do scraper: ' + jobLeaseError.message);
+    if (!jobLease?.id) return false;
+
+    // A search session is shared by successive jobs. A job-only lease allows
+    // two jobs in that same session to race on the shared ordinal/cursor.
+    if (jobLease.search_session_id) {
+      const { data: sessionLease, error: sessionLeaseError } = await this.supabase
+        .from('scrape_search_sessions')
+        .update({ worker_locked_until: leaseUntil })
+        .eq('id', jobLease.search_session_id)
+        .eq('user_id', userId)
+        .or('worker_locked_until.is.null,worker_locked_until.lt.' + now)
+        .select('id')
+        .maybeSingle();
+
+      if (sessionLeaseError || !sessionLease?.id) {
+        await this.supabase.from('scrape_jobs')
+          .update({ worker_locked_until: null })
+          .eq('id', id)
+          .eq('user_id', userId);
+        if (sessionLeaseError) {
+          throw new Error('Falha ao reservar sessão compartilhada do scraper: ' + sessionLeaseError.message);
+        }
+        return false;
+      }
+    }
+
+    return true;
   }
 
   async releaseScrapeWorkerLease(id: string): Promise<void> {
@@ -850,6 +877,22 @@ class Store {
       this.localScrapeLeases.delete(id);
       return;
     }
+
+    const { data: job, error: lookupError } = await this.supabase
+      .from('scrape_jobs')
+      .select('search_session_id')
+      .eq('id', id)
+      .maybeSingle();
+    if (lookupError) throw new Error('Falha ao recuperar sessão para liberar lease: ' + lookupError.message);
+
+    if (job?.search_session_id) {
+      const { error: sessionError } = await this.supabase
+        .from('scrape_search_sessions')
+        .update({ worker_locked_until: null })
+        .eq('id', job.search_session_id);
+      if (sessionError) throw new Error('Falha ao liberar lease da sessão compartilhada: ' + sessionError.message);
+    }
+
     const { error } = await this.supabase
       .from('scrape_jobs')
       .update({ worker_locked_until: null })
