@@ -21,6 +21,7 @@ export interface ScrapeRuntimeStore {
   persistScrapeProgress(job: ScrapeJob, newPlace?: PlaceRecord): Promise<boolean>;
   isJobCancellationRequested(jobId: string, userId: string): Promise<boolean>;
   claimScrapeWorkerLease(jobId: string, userId: string): Promise<boolean>;
+  loadScrapeCandidates(jobId: string): Promise<string[]>;
   releaseScrapeWorkerLease(jobId: string): Promise<void>;
 }
 
@@ -167,10 +168,15 @@ async function discoverCandidates(
       if (consent) (consent as HTMLButtonElement).click();
     }).catch(() => {});
 
-    const found = new Map<string, string>();
+    // Seed discovery from the durable queue so a terminated invocation never
+    // forgets candidates that were already observed and committed.
+    const found = new Map<string, string>(
+      (job.candidate_urls || []).map((url) => [normalizeMapsPlaceUrl(url), url])
+    );
     const maxCandidates = Math.min(200, Math.max(job.limit_requested * 5, job.limit_requested + 50));
     const startedAt = Date.now();
-    let stagnantRounds = 0;
+    let stagnantRounds = Number(job.discovery_checkpoint?.stagnant_rounds || 0);
+    let scrollRound = Number(job.discovery_checkpoint?.scroll_round || 0);
 
     while (
       found.size < maxCandidates &&
@@ -197,8 +203,18 @@ async function discoverCandidates(
         if (found.size >= maxCandidates) break;
       }
 
+      job.candidate_urls = Array.from(found.values());
       job.total_found = found.size;
-      job.current_step = 'Encontradas ' + found.size + ' fichas; preparando a extração...';
+      job.discovery_checkpoint = {
+        ...(job.discovery_checkpoint || {}),
+        version: 1,
+        scroll_round: scrollRound,
+        last_seen_source_key: Array.from(found.keys()).at(-1) || job.discovery_checkpoint?.last_seen_source_key || '',
+        last_seen_url: Array.from(found.values()).at(-1) || job.discovery_checkpoint?.last_seen_url || '',
+        stagnant_rounds: stagnantRounds,
+        last_checkpoint_at: new Date().toISOString(),
+      };
+      job.current_step = 'Encontradas ' + found.size + ' fichas; checkpoint de descoberta salvo.';
       setHeartbeat(job);
       await store.persistScrapeProgress(job);
 
@@ -211,7 +227,21 @@ async function discoverCandidates(
         else window.scrollTo(0, document.body.scrollHeight);
       }).catch(() => {});
       await delay(750);
+      scrollRound += 1;
       stagnantRounds = found.size === before ? stagnantRounds + 1 : 0;
+      job.discovery_checkpoint = {
+        ...(job.discovery_checkpoint || {}),
+        version: 1,
+        scroll_round: scrollRound,
+        last_seen_source_key: Array.from(found.keys()).at(-1) || '',
+        last_seen_url: Array.from(found.values()).at(-1) || '',
+        stagnant_rounds: stagnantRounds,
+        last_checkpoint_at: new Date().toISOString(),
+      };
+      job.candidate_urls = Array.from(found.values());
+      job.total_found = found.size;
+      setHeartbeat(job);
+      await store.persistScrapeProgress(job);
     }
 
     job.candidate_urls = Array.from(found.values());
@@ -407,6 +437,9 @@ export async function runScrapeJobStep(
     if (!claimed) return;
 
     if (await stopIfRequested(store, job)) return;
+    // The relational candidate queue is authoritative in production. Reload it
+    // after acquiring the lease so a cold serverless instance resumes from durable data.
+    job.candidate_urls = await store.loadScrapeCandidates(job.id);
     job.phase = job.phase || 'discovering';
     job.retry_count = job.retry_count || 0;
 
