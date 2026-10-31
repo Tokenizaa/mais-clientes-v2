@@ -243,16 +243,12 @@ async function findNextPlaceUrl(page: Page, lastProcessedUrl: string): Promise<N
     if (result.url) return { url: result.url, exhausted: false };
     if (result.atEnd) return { url: '', exhausted: true };
     if (result.anchorFound) anchorWasLocated = true;
-    if (!result.anchorFound && anchorKey && !anchorWasLocated) {
-      throw new Error('A última ficha processada não está presente no feed restaurado do Google Maps.');
-    }
-    if (!result.anchorFound && anchorWasLocated) {
-      const firstVisible = await page.evaluate(() => {
-        const feed = document.querySelector('div[role="feed"]');
-        const first = feed?.querySelector('a[href*="/maps/place/"]') as HTMLAnchorElement | null;
-        return first?.href || '';
-      });
-      if (firstVisible) return { url: firstVisible, exhausted: false };
+    if (!result.anchorFound && anchorKey) {
+      throw new Error(
+        anchorWasLocated
+          ? 'A âncora da última ficha saiu do feed antes de ser possível identificar o próximo resultado. A coleta foi pausada para evitar retrocesso ou duplicidade.'
+          : 'A última ficha processada não está presente no feed restaurado do Google Maps.'
+      );
     }
     stagnantRounds = result.moved ? 0 : stagnantRounds + 1;
     if (stagnantRounds >= 3) return { url: '', exhausted: false };
