@@ -43,8 +43,8 @@ O fluxo novo não usa checkpoint, cursor, fila durável de candidatos nem sessã
 
 ## Arquivos
 
-- supabase/migrations/20261101160000_simplify_scrape_job_persistence.sql: lease por job e RPCs de deduplicação/persistência.
-- supabase/migrations/20261101161000_fix_scraped_place_required_defaults.sql: defaults para campos obrigatórios de places.
+- supabase/migrations/20261101080912_simplify_scrape_job_persistence.sql: lease por job e RPCs de deduplicação/persistência.
+- supabase/migrations/20261101080953_fix_scraped_place_required_defaults.sql: defaults para campos obrigatórios de places.
 - supabase/tests/scrape_job_atomic_persistence.sql: teste transacional com rollback.
 - server.ts: orquestração sequencial, verificação rápida e gravação atômica.
 
