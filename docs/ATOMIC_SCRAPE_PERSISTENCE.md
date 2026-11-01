@@ -8,8 +8,9 @@ Garantir que cada ficha descoberta tenha um registro durável e que o resultado 
 
 1. O worker reivindica a lease da sessão de pesquisa.
 2. Antes de abrir a ficha, registra a URL em `public.scrape_candidates` por `register_scrape_candidate`.
-3. A chave da ficha é o Place ID extraído do Google Maps; quando não existe, usa a URL normalizada do resultado.
-4. A conclusão chama `complete_scrape_candidate`:
+3. A própria operação de registro faz a deduplicação rápida por Place ID e URL. Se já existir, marca o candidato como duplicado, avança checkpoint/contadores e não abre a ficha no navegador.
+4. A chave da ficha é o Place ID extraído do Google Maps; quando não existe, usa a URL normalizada do resultado.
+5. Se a ficha passar pela deduplicação rápida, a conclusão chama `complete_scrape_candidate`:
    - verifica novamente a lease e o proprietário;
    - bloqueia concorrência por chaves de identidade em ordem determinística;
    - deduplica globalmente por Place ID, URL e combinação nome/endereço;
@@ -18,7 +19,7 @@ Garantir que cada ficha descoberta tenha um registro durável e que o resultado 
    - incrementa exatamente um contador (salvo ou duplicado);
    - avança o cursor e o checkpoint;
    - atualiza o checkpoint da sessão.
-5. Tudo isso ocorre na mesma transação PostgreSQL. Uma repetição de candidato terminal devolve o resultado já gravado sem incrementar contadores.
+6. Tudo isso ocorre na mesma transação PostgreSQL. Uma repetição de candidato terminal devolve o resultado já gravado sem incrementar contadores.
 
 ## Regra da meta
 
