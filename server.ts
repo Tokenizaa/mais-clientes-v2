@@ -724,7 +724,7 @@ class Store {
       p_session_id: job.search_session_id,
       p_source_key: sourceKey,
       p_source_place_id: sourcePlaceId,
-      p_source_url: sourceUrl,
+      p_source_url: normalizeMapsPlaceUrl(sourceUrl),
       p_lease_token: lease.token,
       p_lease_generation: lease.generation,
     });
@@ -781,7 +781,10 @@ class Store {
       p_user_id: job.user_id,
       p_session_id: job.search_session_id,
       p_outcome: outcome,
-      p_place: place ? place as unknown as Record<string, unknown> : null,
+      p_place: place ? {
+        ...place,
+        source_url: normalizeMapsPlaceUrl(place.source_url || sourceUrl),
+      } as unknown as Record<string, unknown> : null,
       p_source_key: sourceKey,
       p_source_url: sourceUrl,
       p_lease_token: lease.token,
@@ -1455,7 +1458,7 @@ async function executeScrapeJob(
         try {
           if (!sessionLease) throw new Error('Lease ausente ao registrar ficha.');
           const candidate = await store.registerScrapeCandidate(
-            job, sourceKey, extractSourcePlaceId(item.url) || null, item.url, sessionLease
+            job, sourceKey, extractSourcePlaceId(item.url) || null, item.key, sessionLease
           );
           candidateId = candidate.candidateId;
           if (candidate.status === 'processed' || candidate.status === 'duplicate') {
@@ -1481,7 +1484,7 @@ async function executeScrapeJob(
           if (!place.city && locationFallback.city) place.city = locationFallback.city;
           if (!place.state && locationFallback.state) place.state = locationFallback.state;
 
-          const result = await completeCandidate(candidateId, sourceKey, item.url, 'saved', place);
+          const result = await completeCandidate(candidateId, sourceKey, item.key, 'saved', place);
           if (result.outcome === 'duplicate') {
             await audit('duplicate_skipped', 'info', 'Duplicado detectado atomicamente na persistência; registro descartado.', {
               url: item.key, name: place.name, duplicate_count: job.total_duplicates, race_condition: true,
@@ -1522,7 +1525,7 @@ async function executeScrapeJob(
 
               // A RPC decide duplicidade e persistência na mesma transação; não há SELECT prévio.
               const result = await completeCandidate(
-                candidateId, sourceKey, item.url, 'saved', retriedPlace
+                candidateId, sourceKey, item.key, 'saved', retriedPlace
               );
               if (result.outcome === 'saved' && !result.alreadyCompleted) state.places.push(retriedPlace);
               await audit('candidate_recovery_processed', 'info', 'Ficha pendente reprocessada; preparando retomada do feed.', {
