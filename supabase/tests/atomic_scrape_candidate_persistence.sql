@@ -38,7 +38,7 @@ begin
 
   v_first := public.register_scrape_candidate(
     'test_candidate_1', v_job_id, v_user_id, v_session_id,
-    'stable-place-key-1', 'https://maps.example/place/one', v_lease_token, 1
+    'stable-place-key-1', '0x123:0x456', 'https://maps.example/place/one', v_lease_token, 1
   );
   v_repeat := public.register_scrape_candidate(
     'test_candidate_1_repeat', v_job_id, v_user_id, v_session_id,
@@ -84,7 +84,7 @@ begin
 
   v_second_candidate := public.register_scrape_candidate(
     'test_candidate_2', v_job_id, v_user_id, v_session_id,
-    'stable-place-key-2', 'https://maps.example/place/two', v_lease_token, 1
+    'stable-place-key-2', '0x123:0x456', 'https://maps.example/place/two', v_lease_token, 1
   );
 
   v_duplicate := public.complete_scrape_candidate(
@@ -109,6 +109,9 @@ begin
     from public.places where job_id = v_job_id;
   select * into v_job from public.scrape_jobs where id = v_job_id;
 
+  if v_second_candidate->>'status' <> 'duplicate' then
+    raise exception 'feed-level fast-path did not reject known duplicate';
+  end if;
   if v_duplicate->>'outcome' <> 'duplicate' then
     raise exception 'global source_place_id duplicate was not rejected';
   end if;
