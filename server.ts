@@ -1370,8 +1370,9 @@ async function executeScrapeJob(
     });
     await page.waitForSelector('div[role="feed"], a[href*="/maps/place/"]', { timeout: 15000 }).catch(() => {});
 
-    const anchor = normalizeMapsPlaceUrl(job.discovery_checkpoint?.last_processed_url || '');
+    let anchor = normalizeMapsPlaceUrl(job.discovery_checkpoint?.last_processed_url || '');
     let anchorFound = !anchor;
+    let feedExhausted = false;
     let previousCount = 0;
     let stagnantRounds = 0;
     let ordinalThisRun = 0;
@@ -1383,7 +1384,7 @@ async function executeScrapeJob(
       resume_url: anchor || null,
     });
 
-    while (!cancelled && !pauseReason && !leaseLost && job.total_collected < limit && stagnantRounds < 8) {
+    while (!cancelled && !pauseReason && !leaseLost && job.total_collected < limit) {
       if (await store.isJobCancellationRequested(jobId, userId)) { cancelled = true; break; }
 
       const links: string[] = await page.$$eval('a[href*="/maps/place/"]', (anchors) =>
@@ -1522,6 +1523,9 @@ async function executeScrapeJob(
                 waitUntil: 'domcontentloaded', timeout: 45000,
               });
               await page.waitForSelector('div[role="feed"], a[href*="/maps/place/"]', { timeout: 20000 }).catch(() => {});
+              // A ficha atual foi processada e checkpointada durante a recuperação.
+              // Use-a como nova âncora; nunca procure uma âncora vazia ou obsoleta.
+              anchor = item.key;
               anchorFound = false;
               seenThisRun.clear();
               previousCount = 0;
@@ -1582,10 +1586,22 @@ async function executeScrapeJob(
         const body = document.body.innerText || '';
         return body.includes('Você chegou ao final da lista') || body.includes("You've reached the end of the list");
       }).catch(() => false);
-      if (endReached) break;
+      if (endReached) {
+        feedExhausted = true;
+        break;
+      }
+      if (stagnantRounds >= 8) {
+        pauseReason = 'O feed não apresentou novos resultados após oito tentativas de avanço. A coleta foi pausada sem declarar esgotamento; pode ser retomada.';
+        await audit('feed_stagnation_paused', 'warn', pauseReason, {
+          stagnant_rounds: stagnantRounds,
+          discovered_this_run: seenThisRun.size,
+          checkpoint: job.discovery_checkpoint?.last_processed_url || null,
+        });
+        break;
+      }
     }
 
-    if (!anchorFound) {
+    if (anchor && !anchorFound) {
       pauseReason = 'Não foi possível reencontrar a ficha do último checkpoint no feed. Nenhuma ficha foi pulada.';
       await audit('resume_anchor_missing', 'error', pauseReason, { resume_url: anchor });
     }
@@ -1602,11 +1618,15 @@ async function executeScrapeJob(
       job.status = 'completed';
       job.status_message = `Meta atingida: ${job.total_collected} novos contatos salvos.`;
       job.current_step = 'Meta atingida';
-    } else {
+    } else if (feedExhausted) {
       job.status = 'completed';
       job.status_message = `Feed esgotado: ${job.total_collected} novos contatos salvos, ${job.total_duplicates} duplicados ignorados.`;
       job.discovery_checkpoint = { ...(job.discovery_checkpoint || {}), exhausted: true };
       job.current_step = 'Feed esgotado';
+    } else {
+      job.status = 'partial';
+      job.status_message = 'Coleta pausada sem confirmação de esgotamento do feed.';
+      job.current_step = 'Pausada; pode ser retomada.';
     }
     job.completed_at = new Date().toISOString();
     store.persist();
