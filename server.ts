@@ -1329,7 +1329,7 @@ async function executeScrapeJob(
       feedExhausted = true;
     }
 
-    while (!cancelled && !pauseReason && !leaseLost && job.total_collected < limit) {
+    while (!cancelled && !pauseReason && !leaseLost && !feedExhausted && job.total_collected < limit) {
       if (await store.isJobCancellationRequested(jobId, userId)) { cancelled = true; break; }
 
       let links: string[];
