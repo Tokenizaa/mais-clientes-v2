@@ -8,6 +8,7 @@ create or replace function public.register_scrape_candidate(
   p_user_id text,
   p_session_id text,
   p_source_key text,
+  p_source_place_id text,
   p_source_url text,
   p_lease_token uuid,
   p_lease_generation bigint
@@ -21,7 +22,9 @@ declare
   v_session public.scrape_search_sessions%rowtype;
   v_job public.scrape_jobs%rowtype;
   v_candidate public.scrape_candidates%rowtype;
-  v_inserted boolean := false;
+  v_lock_key text;
+  v_is_duplicate boolean := false;
+  v_checkpoint jsonb;
 begin
   if nullif(trim(p_source_key), '') is null or nullif(trim(p_source_url), '') is null then
     raise exception 'candidate source key and URL are required';
@@ -53,35 +56,99 @@ begin
    for update;
 
   if found then
+    select * into v_job from public.scrape_jobs where id = p_job_id;
     return jsonb_build_object(
       'candidate_id', v_candidate.id,
       'ordinal', v_candidate.ordinal,
       'status', v_candidate.status,
-      'inserted', false
+      'inserted', false,
+      'total_found', v_job.total_found,
+      'total_duplicates', v_job.total_duplicates,
+      'total_collected', v_job.total_collected,
+      'candidate_cursor', v_job.candidate_cursor,
+      'checkpoint', v_job.discovery_checkpoint
     );
+  end if;
+
+  -- Fast-path deduplication uses only source identity available in the feed.
+  -- Lock keys are acquired in sorted order to serialize concurrent discoveries.
+  for v_lock_key in
+    select distinct key
+      from unnest(array[
+        case when nullif(trim(coalesce(p_source_place_id, '')), '') is not null
+          then 'place-id:' || lower(trim(p_source_place_id)) end,
+        case when nullif(trim(coalesce(p_source_url, '')), '') is not null
+          then 'url:' || regexp_replace(lower(trim(p_source_url)), '/+$', '') end
+      ]) as keys(key)
+     where key is not null
+     order by key
+  loop
+    perform pg_advisory_xact_lock(hashtextextended(v_lock_key, 0));
+  end loop;
+
+  if exists (
+    select 1 from public.places p
+     where (nullif(trim(coalesce(p_source_place_id, '')), '') is not null
+            and lower(trim(p.source_place_id)) = lower(trim(p_source_place_id)))
+        or (nullif(trim(coalesce(p_source_url, '')), '') is not null
+            and (
+              regexp_replace(lower(trim(p.source_url)), '/+$', '') = regexp_replace(lower(trim(p_source_url)), '/+$', '')
+              or regexp_replace(lower(trim(p.maps_url)), '/+$', '') = regexp_replace(lower(trim(p_source_url)), '/+$', '')
+            ))
+  ) then
+    v_is_duplicate := true;
   end if;
 
   insert into public.scrape_candidates (
     id, job_id, user_id, session_id, source_key, source_url,
-    ordinal, status, discovered_at, updated_at
+    ordinal, status, discovered_at, updated_at, processed_at
   ) values (
     p_candidate_id, p_job_id, p_user_id, p_session_id, p_source_key, p_source_url,
-    v_session.next_ordinal, 'discovered', now(), now()
+    v_session.next_ordinal,
+    case when v_is_duplicate then 'duplicate' else 'discovered' end,
+    now(), now(), case when v_is_duplicate then now() else null end
   )
   returning * into v_candidate;
+
+  v_checkpoint := coalesce(v_job.discovery_checkpoint, '{}'::jsonb);
+  if v_is_duplicate then
+    v_checkpoint := v_checkpoint || jsonb_build_object(
+      'version', 1,
+      'last_processed_url', regexp_replace(p_source_url, '[?#].*$', ''),
+      'last_processed_source_key', p_source_key,
+      'last_processed_outcome', 'duplicate',
+      'last_processed_at', now(),
+      'last_checkpoint_at', now(),
+      'processed_count', coalesce((v_checkpoint->>'processed_count')::integer, 0) + 1
+    );
+  end if;
 
   update public.scrape_search_sessions
      set next_ordinal = next_ordinal + 1,
          total_found = total_found + 1,
+         discovery_checkpoint = case when v_is_duplicate then v_checkpoint else discovery_checkpoint end,
          updated_at = now()
    where id = p_session_id and user_id = p_user_id;
 
-  v_inserted := true;
+  update public.scrape_jobs
+     set total_found = total_found + 1,
+         total_duplicates = total_duplicates + case when v_is_duplicate then 1 else 0 end,
+         candidate_cursor = candidate_cursor + case when v_is_duplicate then 1 else 0 end,
+         discovery_checkpoint = case when v_is_duplicate then v_checkpoint else discovery_checkpoint end,
+         heartbeat_at = now()
+   where id = p_job_id and user_id = p_user_id;
+
+  select * into v_job from public.scrape_jobs where id = p_job_id;
   return jsonb_build_object(
     'candidate_id', v_candidate.id,
     'ordinal', v_candidate.ordinal,
     'status', v_candidate.status,
-    'inserted', v_inserted
+    'inserted', true,
+    'total_found', v_job.total_found,
+    'total_duplicates', v_job.total_duplicates,
+    'total_collected', v_job.total_collected,
+    'candidate_cursor', v_job.candidate_cursor,
+    'checkpoint', v_job.discovery_checkpoint
   );
 end;
 $$;
@@ -277,9 +344,9 @@ begin
 end;
 $$;
 
-revoke all on function public.register_scrape_candidate(text,text,text,text,text,text,uuid,bigint) from public, anon, authenticated;
+revoke all on function public.register_scrape_candidate(text,text,text,text,text,text,text,uuid,bigint) from public, anon, authenticated;
 revoke all on function public.complete_scrape_candidate(text,text,text,text,text,jsonb,text,text,uuid,bigint) from public, anon, authenticated;
-grant execute on function public.register_scrape_candidate(text,text,text,text,text,text,uuid,bigint) to service_role;
+grant execute on function public.register_scrape_candidate(text,text,text,text,text,text,text,uuid,bigint) to service_role;
 grant execute on function public.complete_scrape_candidate(text,text,text,text,text,jsonb,text,text,uuid,bigint) to service_role;
 , '') = regexp_replace(lower(trim(v_place_json->>'source_url')), '/+
           or (nullif(trim(v_place_json->>'maps_url'), '') is not null
