@@ -1666,24 +1666,57 @@ export async function createApp() {
       const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
       const state = store.getState();
-      // Clean up dead/orphaned running jobs that don't have an active background process
+      let activeJob: ScrapeJob | undefined;
       for (const j of state.jobs) {
-        if (j.user_id === userId && j.status === 'running') {
-          const isActivelyExecuting = activeScrapeJobs.has(j.id);
-          const isStale = Date.now() - Date.parse(j.heartbeat_at || j.created_at) > 35_000;
-          if (!isActivelyExecuting || isStale || req.body.force) {
-            if (activeScrapeJobs.has(j.id)) {
-              activeScrapeJobs.get(j.id)?.cancel();
-            }
-            j.status = 'stopped';
-            j.status_message = 'Coleta anterior finalizada para iniciar nova pesquisa.';
-            j.completed_at = new Date().toISOString();
-            void store.persistScrapeProgress(j);
+        if (j.user_id !== userId || j.status !== 'running') continue;
+
+        const locallyExecuting = activeScrapeJobs.has(j.id);
+        let durableLeaseActive = false;
+        if ((store as any).supabase) {
+          const { data: leaseRow, error: leaseError } = await (store as any).supabase
+            .from('scrape_jobs')
+            .select('worker_locked_until')
+            .eq('id', j.id)
+            .eq('user_id', userId)
+            .maybeSingle();
+          if (leaseError) throw new Error('Falha ao verificar execução ativa: ' + leaseError.message);
+          durableLeaseActive = Boolean(
+            leaseRow?.worker_locked_until && Date.parse(leaseRow.worker_locked_until) > Date.now()
+          );
+
+          // Old jobs may still be finishing under their historical session lease.
+          if (!durableLeaseActive && j.search_session_id) {
+            const { data: sessionRow, error: sessionError } = await (store as any).supabase
+              .from('scrape_search_sessions')
+              .select('lease_expires_at, worker_locked_until')
+              .eq('id', j.search_session_id)
+              .eq('user_id', userId)
+              .maybeSingle();
+            if (sessionError) throw new Error('Falha ao verificar sessão histórica: ' + sessionError.message);
+            const sessionExpiry = sessionRow?.lease_expires_at || sessionRow?.worker_locked_until;
+            durableLeaseActive = Boolean(sessionExpiry && Date.parse(sessionExpiry) > Date.now());
           }
         }
+
+        const heartbeatFresh = Date.now() - Date.parse(j.heartbeat_at || j.created_at) <= 120_000;
+        const isActive = locallyExecuting || durableLeaseActive || heartbeatFresh;
+        if (isActive) {
+          if (req.body.force) {
+            await store.requestJobCancellation(j.id, userId);
+            activeScrapeJobs.get(j.id)?.cancel();
+          } else {
+            activeJob ||= j;
+          }
+          continue;
+        }
+
+        // A stale job with no local worker and no live database lease is orphaned.
+        j.status = 'stopped';
+        j.status_message = 'Execução anterior encerrada por ausência de worker e lease ativa.';
+        j.completed_at = new Date().toISOString();
+        await store.persistScrapeProgress(j);
       }
 
-      const activeJob = state.jobs.find((job) => job.user_id === userId && job.status === 'running' && activeScrapeJobs.has(job.id));
       if (activeJob && !req.body.force) {
         return res.status(409).json({
           error: 'Já existe uma pesquisa em execução. Aguarde a conclusão ou interrompa-a antes de iniciar outra.',
