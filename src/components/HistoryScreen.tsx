@@ -105,9 +105,12 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
                     </div>
 
                     {job.status_message && (
-                      <p className="text-xs sm:text-sm text-slate-400 italic line-clamp-2">
-                        {job.status_message}
-                      </p>
+                      <div className="space-y-1">
+                        <p className="text-xs sm:text-sm text-slate-300 line-clamp-2">{job.status_message}</p>
+                        {job.completion_reason === 'feed_exhausted' && (
+                          <p className="text-xs text-amber-300">Fim natural dos resultados disponíveis nesta consulta do Google Maps; não representa cobertura completa da região.</p>
+                        )}
+                      </div>
                     )}
                   </div>
 
@@ -126,11 +129,15 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
                           : 'bg-rose-500/10 text-rose-300 border-rose-500/30'
                       }`}
                     >
-                      {job.status === 'completed' && 'Concluída'}
-                      {job.status === 'running' && 'Em andamento'}
-                      {job.status === 'partial' && 'Parcial'}
-                      {job.status === 'stopped' && 'Interrompida'}
-                      {job.status === 'failed' && 'Falha'}
+                      {job.completion_reason === 'feed_exhausted' && 'Fim da lista'}
+                      {job.completion_reason === 'target_reached' && 'Meta atingida'}
+                      {job.completion_reason === 'user_stopped' && 'Interrompida'}
+                      {job.completion_reason === 'fatal_error' && 'Falha técnica'}
+                      {!job.completion_reason && job.status === 'completed' && 'Concluída'}
+                      {!job.completion_reason && job.status === 'running' && 'Em andamento'}
+                      {!job.completion_reason && job.status === 'partial' && 'Parcial'}
+                      {!job.completion_reason && job.status === 'stopped' && 'Interrompida'}
+                      {!job.completion_reason && job.status === 'failed' && 'Falha'}
                     </span>
 
                     {/* View in Table */}
