@@ -579,8 +579,8 @@ class Store {
         logs: [],
         settings: {},
       };
-      this.persist();
-      await this.flush();
+      // Do not write the global app_state snapshot during cold start.
+      // The first real mutation will persist the initialized state.
     }
 
     // The relational places table is the source of truth. app_state is a
@@ -604,8 +604,8 @@ class Store {
     if (deduplicatedPlaces.length !== currentPlaces.length) {
       console.warn(`[Store] Removendo ${currentPlaces.length - deduplicatedPlaces.length} duplicidade(s) do snapshot local de estabelecimentos.`);
       this.state.places = deduplicatedPlaces;
-      this.persist();
-      await this.flush();
+      // Keep startup read-only. A cold-start deduplication must never enqueue
+      // a full app_state + relational-table rewrite before API routes are ready.
     }
   }
 
