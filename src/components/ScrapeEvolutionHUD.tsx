@@ -42,6 +42,7 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
   const isFeedExhausted = completionReason === 'feed_exhausted';
   const isTargetReached = completionReason === 'target_reached';
   const isAccessRestricted = completionReason === 'access_restricted';
+  const isFatalScrapeError = completionReason === 'fatal_error';
   const [showFeedExhaustedModal, setShowFeedExhaustedModal] = useState(false);
 
   useEffect(() => {
@@ -130,7 +131,7 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold uppercase tracking-wider text-blue-400 font-mono">
-                {isRunning ? 'Radar de Coleta em Tempo Real' : isFeedExhausted ? 'Pesquisa encerrada — fim dos resultados disponíveis' : isTargetReached ? 'Meta de novos estabelecimentos atingida' : isStopped ? 'Coleta interrompida pelo usuário' : isAccessRestricted ? 'Acesso limitado pelo Google Maps' : isFailed ? 'Coleta não concluída — falha técnica' : isPartial ? 'Coleta finalizada parcialmente' : 'Coleta encerrada'}
+                {isRunning ? 'Radar de Coleta em Tempo Real' : isFeedExhausted ? 'Pesquisa encerrada — fim dos resultados disponíveis' : isTargetReached ? 'Meta de novos estabelecimentos atingida' : isStopped ? 'Coleta interrompida pelo usuário' : isAccessRestricted ? 'Acesso limitado pelo Google Maps' : isFatalScrapeError ? 'Falha técnica na coleta' : isFailed ? 'Coleta não concluída — falha técnica' : isPartial ? 'Coleta finalizada parcialmente' : 'Coleta encerrada'}
               </span>
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-900/60 border border-blue-700/50 text-blue-200 font-mono">
                 ID: {currentJob.id.slice(0, 12)}
@@ -185,6 +186,13 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
         <div className="relative rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3">
           <p className="text-sm font-semibold text-rose-200">O Google Maps limitou ou solicitou verificação de acesso.</p>
           <p className="mt-1 text-xs text-slate-300">A execução foi encerrada sem afirmar que a lista terminou. O percentual mostra somente a meta de novos estabelecimentos efetivamente atingida.</p>
+        </div>
+      )}
+
+      {!isRunning && isFatalScrapeError && (
+        <div className="relative rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3">
+          <p className="text-sm font-semibold text-rose-200">Falha técnica: a execução foi interrompida antes da confirmação do fim da lista.</p>
+          <p className="mt-1 text-xs text-slate-300">{currentJob.status_message || 'Verifique os registros técnicos da execução.'} O percentual não será apresentado como conclusão normal.</p>
         </div>
       )}
 
