@@ -794,7 +794,7 @@ class Store {
     sourceUrl: string,
     place: PlaceRecord | undefined,
     lease: { token: string; generation: number }
-  ): Promise<'saved' | 'duplicate'> {
+  ): Promise<{ outcome: 'saved' | 'duplicate'; alreadyCompleted: boolean }> {
     if (!this.supabase) {
       const actual = outcome;
       if (actual === 'saved' && place) {
@@ -816,7 +816,7 @@ class Store {
       };
       job.candidate_cursor = Number(job.candidate_cursor || 0) + 1;
       this.save(this.state);
-      return actual;
+      return { outcome: actual, alreadyCompleted: false };
     }
 
     const { data, error } = await this.supabase.rpc('complete_scrape_candidate', {
@@ -840,7 +840,10 @@ class Store {
       job.discovery_checkpoint = data.checkpoint;
     }
     job.heartbeat_at = new Date().toISOString();
-    return data.outcome === 'saved' || data.outcome === 'processed' ? 'saved' : 'duplicate';
+    return {
+      outcome: data.outcome === 'saved' || data.outcome === 'processed' ? 'saved' : 'duplicate',
+      alreadyCompleted: data.already_completed === true,
+    };
   }
 
   async isJobCancellationRequested(id: string, userId: string): Promise<boolean> {
@@ -1422,15 +1425,16 @@ async function executeScrapeJob(
   const completeCandidate = async (
     candidateId: string, sourceKey: string, url: string,
     outcome: 'saved' | 'duplicate', place?: PlaceRecord
-  ): Promise<'saved' | 'duplicate'> => {
+  ): Promise<{ outcome: 'saved' | 'duplicate'; alreadyCompleted: boolean }> => {
     if (!sessionLease) throw new Error('Lease ausente ao concluir ficha.');
-    const actual = await store.completeScrapeCandidate(
+    const result = await store.completeScrapeCandidate(
       job, candidateId, outcome, sourceKey, url, place, sessionLease
     );
     await audit('candidate_checkpoint_saved', 'debug', 'Resultado, contador e checkpoint confirmados em uma única transação.', {
-      url: normalizeMapsPlaceUrl(url), outcome: actual, ordinal: job.candidate_cursor, name: place?.name || null,
+      url: normalizeMapsPlaceUrl(url), outcome: result.outcome, ordinal: job.candidate_cursor, name: place?.name || null,
+      already_completed: result.alreadyCompleted,
     });
-    return actual;
+    return result;
   };
 
   try {
@@ -1508,9 +1512,9 @@ async function executeScrapeJob(
 
           const isDuplicate = await store.isExistingPlace({ source_url: item.url, maps_url: item.url });
           if (isDuplicate) {
-            const actual = await completeCandidate(candidateId, sourceKey, item.url, 'duplicate');
+            const result = await completeCandidate(candidateId, sourceKey, item.url, 'duplicate');
             await audit('duplicate_skipped', 'info', 'Duplicado descartado silenciosamente; checkpoint confirmado.', {
-              url: item.key, duplicate_count: job.total_duplicates, outcome: actual,
+              url: item.key, duplicate_count: job.total_duplicates, outcome: result.outcome,
             });
             continue;
           }
@@ -1526,21 +1530,21 @@ async function executeScrapeJob(
           if (!place.state && locationFallback.state) place.state = locationFallback.state;
 
           if (place.name && place.address && await store.isExistingPlace(place)) {
-            const actual = await completeCandidate(candidateId, sourceKey, item.url, 'duplicate', place);
+            const result = await completeCandidate(candidateId, sourceKey, item.url, 'duplicate', place);
             await audit('duplicate_skipped', 'info', 'Duplicado descartado silenciosamente; checkpoint confirmado.', {
-              url: item.key, name: place.name, duplicate_count: job.total_duplicates, outcome: actual,
+              url: item.key, name: place.name, duplicate_count: job.total_duplicates, outcome: result.outcome,
             });
             continue;
           }
 
-          const actual = await completeCandidate(candidateId, sourceKey, item.url, 'saved', place);
-          if (actual === 'duplicate') {
+          const result = await completeCandidate(candidateId, sourceKey, item.url, 'saved', place);
+          if (result.outcome === 'duplicate') {
             await audit('duplicate_skipped', 'info', 'Duplicado detectado atomicamente na persistência; registro descartado.', {
               url: item.key, name: place.name, duplicate_count: job.total_duplicates, race_condition: true,
             });
             continue;
           }
-          state.places.push(place);
+          if (!result.alreadyCompleted) state.places.push(place);
           await audit('place_saved', 'info', 'Novo contato gravado; contador e checkpoint confirmados atomicamente.', {
             url: item.key, name: place.name, collected: job.total_collected, target: limit,
           });
@@ -1576,12 +1580,12 @@ async function executeScrapeJob(
               const alreadySaved = retriedPlace.name && retriedPlace.address
                 ? await store.isExistingPlace(retriedPlace)
                 : await store.isExistingPlace({ source_url: item.url, maps_url: item.url });
-              const actual = await completeCandidate(
+              const result = await completeCandidate(
                 candidateId, sourceKey, item.url,
                 alreadySaved ? 'duplicate' : 'saved',
-                alreadySaved ? retriedPlace : retriedPlace
+                retriedPlace
               );
-              if (actual === 'saved') state.places.push(retriedPlace);
+              if (result.outcome === 'saved' && !result.alreadyCompleted) state.places.push(retriedPlace);
               await audit('candidate_recovery_processed', 'info', 'Ficha pendente reprocessada; preparando retomada do feed.', {
                 url: item.key, collected: job.total_collected, duplicates: job.total_duplicates,
                 original_error_name: error instanceof Error ? error.name : typeof error,
