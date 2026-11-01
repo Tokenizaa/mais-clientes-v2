@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { AmbientBackground } from './AmbientBackground';
 import { MapPin, ArrowRight, LoaderCircle } from 'lucide-react';
 
 type User = { id: string; email: string; name: string; role: 'admin' | 'user' };
@@ -34,7 +35,9 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated }) => {
     }
   };
 
-  return <main className="flex min-h-screen items-center justify-center bg-zinc-950 px-4 py-10 text-zinc-100">
+  return <div className="app-shell min-h-screen bg-transparent text-zinc-100">
+    <AmbientBackground />
+    <main className="relative z-10 flex min-h-screen items-center justify-center bg-transparent px-4 py-10 text-zinc-100">
     <section className="w-full max-w-md">
       <div className="mb-8 flex items-center gap-3">
         <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-400"><MapPin className="h-5 w-5" /></div>
@@ -54,5 +57,6 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated }) => {
       </div>
       <p className="mt-6 text-center text-xs text-zinc-600">MapScrape · Acesso seguro à plataforma</p>
     </section>
-  </main>;
+    </main>
+  </div>;
 };
