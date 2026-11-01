@@ -48,10 +48,15 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
   const isAccessRestricted = completionReason === 'access_restricted';
   const isFatalScrapeError = completionReason === 'fatal_error';
   const [showFeedExhaustedModal, setShowFeedExhaustedModal] = useState(false);
+  const [selectedRegionalLocation, setSelectedRegionalLocation] = useState(regionalQuickActions[0]?.location || '');
 
   useEffect(() => {
     if (isFeedExhausted) setShowFeedExhaustedModal(true);
   }, [currentJob.id, isFeedExhausted]);
+
+  useEffect(() => {
+    setSelectedRegionalLocation(regionalQuickActions[0]?.location || '');
+  }, [currentJob.id]);
 
   // Radius for SVG circular progress
   const radius = 64;
@@ -90,18 +95,30 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
                     <p className="text-sm font-bold text-cyan-100">Continue a prospecção em outra região</p>
                     <p className="mt-1 text-xs text-slate-300">Inicie outra coleta mantendo o mesmo segmento, município e meta de novos contatos.</p>
                   </div>
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                    {regionalQuickActions.map((action) => (
-                      <button
-                        key={action.location}
-                        type="button"
-                        onClick={() => void onStartRegionalScrape(action.location)}
-                        className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-3 py-3 text-sm font-bold text-cyan-100 transition hover:border-cyan-300/60 hover:bg-cyan-400/20"
+                  <div className="flex flex-col gap-3 sm:flex-row">
+                    <label className="min-w-0 flex-1">
+                      <span className="mb-1.5 block text-xs font-semibold text-cyan-100">Selecione a próxima região</span>
+                      <select
+                        aria-label="Selecionar próxima região para coleta"
+                        value={selectedRegionalLocation}
+                        onChange={(event) => setSelectedRegionalLocation(event.target.value)}
+                        className="w-full rounded-xl border border-cyan-400/30 bg-[#071a30] px-4 py-3 text-sm font-semibold text-white outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-400/20"
                       >
-                        Zona {action.label}
-                        <span className="mt-1 block text-[10px] font-medium text-cyan-200/70">Iniciar coleta</span>
+                        {regionalQuickActions.map((action) => (
+                          <option key={action.location} value={action.location}>Zona {action.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="flex items-end">
+                      <button
+                        type="button"
+                        disabled={!selectedRegionalLocation}
+                        onClick={() => void onStartRegionalScrape(selectedRegionalLocation)}
+                        className="w-full rounded-xl border border-cyan-300/40 bg-cyan-400/15 px-5 py-3 text-sm font-bold text-cyan-100 transition hover:border-cyan-200/70 hover:bg-cyan-400/25 disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
+                      >
+                        Iniciar coleta
                       </button>
-                    ))}
+                    </div>
                   </div>
                 </div>
               )}
