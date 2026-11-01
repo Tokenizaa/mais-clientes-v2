@@ -38,6 +38,7 @@ interface SearchScreenProps {
   initialCategoryName?: string;
   places: PlaceRecord[];
   totalPlaces: number;
+  scrapeResultsContent?: React.ReactNode;
 }
 
 export const SearchScreen: React.FC<SearchScreenProps> = ({
@@ -51,6 +52,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   initialCategoryName,
   places,
   totalPlaces,
+  scrapeResultsContent,
 }) => {
   const [segment, setSegment] = useState(initialCategoryName || '');
   const [projectName, setProjectName] = useState(initialProjectName || '');
@@ -593,15 +595,31 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
 
       {/* Real-time Evolution HUD: displayed directly below the search controls. */}
       {currentJob && (
-        <div ref={progressRef}>
-          <ScrapeEvolutionHUD
-            currentJob={currentJob}
-            isScraping={isScraping}
-            onStopScrape={onStopScrape}
-            onGoToResults={onGoToResults}
-            recentPlaces={places}
-          />
-        </div>
+        <>
+          <div ref={progressRef}>
+            <ScrapeEvolutionHUD
+              currentJob={currentJob}
+              isScraping={isScraping}
+              onStopScrape={onStopScrape}
+              onGoToResults={onGoToResults}
+              recentPlaces={places}
+            />
+          </div>
+
+          {/* Reutiliza a Base de Leads oficial para exibir os registros desta coleta. */}
+          <section className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+              <div>
+                <h2 className="text-xl font-bold text-white">Resultados desta raspagem</h2>
+                <p className="mt-1 text-sm text-slate-400">Os registros abaixo são os mesmos persistidos na Base de Leads.</p>
+              </div>
+              <span className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-sm font-semibold text-blue-300 tabular-nums">
+                {currentJob.total_collected} / {currentJob.limit_requested} novos
+              </span>
+            </div>
+            {scrapeResultsContent}
+          </section>
+        </>
       )}
 
     </div>
