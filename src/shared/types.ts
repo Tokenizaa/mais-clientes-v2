@@ -78,6 +78,8 @@ export interface ScrapeJob {
   location: string;
   limit_requested: number;
   status: JobStatus;
+  /** Set while the worker is finishing its current ficha after a stop request. */
+  cancel_requested?: boolean;
   status_message: string;
   total_found: number;
   total_collected: number;
