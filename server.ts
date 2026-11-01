@@ -1204,6 +1204,7 @@ async function executeScrapeJob(
   let browser: Browser | null = null;
   let cancelled = false;
   let pauseReason = '';
+  let accessRestricted = false;
   const state = store.getState();
   const job = state.jobs.find((item) => item.id === jobId && item.user_id === userId);
   if (!job) return;
@@ -1284,7 +1285,49 @@ async function executeScrapeJob(
     const locationFallback = parseSearchLocationFallback(location);
     const feedSelector = 'div[role="feed"]';
 
+    // Google may render terminal/restriction notices outside the feed element.
+    // Inspect visible page text and the feed together so the wait condition and
+    // the final decision use the same source of truth.
+    const inspectFeedState = async (): Promise<{ endReached: boolean; accessRestricted: boolean }> =>
+      page!.evaluate((selector) => {
+        const feed = document.querySelector(selector) as HTMLElement | null;
+        const visibleText = (document.body?.innerText || '').toLocaleLowerCase();
+        const feedText = (feed?.innerText || '').toLocaleLowerCase();
+        const combinedText = visibleText + '\\n' + feedText;
+        const endReached = [
+          'você chegou ao final da lista',
+          'você chegou ao fim da lista',
+          "you've reached the end of the list",
+          'you have reached the end of the list',
+        ].some((phrase) => combinedText.includes(phrase));
+        const accessRestricted = [
+          'tráfego incomum',
+          'unusual traffic',
+          'nossos sistemas detectaram tráfego',
+          'our systems have detected unusual traffic',
+          'automated queries',
+          'consultas automatizadas',
+          'não é um robô',
+          'not a robot',
+        ].some((phrase) => visibleText.includes(phrase))
+          || Array.from(document.querySelectorAll('iframe')).some((frame) => {
+            const src = frame.getAttribute('src') || '';
+            const title = frame.getAttribute('title') || '';
+            const rect = frame.getBoundingClientRect();
+            return /recaptcha|captcha/i.test(src + ' ' + title)
+              && rect.width > 0 && rect.height > 0;
+          });
+        return { endReached, accessRestricted };
+      }, feedSelector);
+
     await audit('feed_scan_started', 'info', 'Iniciando leitura sequencial do feed.');
+    const initialFeedState = await inspectFeedState();
+    if (initialFeedState.accessRestricted) {
+      pauseReason = 'O Google Maps apresentou uma verificação ou restrição de acesso; a coleta foi encerrada sem classificar isso como fim da lista.';
+      accessRestricted = true;
+    } else if (initialFeedState.endReached) {
+      feedExhausted = true;
+    }
 
     while (!cancelled && !pauseReason && !leaseLost && job.total_collected < limit) {
       if (await store.isJobCancellationRequested(jobId, userId)) { cancelled = true; break; }
@@ -1400,11 +1443,24 @@ async function executeScrapeJob(
       await page.waitForFunction((selector, previous) => {
         const feed = document.querySelector(selector) as HTMLElement | null;
         const links = Array.from(document.querySelectorAll('a[href*="/maps/place/"]')) as HTMLAnchorElement[];
-        const body = document.body.innerText || '';
-        const endReached = body.includes('Você chegou ao final da lista') || body.includes("You've reached the end of the list");
+        const visibleText = (document.body?.innerText || '').toLocaleLowerCase();
+        const feedText = (feed?.innerText || '').toLocaleLowerCase();
+        const combinedText = visibleText + '\\n' + feedText;
+        const terminalNotice = [
+          'você chegou ao final da lista',
+          'você chegou ao fim da lista',
+          "you've reached the end of the list",
+          'you have reached the end of the list',
+          'tráfego incomum',
+          'unusual traffic',
+          'nossos sistemas detectaram tráfego',
+          'our systems have detected unusual traffic',
+          'not a robot',
+          'não é um robô',
+        ].some((phrase) => combinedText.includes(phrase));
         const height = feed?.scrollHeight || document.documentElement.scrollHeight;
         const tail = links.at(-1)?.href || '';
-        return endReached || height > previous.scrollHeight || links.length > previous.linkCount || (tail !== '' && tail !== previous.lastHref);
+        return terminalNotice || height > previous.scrollHeight || links.length > previous.linkCount || (tail !== '' && tail !== previous.lastHref);
       }, { timeout: 7000 }, feedSelector, beforeScroll).catch((error: any) => {
         if (error?.name !== 'TimeoutError') throw error;
       });
@@ -1435,15 +1491,19 @@ async function executeScrapeJob(
       const currentCount = seenThisRun.size;
       stagnantRounds = currentCount === previousCount ? stagnantRounds + 1 : 0;
       previousCount = currentCount;
-      const endReached = await page.evaluate((selector) => {
-        const feed = document.querySelector(selector) as HTMLElement | null;
-        if (!feed) return false;
-        const feedText = feed.innerText || '';
-        return feedText.includes('Você chegou ao final da lista')
-          || feedText.includes("You've reached the end of the list");
-      }, feedSelector);
-      if (endReached) {
+      const feedState = await inspectFeedState();
+      if (feedState.accessRestricted) {
+        accessRestricted = true;
+        pauseReason = 'O Google Maps apresentou uma verificação ou restrição de acesso; a coleta foi encerrada sem classificar isso como fim da lista.';
+        await audit('feed_access_restricted', 'warn', pauseReason, {
+          discovered_this_run: seenThisRun.size,
+          collected: job.total_collected,
+        });
+        break;
+      }
+      if (feedState.endReached) {
         feedExhausted = true;
+        await audit('feed_exhausted_confirmed', 'info', 'O Google Maps confirmou explicitamente o fim dos resultados desta pesquisa.');
         break;
       }
       if (stagnantRounds >= 8) {
@@ -1462,10 +1522,10 @@ async function executeScrapeJob(
       job.status_message = 'Coleta interrompida pelo usuário.';
       job.current_step = 'Interrompida';
     } else if (pauseReason) {
-      job.completion_reason = 'feed_stagnation';
+      job.completion_reason = accessRestricted ? 'access_restricted' : 'feed_stagnation';
       job.status = job.total_collected > 0 || job.total_duplicates > 0 ? 'partial' : 'failed';
       job.status_message = pauseReason;
-      job.current_step = 'Finalizada com falhas';
+      job.current_step = accessRestricted ? 'Acesso limitado pelo Google Maps' : 'Finalizada sem confirmação do fim';
     } else if (job.total_collected >= limit) {
       job.completion_reason = 'target_reached';
       job.status = 'completed';
