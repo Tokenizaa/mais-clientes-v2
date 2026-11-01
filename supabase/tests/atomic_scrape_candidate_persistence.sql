@@ -16,6 +16,8 @@ declare
   v_saved_repeat jsonb;
   v_second_candidate jsonb;
   v_duplicate jsonb;
+  v_third_candidate jsonb;
+  v_name_duplicate jsonb;
   v_place_count integer;
   v_job public.scrape_jobs%rowtype;
 begin
@@ -105,6 +107,29 @@ begin
     v_lease_token, 1
   );
 
+  v_third_candidate := public.register_scrape_candidate(
+    'test_candidate_3', v_job_id, v_user_id, v_session_id,
+    'stable-place-key-3', '0x999:0x888', 'https://maps.example/place/three', v_lease_token, 1
+  );
+
+  v_name_duplicate := public.complete_scrape_candidate(
+    v_third_candidate->>'candidate_id', v_job_id, v_user_id, v_session_id,
+    'saved',
+    jsonb_build_object(
+      'id', 'test_place_3',
+      'job_id', v_job_id,
+      'name', 'Café de Teste',
+      'category', 'Cafeteria',
+      'address', 'Rua de Teste, 100',
+      'source_place_id', '0x999:0x888',
+      'source_url', 'https://maps.example/place/three',
+      'maps_url', 'https://maps.example/place/three'
+    ),
+    'stable-place-key-3',
+    'https://maps.example/place/three',
+    v_lease_token, 1
+  );
+
   select count(*) into v_place_count
     from public.places where job_id = v_job_id;
   select * into v_job from public.scrape_jobs where id = v_job_id;
@@ -115,10 +140,13 @@ begin
   if v_duplicate->>'outcome' <> 'duplicate' then
     raise exception 'global source_place_id duplicate was not rejected';
   end if;
+  if v_name_duplicate->>'outcome' <> 'duplicate' then
+    raise exception 'name/address duplicate was not rejected at atomic persistence';
+  end if;
   if v_place_count <> 1 then
     raise exception 'expected exactly one persisted place, got %', v_place_count;
   end if;
-  if v_job.total_collected <> 1 or v_job.total_duplicates <> 1 or v_job.candidate_cursor <> 2 then
+  if v_job.total_collected <> 1 or v_job.total_duplicates <> 2 or v_job.candidate_cursor <> 3 then
     raise exception 'unexpected counters: collected %, duplicates %, cursor %',
       v_job.total_collected, v_job.total_duplicates, v_job.candidate_cursor;
   end if;
