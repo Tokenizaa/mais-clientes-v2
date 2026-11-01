@@ -1,4 +1,4 @@
-import { getSupabase } from './db';
+import { getSupabase } from './db.js';
 
 export type AuditLevel = 'debug' | 'info' | 'warn' | 'error';
 
