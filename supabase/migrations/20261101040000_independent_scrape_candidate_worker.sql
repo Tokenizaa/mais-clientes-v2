@@ -280,9 +280,15 @@ begin
        and c.attempt_count < p_max_attempts
        and j.status in ('running', 'partial')
        and j.cancel_requested = false
-       and j.total_collected < j.limit_requested
+       and j.total_collected + (
+         select count(*)::integer
+           from public.scrape_candidates active
+          where active.job_id = j.id
+            and active.status = 'processing'
+            and active.processing_locked_until > now()
+       ) < j.limit_requested
      order by c.discovered_at, c.ordinal, c.id
-     for update of c skip locked
+     for update of j, c skip locked
      limit 1
   ),
   claimed as (
