@@ -65,7 +65,6 @@ as $$
            heartbeat_at = now()
      where id = p_job_id
        and user_id = p_user_id
-       and status = 'running'
        and worker_lease_token = p_lease_token
        and worker_lease_generation = p_generation
        and worker_locked_until > now()
