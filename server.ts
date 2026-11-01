@@ -675,136 +675,70 @@ class Store {
   }
 
 
-  async createSearchSession(input: {
-    userId: string; segment: string; location: string; projectId?: string; categoryId?: string;
-  }): Promise<{ id: string; next_ordinal: number; total_found: number; discovery_checkpoint: Record<string, any>; exhausted: boolean }> {
-    const normalize = (value: string) => value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('pt-BR');
-    const scopeKey = crypto.createHash('sha256').update([
-      normalize(input.segment), normalize(input.location), input.projectId || '', input.categoryId || '',
-    ].join('|')).digest('hex');
-    const row = {
-      id: 'sess_' + crypto.randomUUID(),
-      user_id: input.userId,
-      scope_key: scopeKey,
-      segment: input.segment,
-      location: input.location,
-      project_id: input.projectId || null,
-      category_id: input.categoryId || null,
-      next_ordinal: 0,
-      total_found: 0,
-      discovery_checkpoint: {},
-      exhausted: false,
-      updated_at: new Date().toISOString(),
-    };
-    if (!this.supabase) return row;
-
-    // Cada execução recebe uma sessão nova. Não há retomada de checkpoint entre pesquisas.
-    const inserted = await this.supabase.from('scrape_search_sessions').insert(row).select('*').single();
-    if (inserted.error || !inserted.data) {
-      throw new Error('Falha ao criar sessão isolada de coleta: ' + (inserted.error?.message || 'registro indisponível'));
+  async isScrapePlaceDuplicate(sourcePlaceId: string | null, sourceUrl: string): Promise<boolean> {
+    if (!this.supabase) {
+      const normalizedUrl = normalizeMapsPlaceUrl(sourceUrl);
+      return this.state.places.some((place) =>
+        (sourcePlaceId && place.source_place_id?.toLowerCase() === sourcePlaceId.toLowerCase()) ||
+        (normalizedUrl && [place.source_url, place.maps_url].some((url) => normalizeMapsPlaceUrl(url || '') === normalizedUrl))
+      );
     }
-    return inserted.data as any;
+    const { data, error } = await this.supabase.rpc('is_scrape_place_duplicate', {
+      p_source_place_id: sourcePlaceId, p_source_url: normalizeMapsPlaceUrl(sourceUrl),
+    });
+    if (error) throw new Error('Falha ao verificar duplicidade no Supabase: ' + error.message);
+    return data === true;
   }
 
-  async registerScrapeCandidate(
-    job: ScrapeJob,
-    sourceKey: string,
-    sourcePlaceId: string | null,
-    sourceUrl: string,
-    lease: { token: string; generation: number }
-  ): Promise<{ candidateId: string; ordinal: number; status: string; inserted: boolean }> {
-    const candidateId = 'cand_' + crypto.randomUUID();
-    if (!this.supabase) {
-      const ordinal = Math.max(0, Number(job.total_found || 0));
-      job.total_found = ordinal + 1;
-      return { candidateId, ordinal, status: 'discovered', inserted: true };
-    }
-    const { data, error } = await this.supabase.rpc('register_scrape_candidate', {
-      p_candidate_id: candidateId,
-      p_job_id: job.id,
-      p_user_id: job.user_id,
-      p_session_id: job.search_session_id,
-      p_source_key: sourceKey,
-      p_source_place_id: sourcePlaceId,
-      p_source_url: normalizeMapsPlaceUrl(sourceUrl),
-      p_lease_token: lease.token,
-      p_lease_generation: lease.generation,
-    });
-    if (error || !data) throw new Error('Falha ao registrar ficha na fila durável: ' + (error?.message || 'resposta vazia'));
+  private applyScrapeCounters(job: ScrapeJob, data: any): void {
     job.total_found = Number(data.total_found ?? job.total_found);
-    job.total_duplicates = Number(data.total_duplicates ?? job.total_duplicates);
     job.total_collected = Number(data.total_collected ?? job.total_collected);
-    job.candidate_cursor = Number(data.candidate_cursor ?? job.candidate_cursor);
-    if (data.checkpoint && typeof data.checkpoint === 'object') job.discovery_checkpoint = data.checkpoint;
-    return {
-      candidateId: String(data.candidate_id),
-      ordinal: Number(data.ordinal || 0),
-      status: String(data.status || 'discovered'),
-      inserted: data.inserted === true,
-    };
+    job.total_duplicates = Number(data.total_duplicates ?? job.total_duplicates);
+    job.total_errors = Number(data.total_errors ?? job.total_errors);
+    job.heartbeat_at = new Date().toISOString();
   }
 
-  async completeScrapeCandidate(
-    job: ScrapeJob,
-    candidateId: string,
-    outcome: 'saved' | 'duplicate',
-    sourceKey: string,
-    sourceUrl: string,
-    place: PlaceRecord | undefined,
-    lease: { token: string; generation: number }
-  ): Promise<{ outcome: 'saved' | 'duplicate'; alreadyCompleted: boolean }> {
+  async persistScrapedPlace(
+    job: ScrapeJob, place: PlaceRecord | null, sourcePlaceId: string | null,
+    sourceUrl: string, lease: { token: string; generation: number }
+  ): Promise<'saved' | 'duplicate'> {
     if (!this.supabase) {
-      const actual = outcome;
-      if (actual === 'saved' && place) {
-        job.total_collected += 1;
-      } else {
-        job.total_duplicates += 1;
-      }
-      const previous = job.discovery_checkpoint || {};
-      job.discovery_checkpoint = {
-        ...previous,
-        version: 1,
-        last_processed_url: normalizeMapsPlaceUrl(sourceUrl),
-        last_processed_source_key: sourceKey,
-        last_processed_name: place?.name || previous.last_processed_name || '',
-        last_processed_outcome: actual,
-        last_processed_at: new Date().toISOString(),
-        last_checkpoint_at: new Date().toISOString(),
-        processed_count: Number(previous.processed_count || 0) + 1,
-      };
-      job.candidate_cursor = Number(job.candidate_cursor || 0) + 1;
+      job.total_found += 1;
+      if (!place) { job.total_duplicates += 1; this.save(this.state); return 'duplicate'; }
+      const normalizedUrl = normalizeMapsPlaceUrl(sourceUrl);
+      const duplicate = this.state.places.some((existing) =>
+        (sourcePlaceId && existing.source_place_id?.toLowerCase() === sourcePlaceId.toLowerCase()) ||
+        (normalizedUrl && [existing.source_url, existing.maps_url].some((url) => normalizeMapsPlaceUrl(url || '') === normalizedUrl)) ||
+        (place.name && place.address && existing.name.trim().toLowerCase() === place.name.trim().toLowerCase()
+          && existing.address.trim().toLowerCase() === place.address.trim().toLowerCase())
+      );
+      if (duplicate) { job.total_duplicates += 1; this.save(this.state); return 'duplicate'; }
+      this.state.places.push(place);
+      job.total_collected += 1;
       this.save(this.state);
-      return { outcome: actual, alreadyCompleted: false };
+      return 'saved';
     }
-
-    const { data, error } = await this.supabase.rpc('complete_scrape_candidate', {
-      p_candidate_id: candidateId,
-      p_job_id: job.id,
-      p_user_id: job.user_id,
-      p_session_id: job.search_session_id,
-      p_outcome: outcome,
-      p_place: place ? {
-        ...place,
-        source_url: normalizeMapsPlaceUrl(place.source_url || sourceUrl),
-      } as unknown as Record<string, unknown> : null,
-      p_source_key: sourceKey,
-      p_source_url: sourceUrl,
-      p_lease_token: lease.token,
-      p_lease_generation: lease.generation,
+    const { data, error } = await this.supabase.rpc('persist_scraped_place', {
+      p_job_id: job.id, p_user_id: job.user_id,
+      p_place: place as unknown as Record<string, unknown> | null,
+      p_source_place_id: sourcePlaceId, p_source_url: normalizeMapsPlaceUrl(sourceUrl),
+      p_lease_token: lease.token, p_lease_generation: lease.generation,
     });
-    if (error || !data) throw new Error('Falha ao concluir ficha de forma atômica: ' + (error?.message || 'resposta vazia'));
+    if (error || !data) throw new Error('Falha ao persistir estabelecimento atomicamente: ' + (error?.message || 'resposta vazia'));
+    this.applyScrapeCounters(job, data);
+    return data.outcome === 'saved' ? 'saved' : 'duplicate';
+  }
 
-    job.total_collected = Number(data.total_collected ?? job.total_collected);
-    job.total_duplicates = Number(data.total_duplicates ?? job.total_duplicates);
-    job.candidate_cursor = Number(data.candidate_cursor ?? job.candidate_cursor);
-    if (data.checkpoint && typeof data.checkpoint === 'object') {
-      job.discovery_checkpoint = data.checkpoint;
+  async recordScrapePlaceError(job: ScrapeJob, lease: { token: string; generation: number }): Promise<void> {
+    if (!this.supabase) {
+      job.total_found += 1; job.total_errors += 1; this.save(this.state); return;
     }
-    job.heartbeat_at = new Date().toISOString();
-    return {
-      outcome: data.outcome === 'saved' || data.outcome === 'processed' ? 'saved' : 'duplicate',
-      alreadyCompleted: data.already_completed === true,
-    };
+    const { data, error } = await this.supabase.rpc('record_scrape_place_error', {
+      p_job_id: job.id, p_user_id: job.user_id,
+      p_lease_token: lease.token, p_lease_generation: lease.generation,
+    });
+    if (error || !data) throw new Error('Falha ao registrar erro de extração no Supabase: ' + (error?.message || 'resposta vazia'));
+    this.applyScrapeCounters(job, data);
   }
 
   async isJobCancellationRequested(id: string, userId: string): Promise<boolean> {
@@ -909,12 +843,12 @@ class Store {
     let placeInserted = true;
     this.pendingWrite = this.pendingWrite.catch(() => undefined).then(async () => {
       const client = this.supabase!;
-      if (lease && job.search_session_id) {
-        const { data: renewed, error: leaseError } = await client.rpc('renew_scrape_search_session_lease', {
-          p_session_id: job.search_session_id, p_user_id: job.user_id, p_lease_token: lease.token,
+      if (lease) {
+        const { data: renewed, error: leaseError } = await client.rpc('renew_scrape_job_lease', {
+          p_job_id: job.id, p_user_id: job.user_id, p_lease_token: lease.token,
           p_generation: lease.generation, p_lease_seconds: 90,
         });
-        if (leaseError || renewed !== true) throw new Error('Lease perdida; gravação bloqueada.');
+        if (leaseError || renewed !== true) throw new Error('Lease do job perdida; gravação bloqueada.');
       }
       if (newPlace) {
         const p = newPlace;
@@ -1301,25 +1235,24 @@ function buildCsvString(places: PlaceRecord[], fields: (keyof PlaceRecord)[]): s
 }
 
 const activeScrapeJobs = new Map<string, { cancel: () => void }>();
-type ScrapeSessionLease = { token: string; generation: number };
-async function claimScrapeSessionLease(job: ScrapeJob): Promise<ScrapeSessionLease | null> {
-  if (!job.search_session_id) throw new Error('Sessão durável ausente; execução bloqueada.');
+type ScrapeJobLease = { token: string; generation: number };
+async function claimScrapeJobLease(job: ScrapeJob): Promise<ScrapeJobLease | null> {
+  if (!(store as any).supabase) return { token: 'local', generation: 1 };
   const token = crypto.randomUUID();
-  const { data, error } = await (store as any).supabase.rpc('claim_scrape_search_session', {
-    p_session_id: job.search_session_id, p_user_id: job.user_id, p_lease_token: token, p_lease_seconds: 90,
+  const { data, error } = await (store as any).supabase.rpc('claim_scrape_job_lease', {
+    p_job_id: job.id, p_user_id: job.user_id, p_lease_token: token, p_lease_seconds: 90,
   });
-  if (error) throw new Error('Falha ao reivindicar sessão: ' + error.message);
+  if (error) throw new Error('Falha ao reivindicar execução: ' + error.message);
   const row = Array.isArray(data) ? data[0] : data;
   return row?.acquired ? { token, generation: Number(row.generation) } : null;
 }
-async function releaseScrapeSessionLease(job: ScrapeJob, lease: ScrapeSessionLease): Promise<void> {
+async function releaseScrapeJobLease(job: ScrapeJob, lease: ScrapeJobLease): Promise<void> {
   const client = (store as any).supabase;
-  if (!client || ! job.search_session_id) return;
-  const { error } = await client.rpc('release_scrape_search_session_lease', {
-    p_session_id: job.search_session_id, p_user_id: job.user_id,
-    p_lease_token: lease.token, p_generation: lease.generation,
+  if (!client || lease.token === 'local') return;
+  const { error } = await client.rpc('release_scrape_job_lease', {
+    p_job_id: job.id, p_user_id: job.user_id, p_lease_token: lease.token, p_generation: lease.generation,
   });
-  if (error) console.error('[Scraper] Falha ao liberar lease:', error.message);
+  if (error) console.error('[Scraper] Falha ao liberar lease do job:', error.message);
 }
 
 async function executeScrapeJob(
@@ -1335,35 +1268,32 @@ async function executeScrapeJob(
   const state = store.getState();
   const job = state.jobs.find((item) => item.id === jobId && item.user_id === userId);
   if (!job) return;
-  let sessionLease: ScrapeSessionLease | null = null;
+  let jobLease: ScrapeJobLease | null = null;
   let leaseLost = false;
   let leaseRenewal: ReturnType<typeof setInterval> | null = null;
   try {
-    sessionLease = await claimScrapeSessionLease(job);
-    if (!sessionLease) {
-      job.status = 'partial';
-      job.status_message = 'Esta pesquisa já está em execução em outra instância.';
-      job.current_step = 'Sessão ocupada';
-      await store.persistScrapeProgress(job, undefined, sessionLease || undefined);
+    jobLease = await claimScrapeJobLease(job);
+    if (!jobLease) {
+      console.warn('[Scraper] Outra instância já está executando este job; esta invocação será descartada.');
       return;
     }
   } catch (error) {
     job.status = 'failed';
     job.status_message = error instanceof Error ? error.message : String(error);
     job.current_step = 'Falha ao adquirir lease';
-    await store.persistScrapeProgress(job, undefined, sessionLease || undefined).catch(() => {});
+    await store.persistScrapeProgress(job, undefined, jobLease || undefined).catch(() => {});
     return;
   }
   activeScrapeJobs.set(jobId, { cancel: () => { cancelled = true; } });
   leaseRenewal = setInterval(async () => {
-    if (!sessionLease || !job.search_session_id) return;
+    if (!jobLease || jobLease.token === 'local' || !(store as any).supabase) return;
     try {
-      const { data, error } = await (store as any).supabase.rpc('renew_scrape_search_session_lease', {
-        p_session_id: job.search_session_id, p_user_id: job.user_id,
-        p_lease_token: sessionLease.token, p_generation: sessionLease.generation, p_lease_seconds: 90,
+      const { data, error } = await (store as any).supabase.rpc('renew_scrape_job_lease', {
+        p_job_id: job.id, p_user_id: job.user_id,
+        p_lease_token: jobLease.token, p_generation: jobLease.generation, p_lease_seconds: 90,
       });
-      if (error || data !== true) { leaseLost = true; cancelled = true; pauseReason = 'Lease perdida; execução interrompida para proteger os dados.'; }
-    } catch { leaseLost = true; cancelled = true; pauseReason = 'Falha ao renovar lease; execução interrompida por segurança.'; }
+      if (error || data !== true) { leaseLost = true; cancelled = true; pauseReason = 'Lease do job perdida; execução encerrada para proteger os dados.'; }
+    } catch { leaseLost = true; cancelled = true; pauseReason = 'Falha ao renovar lease do job; execução encerrada por segurança.'; }
   }, 30000);
   leaseRenewal.unref?.();
 
@@ -1379,28 +1309,11 @@ async function executeScrapeJob(
     job.current_step = message;
     job.heartbeat_at = new Date().toISOString();
     store.persist();
-    await store.persistScrapeProgress(job, undefined, sessionLease || undefined);
-  };
-
-  const completeCandidate = async (
-    candidateId: string, sourceKey: string, url: string,
-    outcome: 'saved' | 'duplicate', place?: PlaceRecord
-  ): Promise<{ outcome: 'saved' | 'duplicate'; alreadyCompleted: boolean }> => {
-    if (!sessionLease) throw new Error('Lease ausente ao concluir ficha.');
-    const result = await store.completeScrapeCandidate(
-      job, candidateId, outcome, sourceKey, url, place, sessionLease
-    );
-    await audit('candidate_checkpoint_saved', 'debug', 'Resultado, contador e checkpoint confirmados em uma única transação.', {
-      url: normalizeMapsPlaceUrl(url), outcome: result.outcome, ordinal: job.candidate_cursor, name: place?.name || null,
-      already_completed: result.alreadyCompleted,
-    });
-    return result;
+    await store.persistScrapeProgress(job, undefined, jobLease || undefined);
   };
 
   try {
-    await audit('job_started', 'info', 'Coleta iniciada.', {
-      segment, location, session_id: job.search_session_id || null,
-    });
+    await audit('job_started', 'info', 'Coleta iniciada.', { segment, location });
     await updateProgress('Conectando ao navegador...');
     browser = await connectScraperBrowser(state.settings?.browserWsEndpoint);
     let page = await browser.newPage();
@@ -1412,7 +1325,9 @@ async function executeScrapeJob(
     await page.goto('https://www.google.com/maps/search/' + encodeURIComponent(searchQuery), {
       waitUntil: 'domcontentloaded', timeout: 30000,
     });
-    await page.waitForSelector('div[role="feed"], a[href*="/maps/place/"]', { timeout: 15000 }).catch(() => {});
+    await page.waitForSelector('div[role="feed"], a[href*="/maps/place/"]', { timeout: 15000 }).catch((error: any) => {
+      if (error?.name !== 'TimeoutError') throw error;
+    });
 
     let feedExhausted = false;
     let previousCount = 0;
@@ -1448,28 +1363,23 @@ async function executeScrapeJob(
         if (seenThisRun.has(item.key)) continue;
         seenThisRun.add(item.key);
 
-        const sourceKey = extractSourcePlaceId(item.url) || item.key;
-        let candidateId = '';
+        const sourcePlaceId = extractSourcePlaceId(item.url) || null;
         let detailPage: Page | null = null;
+        let stage: 'precheck' | 'extraction' | 'persistence' = 'precheck';
         try {
-          if (!sessionLease) throw new Error('Lease ausente ao registrar ficha.');
-          const candidate = await store.registerScrapeCandidate(
-            job, sourceKey, extractSourcePlaceId(item.url) || null, item.key, sessionLease
-          );
-          candidateId = candidate.candidateId;
-          if (candidate.status === 'processed' || candidate.status === 'duplicate') {
-            if (candidate.status === 'duplicate') {
-              await audit('duplicate_skipped', 'info', 'Duplicado identificado no feed e descartado sem abrir a ficha.', {
-                url: item.key, duplicate_count: job.total_duplicates,
-              });
-            }
+          if (!jobLease) throw new Error('Lease do job ausente ao processar ficha.');
+          const alreadyExists = await store.isScrapePlaceDuplicate(sourcePlaceId, item.key);
+          if (alreadyExists) {
+            const outcome = await store.persistScrapedPlace(job, null, sourcePlaceId, item.key, jobLease);
+            await audit('duplicate_skipped', 'info', 'Duplicado identificado no feed e descartado sem abrir a ficha.', {
+              url: item.key, duplicate_count: job.total_duplicates,
+            });
+            if (outcome !== 'duplicate') throw new Error('Resultado inconsistente ao registrar duplicado conhecido.');
             continue;
           }
-          await updateProgress(`Analisando ficha ${job.total_found}; ${job.total_collected}/${limit} novos contatos salvos...`);
-          await audit('candidate_discovered', 'debug', 'Ficha registrada na fila durável; iniciando deduplicação e extração.', {
-            url: item.key, candidate_id: candidateId, ordinal: candidate.ordinal,
-          });
 
+          await updateProgress(`Analisando ficha ${job.total_found + 1}; ${job.total_collected}/${limit} novos contatos salvos...`);
+          stage = 'extraction';
           await audit('extraction_started', 'debug', 'Abrindo ficha inédita para extração.', { url: item.key });
           detailPage = await browser!.newPage();
           await detailPage.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 25000 });
@@ -1480,37 +1390,36 @@ async function executeScrapeJob(
           if (!place.city && locationFallback.city) place.city = locationFallback.city;
           if (!place.state && locationFallback.state) place.state = locationFallback.state;
 
-          const result = await completeCandidate(candidateId, sourceKey, item.key, 'saved', place);
-          if (result.outcome === 'duplicate') {
-            await audit('duplicate_skipped', 'info', 'Duplicado detectado atomicamente na persistência; registro descartado.', {
+          stage = 'persistence';
+          const outcome = await store.persistScrapedPlace(job, place, sourcePlaceId, item.key, jobLease);
+          if (outcome === 'duplicate') {
+            await audit('duplicate_skipped', 'info', 'Duplicado detectado na verificação atômica final; registro descartado.', {
               url: item.key, name: place.name, duplicate_count: job.total_duplicates, race_condition: true,
             });
             continue;
           }
-          if (!result.alreadyCompleted) state.places.push(place);
-          await audit('place_saved', 'info', 'Novo contato gravado; contador e checkpoint confirmados atomicamente.', {
+          state.places.push(place);
+          await audit('place_saved', 'info', 'Novo contato gravado atomicamente.', {
             url: item.key, name: place.name, collected: job.total_collected, target: limit,
           });
           await updateProgress(`Salvo: ${place.name || 'Estabelecimento sem nome'} (${job.total_collected}/${limit})`);
         } catch (error: any) {
           const message = error instanceof Error ? error.message : String(error ?? 'Erro desconhecido');
           const browserUnavailable = /connection closed|target closed|detached frame|session closed|websocket|browser.*disconnect|protocol error|cannot find context|execution context.*destroyed/i.test(message);
-          job.total_errors += 1;
+          if (stage !== 'extraction') throw error;
+          await store.recordScrapePlaceError(job, jobLease!);
           await audit(browserUnavailable ? 'browser_disconnected' : 'place_extraction_failed', 'error', message, {
-            url: item.key,
-            retryable: false,
+            url: item.key, retryable: false,
             error_name: error instanceof Error ? error.name : typeof error,
             error_message: message.slice(0, 500),
-            error_stack: error instanceof Error ? error.stack?.split('\\n').slice(0, 6).join('\\n') : null,
+            error_stack: error instanceof Error ? error.stack?.split('\n').slice(0, 6).join('\n') : null,
           });
-          console.error(`[Scraper] Falha na ficha ${item.key}:`, message);
-
-          // Erro isolado descarta somente esta ficha. Navegador indisponível encerra o job.
+          console.error(`[Scraper] Falha na extração da ficha ${item.key}:`, message);
           if (browserUnavailable) {
             pauseReason = 'O navegador perdeu a conexão; a coleta foi encerrada sem retomada automática.';
             break;
           }
-          continue;
+          await updateProgress(`Falha isolada na ficha (${job.total_errors}); seguindo para a próxima...`);
         } finally {
           if (detailPage) await detailPage.close().catch(() => {});
         }
@@ -1528,7 +1437,7 @@ async function executeScrapeJob(
           linkCount: links.length,
           lastHref: links.at(-1)?.href || '',
         };
-      }, feedSelector).catch(() => ({ scrollHeight: 0, scrollTop: 0, linkCount: 0, lastHref: '' }));
+      }, feedSelector);
 
       // Google Maps uses infinite scrolling. Wait for actual feed growth or a
       // changed tail result; a fixed sleep alone can miss delayed pagination.
@@ -1540,7 +1449,9 @@ async function executeScrapeJob(
         const height = feed?.scrollHeight || document.documentElement.scrollHeight;
         const tail = links.at(-1)?.href || '';
         return endReached || height > previous.scrollHeight || links.length > previous.linkCount || (tail !== '' && tail !== previous.lastHref);
-      }, { timeout: 7000 }, feedSelector, beforeScroll).catch(() => {});
+      }, { timeout: 7000 }, feedSelector, beforeScroll).catch((error: any) => {
+        if (error?.name !== 'TimeoutError') throw error;
+      });
       await new Promise((resolve) => setTimeout(resolve, 500));
 
       const afterScroll = await page.evaluate((selector) => {
@@ -1552,7 +1463,7 @@ async function executeScrapeJob(
           linkCount: links.length,
           lastHref: links.at(-1)?.href || '',
         };
-      }, feedSelector).catch(() => ({ scrollHeight: 0, scrollTop: 0, linkCount: 0, lastHref: '' }));
+      }, feedSelector);
       const paginationAdvanced = afterScroll.scrollHeight > beforeScroll.scrollHeight
         || afterScroll.linkCount > beforeScroll.linkCount
         || (afterScroll.lastHref !== '' && afterScroll.lastHref !== beforeScroll.lastHref);
@@ -1571,7 +1482,7 @@ async function executeScrapeJob(
       const endReached = await page.evaluate(() => {
         const body = document.body.innerText || '';
         return body.includes('Você chegou ao final da lista') || body.includes("You've reached the end of the list");
-      }).catch(() => false);
+      });
       if (endReached) {
         feedExhausted = true;
         break;
@@ -1612,7 +1523,7 @@ async function executeScrapeJob(
     }
     job.completed_at = new Date().toISOString();
     store.persist();
-    await store.persistScrapeProgress(job, undefined, sessionLease || undefined);
+    await store.persistScrapeProgress(job, undefined, jobLease || undefined);
     await audit('job_finished', job.status === 'failed' ? 'error' : 'info', job.status_message, {
       status: job.status, collected: job.total_collected, duplicates: job.total_duplicates,
       errors: job.total_errors,
@@ -1621,7 +1532,7 @@ async function executeScrapeJob(
     });
   } catch (error: any) {
     const message = error instanceof Error ? error.message : String(error ?? 'Erro desconhecido');
-    const browserFailure = /connection closed|target closed|detached frame|session closed|websocket|browser.*disconnect|protocol error/i.test(message);
+    const browserFailure = /connection closed|target closed|detached frame|session closed|websocket|browser.*disconnect|protocol error|cannot find context|execution context.*destroyed/i.test(message);
     job.status = job.total_collected > 0 ? 'partial' : 'failed';
     job.status_message = browserFailure
       ? 'Conexão do navegador encerrada. A coleta foi finalizada sem retomada automática.'
@@ -1634,12 +1545,12 @@ async function executeScrapeJob(
     });
     console.error(`[Scraper] Falha geral no trabalho ${jobId}:`, message);
     store.persist();
-    await store.persistScrapeProgress(job, undefined, sessionLease || undefined).catch(() => {});
+    await store.persistScrapeProgress(job, undefined, jobLease || undefined).catch(() => {});
   } finally {
     if (leaseRenewal) clearInterval(leaseRenewal);
     await browser?.close().catch(() => {});
     activeScrapeJobs.delete(jobId);
-    if (sessionLease) await releaseScrapeSessionLease(job, sessionLease);
+    if (jobLease) await releaseScrapeJobLease(job, jobLease);
   }
 }
 
@@ -1866,36 +1777,16 @@ export async function createApp() {
         };
         state.categories.unshift(category);
       }
-      const searchSession = await store.createSearchSession({
-        userId, segment: String(segment).trim(), location: String(location).trim(),
-        projectId: project.id, categoryId: category.id,
-      });
-
-      // Cada início cria um job novo, com contador e checkpoint zerados.
       const newJob: ScrapeJob = {
-        id: jobId,
-        user_id: userId,
-        segment: String(segment).trim(),
-        project_name: project.name,
-        project_id: project.id,
-        category_id: category.id,
-        location: String(location).trim(),
-        limit_requested: numLimit,
+        id: jobId, user_id: userId,
+        segment: String(segment).trim(), project_name: project.name,
+        project_id: project.id, category_id: category.id,
+        location: String(location).trim(), limit_requested: numLimit,
         status: 'running',
         status_message: `Meta de ${numLimit} novos contatos. Iniciando coleta...`,
-        total_found: 0,
-        total_collected: 0,
-        total_duplicates: 0,
-        total_errors: 0,
+        total_found: 0, total_collected: 0, total_duplicates: 0, total_errors: 0,
         current_step: 'Iniciando navegador...',
-        search_session_id: searchSession.id,
-        phase: 'processing',
-        discovery_checkpoint: searchSession.discovery_checkpoint || {},
-        candidate_urls: [],
-        candidate_cursor: searchSession.next_ordinal || 0,
-        retry_count: 0,
-        heartbeat_at: new Date().toISOString(),
-        created_at: new Date().toISOString(),
+        heartbeat_at: new Date().toISOString(), created_at: new Date().toISOString(),
       };
       state.jobs.unshift(newJob);
       await store.persistScrapeProgress(newJob);
