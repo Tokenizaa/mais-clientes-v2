@@ -101,6 +101,8 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
                   ? 'bg-blue-600/20 border-blue-400/40 text-blue-400 shadow-blue-500/20'
                   : isCompleted
                   ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-400 shadow-emerald-500/20'
+                  : isFeedExhausted
+                  ? 'bg-amber-500/20 border-amber-400/40 text-amber-300 shadow-amber-500/20'
                   : isPartial || isFailed
                   ? 'bg-rose-500/20 border-rose-400/40 text-rose-300 shadow-rose-500/20'
                   : 'bg-amber-500/20 border-amber-400/40 text-amber-400 shadow-amber-500/20'
@@ -108,6 +110,8 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
             >
               {isRunning ? (
                 <Radio className="w-5 h-5 animate-pulse text-blue-400" />
+              ) : isFeedExhausted ? (
+                <Flag className="w-5 h-5 text-amber-300" />
               ) : isCompleted ? (
                 <CheckCircle2 className="w-5 h-5 text-emerald-400" />
               ) : (
@@ -241,7 +245,9 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
               {currentJob.current_step || 'Processando busca no Google Maps...'}
             </div>
             <p className="text-xs text-slate-400 line-clamp-2">
-              {currentJob.status_message || 'Varrendo coordenadas geográficas e filtrando cadastros existentes.'}
+              {isFeedExhausted
+                ? 'Fim natural dos resultados disponíveis nesta pesquisa do Google Maps.'
+                : currentJob.status_message || 'Varrendo coordenadas geográficas e filtrando cadastros existentes.'}
             </p>
           </div>
         </div>
