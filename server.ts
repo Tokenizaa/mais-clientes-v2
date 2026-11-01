@@ -1499,7 +1499,7 @@ async function executeScrapeJob(
         try {
           if (!sessionLease) throw new Error('Lease ausente ao registrar ficha.');
           const candidate = await store.registerScrapeCandidate(job, sourceKey, item.url, sessionLease);
-          candidateId = candidateId;
+          candidateId = candidate.candidateId;
           if (candidate.status === 'processed' || candidate.status === 'duplicate') {
             job.total_found = Math.max(job.total_found, candidate.ordinal + 1);
             continue;
