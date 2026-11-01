@@ -227,7 +227,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   const limitPresets = [10, 20, 50, 100];
 
   return (
-    <div className="max-w-5xl mx-auto py-2 sm:py-6 space-y-8">
+    <div className="max-w-7xl mx-auto py-2 sm:py-6 space-y-8">
       {/* Intro Header */}
       <div>
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/25 text-blue-300 text-xs font-semibold uppercase tracking-wider mb-3">
