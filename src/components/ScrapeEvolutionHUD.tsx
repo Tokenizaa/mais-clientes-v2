@@ -36,6 +36,9 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
   const isStopped = currentJob.status === 'stopped';
   const isFailed = currentJob.status === 'failed';
   const isPartial = currentJob.status === 'partial';
+  const completionReason = currentJob.completion_reason;
+  const isFeedExhausted = completionReason === 'feed_exhausted';
+  const isTargetReached = completionReason === 'target_reached';
 
   // Radius for SVG circular progress
   const radius = 64;
@@ -82,7 +85,7 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold uppercase tracking-wider text-blue-400 font-mono">
-                {isRunning ? 'Radar de Coleta em Tempo Real' : isCompleted ? 'Coleta Finalizada com Sucesso' : isPartial ? 'Coleta Concluída com Falhas' : isFailed ? 'Coleta Não Concluída' : 'Coleta Encerrada'}
+                {isRunning ? 'Radar de Coleta em Tempo Real' : isFeedExhausted ? 'Pesquisa encerrada — fim dos resultados disponíveis' : isTargetReached ? 'Meta de novos estabelecimentos atingida' : isStopped ? 'Coleta interrompida pelo usuário' : isFailed ? 'Coleta não concluída — falha técnica' : isPartial ? 'Coleta finalizada parcialmente' : 'Coleta encerrada'}
               </span>
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-900/60 border border-blue-700/50 text-blue-200 font-mono">
                 ID: {currentJob.id.slice(0, 12)}
@@ -118,6 +121,20 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
           </button>
         </div>
       </div>
+
+      {!isRunning && isFeedExhausted && (
+        <div className="relative rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 space-y-1">
+          <p className="text-sm font-semibold text-amber-200">O Google Maps chegou ao fim dos resultados desta pesquisa.</p>
+          <p className="text-xs text-slate-300">Isso não significa que todos os estabelecimentos da região foram encontrados. Significa que não há mais resultados disponíveis nesta consulta. A meta era {currentJob.limit_requested}; foram salvos {currentJob.total_collected} novos estabelecimentos.</p>
+          {currentJob.total_errors > 0 && <p className="text-xs text-slate-300">{currentJob.total_errors} ficha(s) apresentaram falha individual de extração. Essas falhas não interromperam a leitura do feed.</p>}
+        </div>
+      )}
+
+      {!isRunning && isTargetReached && (
+        <div className="relative rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
+          <p className="text-sm font-semibold text-emerald-200">Meta atingida: {currentJob.total_collected} novos estabelecimentos salvos.</p>
+        </div>
+      )}
 
       {/* Main Radar Gauge & Dynamic Telemetry Center */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
