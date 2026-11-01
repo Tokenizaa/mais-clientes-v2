@@ -741,7 +741,7 @@ export default function App() {
         </main>
 
         {/* Minimal Footer */}
-        <footer className="border-t border-slate-800/80 py-5 px-6 text-center text-xs text-zinc-400">
+        <footer className="border-t border-slate-800/80 py-5 px-6 text-center text-xs text-slate-400">
           <p>MapScrape &mdash; Extração direta e transparente de fichas públicas do Google Maps com Puppeteer e SQLite.</p>
         </footer>
       </div>
