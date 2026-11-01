@@ -369,7 +369,7 @@ export default function App() {
 
       const contentType = res.headers.get('content-type') || '';
       const responseText = await res.text();
-      let data: { data?: { jobId?: string }; jobId?: string; error?: string; message?: string } | null = null;
+      let data: { data?: { jobId?: string }; jobId?: string; error?: string; message?: string; resumed?: boolean } | null = null;
 
       if (contentType.includes('application/json')) {
         try {
@@ -409,7 +409,9 @@ export default function App() {
       subscribeToJobStream(jobId);
       void loadHistory();
       setAppNotification({
-        message: `Coleta iniciada para "${segment}" em "${location}"!`,
+        message: data?.resumed
+          ? (data.message || `Coleta retomada para "${segment}" em "${location}".`)
+          : `Coleta iniciada para "${segment}" em "${location}"!`,
         type: 'success',
       });
     } catch (err: any) {
