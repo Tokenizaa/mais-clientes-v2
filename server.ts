@@ -1381,10 +1381,13 @@ async function executeScrapeJob(
   const refreshExternalJobState = async (): Promise<string> => {
     const client = (store as any).supabase;
     const { data, error } = await client.from('scrape_jobs')
-      .select('status,total_found,total_collected,total_duplicates,total_errors')
+      .select('status,status_message,current_step,completed_at,total_found,total_collected,total_duplicates,total_errors')
       .eq('id', jobId).eq('user_id', userId).maybeSingle();
     if (error || !data) throw new Error('Falha ao sincronizar progresso do consumidor: ' + (error?.message || 'job não encontrado'));
     job.status = data.status;
+    job.status_message = data.status_message || job.status_message;
+    job.current_step = data.current_step || job.current_step;
+    job.completed_at = data.completed_at || job.completed_at;
     job.total_found = Number(data.total_found || 0);
     job.total_collected = Number(data.total_collected || 0);
     job.total_duplicates = Number(data.total_duplicates || 0);
@@ -1700,6 +1703,10 @@ async function executeScrapeJob(
       job.status = job.total_collected > 0 || job.total_duplicates > 0 ? 'partial' : 'failed';
       job.status_message = pauseReason;
       job.current_step = 'Pausada; próxima execução retoma da ficha pendente.';
+    } else if (externalCandidateWorkerEnabled && remoteStatus === 'partial' && feedExhausted) {
+      // The consumer may already have finalized a drained queue with exhausted candidates.
+      job.status = 'partial';
+      job.current_step = 'Concluído parcialmente';
     } else if (externalCandidateWorkerEnabled && (feedExhausted || job.total_collected >= limit)) {
       // The independent processor owns final completion after the queue drains.
       job.status = 'running';
