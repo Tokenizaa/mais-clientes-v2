@@ -1356,6 +1356,10 @@ async function executeScrapeJob(
           const message = error instanceof Error ? error.message : String(error ?? 'Erro desconhecido');
           const browserUnavailable = /connection closed|target closed|detached frame|session closed|websocket|browser.*disconnect|protocol error|cannot find context|execution context.*destroyed/i.test(message);
           if (stage !== 'extraction') throw error;
+          if (await store.isJobCancellationRequested(jobId, userId)) {
+            cancelled = true;
+            break;
+          }
           await store.recordScrapePlaceError(job, jobLease!);
           await audit(browserUnavailable ? 'browser_disconnected' : 'place_extraction_failed', 'error', message, {
             url: item.key, retryable: false,
