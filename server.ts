@@ -1695,19 +1695,6 @@ export async function createApp() {
           durableLeaseActive = Boolean(
             leaseRow?.worker_locked_until && Date.parse(leaseRow.worker_locked_until) > Date.now()
           );
-
-          // Old jobs may still be finishing under their historical session lease.
-          if (!durableLeaseActive && j.search_session_id) {
-            const { data: sessionRow, error: sessionError } = await (store as any).supabase
-              .from('scrape_search_sessions')
-              .select('lease_expires_at, worker_locked_until')
-              .eq('id', j.search_session_id)
-              .eq('user_id', userId)
-              .maybeSingle();
-            if (sessionError) throw new Error('Falha ao verificar sessão histórica: ' + sessionError.message);
-            const sessionExpiry = sessionRow?.lease_expires_at || sessionRow?.worker_locked_until;
-            durableLeaseActive = Boolean(sessionExpiry && Date.parse(sessionExpiry) > Date.now());
-          }
         }
 
         const heartbeatFresh = Date.now() - Date.parse(j.heartbeat_at || j.created_at) <= 120_000;
