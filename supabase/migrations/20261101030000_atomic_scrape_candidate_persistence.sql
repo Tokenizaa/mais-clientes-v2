@@ -281,9 +281,9 @@ begin
        where (nullif(trim(v_place_json->>'source_place_id'), '') is not null
               and lower(trim(p.source_place_id)) = lower(trim(v_place_json->>'source_place_id')))
           or (nullif(trim(v_place_json->>'source_url'), '') is not null
-              and (regexp_replace(lower(trim(p.source_url)), '/+
+              and (p.source_url = v_place_json->>'source_url' or p.maps_url = v_place_json->>'source_url'))
           or (nullif(trim(v_place_json->>'maps_url'), '') is not null
-              and (regexp_replace(lower(trim(p.source_url)), '/+
+              and (p.source_url = v_place_json->>'maps_url' or p.maps_url = v_place_json->>'maps_url'))
           or (nullif(trim(v_place_json->>'name'), '') is not null
               and nullif(trim(v_place_json->>'address'), '') is not null
               and lower(regexp_replace(trim(p.name) || '|' || trim(p.address), '\s+', ' ', 'g')) =
