@@ -33,16 +33,16 @@ Garantir que cada ficha descoberta tenha um registro durável e que o resultado 
 
 ## Gate obrigatório antes de produção
 
-**A migration ainda não foi aplicada ao Supabase remoto.** O código novo depende das duas RPCs; portanto, não fazer merge/deploy de produção antes de:
+**A migration de persistência atômica já foi aplicada ao Supabase remoto. A migration do consumidor independente ainda está pendente.** Não ativar o modo externo nem fazer deploy dessa etapa antes de:
 
-1. Confirmar que a migration aparece como pendente no projeto `xjfwpkkmhnbkgtkbaseh`.
-2. Aplicar a migration `20261101035329_atomic_scrape_candidate_persistence`.
-3. Confirmar que as funções existem com as assinaturas esperadas e que o acesso está restrito a `service_role`.
-4. Executar `supabase/tests/atomic_scrape_candidate_persistence.sql` no banco e confirmar que o bloco termina sem exceção e faz rollback dos fixtures.
-5. Fazer uma coleta controlada com meta pequena e verificar: ficha inédita salva uma vez; duplicado descartado; contador e checkpoint coerentes; retry não duplica.
+1. Aplicar `supabase/migrations/20261101040000_independent_scrape_candidate_worker.sql` no projeto `xjfwpkkmhnbkgtkbaseh`.
+2. Confirmar que as RPCs de claim, renovação e liberação existem e só podem ser executadas por `service_role`.
+3. Executar `supabase/tests/independent_scrape_candidate_worker.sql` e confirmar rollback dos fixtures.
+4. Implantar e validar o worker independente conforme `docs/INDEPENDENT_SCRAPE_WORKER.md`.
+5. Fazer uma coleta controlada com meta pequena antes de ativar o modo externo na Vercel.
 
 Não alterar nem limpar os candidatos históricos sem sessão (83 registros observados na auditoria). A migration e o teste não os modificam.
 
 ## Limites desta entrega
 
-O consumidor ainda executa a descoberta e o processamento dentro do mesmo worker/browser. A tabela de candidatos agora é usada como diário durável e fonte de idempotência, mas ainda não existe um consumidor independente que reivindique candidatos pendentes com `SKIP LOCKED`. Esse desacoplamento fica para a próxima etapa, após validar esta persistência transacional.
+O consumidor independente está implementado em código, mas sua migration ainda não foi aplicada ao Supabase remoto e o worker ainda não foi implantado. O modo externo é opt-in; o fluxo inline continua sendo o padrão até a validação e o rollout documentados em `docs/INDEPENDENT_SCRAPE_WORKER.md`.
