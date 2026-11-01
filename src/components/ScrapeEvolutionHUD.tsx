@@ -53,13 +53,13 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
   const latestPlaces = jobPlaces.slice(0, 4);
 
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-b from-[#0e172e] via-[#0b1328] to-[#070d1e] border border-blue-500/25 shadow-2xl shadow-blue-950/60 p-5 sm:p-7 space-y-6">
+    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-b from-[#091a35] via-[#07152b] to-[#050e20] border border-blue-500/25 shadow-2xl shadow-blue-950/60 p-5 sm:p-7 space-y-6">
       {/* Background ambient glow effects */}
       <div className="absolute top-0 right-1/4 -mt-16 w-80 h-80 rounded-full bg-blue-600/10 blur-3xl pointer-events-none" />
       <div className="absolute bottom-0 left-10 -mb-16 w-64 h-64 rounded-full bg-cyan-500/10 blur-3xl pointer-events-none" />
 
       {/* Top Banner & Status Bar */}
-      <div className="relative flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-blue-900/40">
+      <div className="relative flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-blue-800/55">
         <div className="flex items-center gap-3">
           <div className="relative">
             <div
@@ -132,7 +132,7 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
       {/* Main Radar Gauge & Dynamic Telemetry Center */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
         {/* Left: Circular Radar HUD */}
-        <div className="lg:col-span-5 flex flex-col sm:flex-row items-center justify-center gap-5 p-4 rounded-xl bg-[#0b1429]/80 border border-blue-900/30">
+        <div className="lg:col-span-5 flex flex-col sm:flex-row items-center justify-center gap-5 p-4 rounded-xl bg-[#081a33]/80 border border-blue-800/45">
           <div className="relative flex items-center justify-center w-36 h-36">
             {/* Rotating radar sweep animation */}
             {isRunning && (
@@ -162,7 +162,7 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
                 cx="72"
                 cy="72"
                 r={radius}
-                className="stroke-blue-500 transition-all duration-700 ease-out"
+                className="stroke-sky-400 transition-all duration-700 ease-out"
                 strokeWidth="10"
                 strokeDasharray={circumference}
                 strokeDashoffset={strokeDashoffset}
@@ -202,7 +202,7 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
         {/* Right: 4 High-Tech Telemetry Cards */}
         <div className="lg:col-span-7 grid grid-cols-2 sm:grid-cols-4 gap-3">
           {/* Card 1: Coletados */}
-          <div className="p-3.5 rounded-xl bg-[#0b1429]/90 border border-blue-900/40 relative overflow-hidden group">
+          <div className="p-3.5 rounded-xl bg-[#081a33]/90 border border-blue-800/55 relative overflow-hidden group">
             <div className="flex items-center justify-between text-slate-400 mb-1.5">
               <span className="text-[11px] font-medium uppercase tracking-wider">Inéditos</span>
               <Sparkles className="w-4 h-4 text-blue-400" />
@@ -213,14 +213,14 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
             </div>
             <div className="mt-2 w-full bg-slate-800 rounded-full h-1 overflow-hidden">
               <div
-                className="bg-blue-500 h-full transition-all duration-500"
+                className="bg-gradient-to-r from-sky-500 to-cyan-400 h-full transition-all duration-500"
                 style={{ width: `${percent}%` }}
               />
             </div>
           </div>
 
           {/* Card 2: Duplicados Filtrados */}
-          <div className="p-3.5 rounded-xl bg-[#0b1429]/90 border border-blue-900/40 relative overflow-hidden group">
+          <div className="p-3.5 rounded-xl bg-[#081a33]/90 border border-blue-800/55 relative overflow-hidden group">
             <div className="flex items-center justify-between text-slate-400 mb-1.5">
               <span className="text-[11px] font-medium uppercase tracking-wider">Duplicados</span>
               <ShieldCheck className="w-4 h-4 text-cyan-400" />
@@ -234,12 +234,12 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
           </div>
 
           {/* Card 3: Varredura de Links */}
-          <div className="p-3.5 rounded-xl bg-[#0b1429]/90 border border-blue-900/40 relative overflow-hidden group">
+          <div className="p-3.5 rounded-xl bg-[#081a33]/90 border border-blue-800/55 relative overflow-hidden group">
             <div className="flex items-center justify-between text-slate-400 mb-1.5">
               <span className="text-[11px] font-medium uppercase tracking-wider">Detectados</span>
-              <Building2 className="w-4 h-4 text-indigo-400" />
+              <Building2 className="w-4 h-4 text-violet-400" />
             </div>
-            <div className="text-2xl font-bold text-indigo-200 font-mono">
+            <div className="text-2xl font-bold text-violet-200 font-mono">
               {currentJob.total_found}
             </div>
             <div className="text-[10px] text-slate-400 mt-2 truncate">
@@ -248,7 +248,7 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
           </div>
 
           {/* Card 4: Erros / Estabilidade */}
-          <div className="p-3.5 rounded-xl bg-[#0b1429]/90 border border-blue-900/40 relative overflow-hidden group">
+          <div className="p-3.5 rounded-xl bg-[#081a33]/90 border border-blue-800/55 relative overflow-hidden group">
             <div className="flex items-center justify-between text-slate-400 mb-1.5">
               <span className="text-[11px] font-medium uppercase tracking-wider">Falhas</span>
               <Activity className="w-4 h-4 text-amber-400" />
@@ -278,29 +278,29 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
             </span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {latestPlaces.map((place) => (
               <div
                 key={place.id}
-                className="p-3.5 rounded-xl bg-[#0b1429]/70 hover:bg-[#0f1b38] border border-blue-900/30 hover:border-blue-500/40 transition-all text-left space-y-2 group shadow-sm"
+                className="p-3.5 rounded-xl bg-[#081a33]/70 hover:bg-[#102b50] border border-blue-800/45 hover:border-blue-500/40 transition-all text-left space-y-2 group shadow-sm"
               >
                 <div className="flex items-start justify-between gap-2">
-                  <h4 className="text-xs font-bold text-slate-100 group-hover:text-blue-300 transition-colors line-clamp-1">
+                  <h4 className="text-base font-bold text-slate-100 group-hover:text-sky-300 transition-colors line-clamp-2 leading-snug">
                     {place.name || 'Estabelecimento'}
                   </h4>
                   {place.rating && (
-                    <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-300 px-1.5 py-0.5 rounded bg-amber-950/40 border border-amber-800/40 shrink-0">
+                    <span className="inline-flex items-center gap-0.5 text-xs font-semibold text-amber-300 px-1.5 py-0.5 rounded bg-amber-950/40 border border-amber-800/40 shrink-0">
                       <Star className="w-2.5 h-2.5 fill-current" />
                       {place.rating}
                     </span>
                   )}
                 </div>
 
-                <div className="text-[11px] text-blue-300/80 truncate">
+                <div className="text-xs text-sky-300/90 truncate">
                   {place.category || currentJob.segment}
                 </div>
 
-                <div className="space-y-1 text-[10px] text-slate-400 border-t border-blue-900/30 pt-1.5">
+                <div className="space-y-1 text-[10px] text-slate-400 border-t border-blue-800/45 pt-1.5">
                   {place.phone ? (
                     <div className="flex items-center gap-1.5 text-slate-300">
                       <Phone className="w-3 h-3 text-cyan-400 shrink-0" />
