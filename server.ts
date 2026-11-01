@@ -1934,6 +1934,10 @@ export async function createApp() {
   });
 
   app.post('/api/v1/jobs/:id/step', async (req: Request, res: Response) => {
+    const user = resolveUserFromRequest(req);
+    if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+    const job = store.getState().jobs.find((item) => item.id === req.params.id && item.user_id === user.id);
+    if (!job) return res.status(404).json({ error: 'Coleta não encontrada.' });
     return res.status(200).json({
       success: true,
       message: 'Coleta direta em execução contínua.',
