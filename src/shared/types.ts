@@ -68,7 +68,7 @@ export interface PlaceRecord {
 
 export type JobStatus = 'running' | 'completed' | 'partial' | 'stopped' | 'failed';
 
-export type ScrapeCompletionReason = 'target_reached' | 'feed_exhausted' | 'user_stopped' | 'fatal_error' | 'feed_stagnation';
+export type ScrapeCompletionReason = 'target_reached' | 'feed_exhausted' | 'access_restricted' | 'user_stopped' | 'fatal_error' | 'feed_stagnation';
 
 export interface ScrapeJob {
   id: string;
