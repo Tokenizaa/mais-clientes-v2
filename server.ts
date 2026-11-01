@@ -824,7 +824,7 @@ class Store {
     }
   }
 
-  async persistScrapeProgress(job: ScrapeJob, newPlace?: PlaceRecord, lease?: { token: string; generation: number }): Promise<boolean> {
+  async persistScrapeProgress(job: ScrapeJob, lease?: { token: string; generation: number }): Promise<boolean> {
     job.heartbeat_at = new Date().toISOString();
     if (!this.supabase) {
       this.save(this.state);
@@ -838,9 +838,8 @@ class Store {
       ...this.state,
       places: [],
     })) as StoreState;
-    // Candidate URLs live in scrape_candidates, not in the app_state snapshot.
+    // Legacy candidate URL arrays are excluded from the app_state snapshot.
     for (const snapshotJob of snapshot.jobs) delete snapshotJob.candidate_urls;
-    let placeInserted = true;
     this.pendingWrite = this.pendingWrite.catch(() => undefined).then(async () => {
       const client = this.supabase!;
       if (lease) {
@@ -850,42 +849,6 @@ class Store {
         });
         if (leaseError || renewed !== true) throw new Error('Lease do job perdida; gravação bloqueada.');
       }
-      if (newPlace) {
-        const p = newPlace;
-        const sourceUrl = String(p.source_url || p.maps_url || '').trim();
-        const row = {
-          id: p.id, job_id: p.job_id, name: p.name || '', category: p.category || '',
-          address: p.address || '', neighborhood: p.neighborhood || null, phone: p.phone || '', website: p.website || '',
-          rating: p.rating || '', review_count: p.review_count || '', price_range: p.price_range || '',
-          opening_hours: p.opening_hours || '', business_status: p.business_status || '',
-          latitude: p.latitude || '', longitude: p.longitude || '', maps_url: p.maps_url || '',
-          description: p.description || '', services_attributes: p.services_attributes || '',
-          photos: p.photos ?? null, videos: p.videos ?? null, logo_url: p.logo_url ?? null,
-          booking_url: p.booking_url ?? null, social_links: p.social_links ?? null, reviews: p.reviews ?? null,
-          review_topics: p.review_topics ?? null, additional_attributes: p.additional_attributes ?? null,
-          media_items: p.media_items ?? null, plus_code: p.plus_code ?? null, postal_code: p.postal_code ?? null,
-          country: p.country ?? null, city: p.city ?? null, state: p.state ?? null,
-          source_place_id: p.source_place_id ?? null, source_url: sourceUrl || null,
-          attributes: p.attributes ?? null, accessibility_attributes: p.accessibility_attributes ?? null,
-          next_opening_text: p.next_opening_text ?? null, next_open_day: p.next_open_day ?? null,
-          next_open_time: p.next_open_time ?? null, visible_photos_count: p.visible_photos_count ?? null,
-          popular_times: p.popular_times ?? null, rating_distribution: p.rating_distribution ?? null,
-          review_highlights: p.review_highlights ?? null, field_status: p.field_status ?? null,
-          collected_at: p.collected_at || new Date().toISOString(),
-        };
-        // INSERT is atomic against the partial unique source_url index. A prior
-        // SELECT followed by UPSERT still races when two serverless instances scrape
-        // the same Maps listing at the same time.
-        const { error: placeError } = await client.from('places').insert(row);
-        if (placeError) {
-          if (placeError.code === '23505' && /places_source_url_unique_idx|source_url/i.test(placeError.message)) {
-            placeInserted = false;
-            return;
-          }
-          throw new Error(`Falha ao salvar estabelecimento ${p.name}: ${placeError.message}`);
-        }
-      }
-
       const { error: stateError } = await client
         .from('app_state')
         .upsert({ id: 'main', state: snapshot, updated_at: new Date().toISOString() });
@@ -921,15 +884,13 @@ class Store {
       }
 
       let jobRow = {
-        id: job.id, user_id: job.user_id, search_session_id: job.search_session_id ?? null, segment: job.segment,
+        id: job.id, user_id: job.user_id, segment: job.segment,
         project_name: job.project_name ?? null, project_id: job.project_id ?? null,
         category_id: job.category_id ?? null, location: job.location,
         limit_requested: job.limit_requested, status: job.status,
         status_message: job.status_message, total_found: job.total_found,
         total_collected: job.total_collected, total_duplicates: job.total_duplicates,
         total_errors: job.total_errors, current_step: job.current_step ?? null,
-        phase: job.phase ?? null, discovery_checkpoint: job.discovery_checkpoint ?? {},
-        candidate_cursor: job.candidate_cursor ?? 0, retry_count: job.retry_count ?? 0,
         heartbeat_at: job.heartbeat_at ?? null,
         created_at: job.created_at, completed_at: job.completed_at ?? null,
       };
@@ -942,27 +903,10 @@ class Store {
       }
       if (jobError) throw new Error(`Falha ao sincronizar progresso da coleta: ${jobError.message}`);
 
-      // A sessão só pode ser atualizada pelo processo que possui a lease.
-      // Nunca envie null/"null" como filtro UUID: sem lease, não toque no checkpoint.
-      if (job.search_session_id && lease) {
-        const { error: sessionError } = await client.from('scrape_search_sessions').update({
-          next_ordinal: Math.max(0, job.candidate_cursor || 0),
-          total_found: Math.max(0, job.total_found || 0),
-          discovery_checkpoint: job.discovery_checkpoint || {},
-          exhausted: job.discovery_checkpoint?.exhausted === true,
-          updated_at: new Date().toISOString(),
-        }).eq('id', job.search_session_id).eq('user_id', job.user_id)
-          .eq('lease_token', lease.token).eq('lease_generation', lease.generation);
-        if (sessionError) throw new Error(`Falha ao sincronizar checkpoint da sessão de pesquisa: ${sessionError.message}`);
-        const { data: owned, error: verifyError } = await client.from('scrape_search_sessions').select('id')
-          .eq('id', job.search_session_id).eq('user_id', job.user_id)
-          .eq('lease_token', lease.token).eq('lease_generation', lease.generation).maybeSingle();
-        if (verifyError || !owned) throw new Error('Lease perdida; checkpoint rejeitado.');
-      }
     });
 
     await this.pendingWrite;
-    return placeInserted;
+    return true;
   }
 
   persist(): void {
@@ -972,7 +916,7 @@ class Store {
     }
 
     const snapshot = JSON.parse(JSON.stringify(this.state)) as StoreState;
-    // Candidate URLs are normalized in the relational queue before inline extraction.
+    // Historical candidate URL arrays are not used by new scrape jobs.
     for (const snapshotJob of snapshot.jobs) delete snapshotJob.candidate_urls;
     this.pendingWrite = this.pendingWrite.catch(() => undefined).then(async () => {
       const client = this.supabase!;
@@ -1019,7 +963,6 @@ class Store {
         const jobRows = snapshot.jobs.map((item) => ({
           id: item.id,
           user_id: item.user_id,
-          search_session_id: item.search_session_id ?? null,
           segment: item.segment,
           project_name: item.project_name ?? null,
           project_id: (item.project_id && validProjectIds.has(item.project_id)) ? item.project_id : null,
@@ -1033,10 +976,6 @@ class Store {
           total_duplicates: item.total_duplicates,
           total_errors: item.total_errors,
           current_step: item.current_step ?? null,
-          phase: item.phase ?? null,
-          discovery_checkpoint: item.discovery_checkpoint ?? {},
-          candidate_cursor: item.candidate_cursor ?? 0,
-          retry_count: item.retry_count ?? 0,
           heartbeat_at: item.heartbeat_at ?? null,
           created_at: item.created_at,
           completed_at: item.completed_at ?? null,
@@ -1281,7 +1220,7 @@ async function executeScrapeJob(
     job.status = 'failed';
     job.status_message = error instanceof Error ? error.message : String(error);
     job.current_step = 'Falha ao adquirir lease';
-    await store.persistScrapeProgress(job, undefined, jobLease || undefined).catch(() => {});
+    await store.persistScrapeProgress(job, jobLease || undefined).catch(() => {});
     return;
   }
   activeScrapeJobs.set(jobId, { cancel: () => { cancelled = true; } });
@@ -1309,7 +1248,7 @@ async function executeScrapeJob(
     job.current_step = message;
     job.heartbeat_at = new Date().toISOString();
     store.persist();
-    await store.persistScrapeProgress(job, undefined, jobLease || undefined);
+    await store.persistScrapeProgress(job, jobLease || undefined);
   };
 
   try {
@@ -1523,7 +1462,7 @@ async function executeScrapeJob(
     }
     job.completed_at = new Date().toISOString();
     store.persist();
-    await store.persistScrapeProgress(job, undefined, jobLease || undefined);
+    await store.persistScrapeProgress(job, jobLease || undefined);
     await audit('job_finished', job.status === 'failed' ? 'error' : 'info', job.status_message, {
       status: job.status, collected: job.total_collected, duplicates: job.total_duplicates,
       errors: job.total_errors,
@@ -1545,7 +1484,7 @@ async function executeScrapeJob(
     });
     console.error(`[Scraper] Falha geral no trabalho ${jobId}:`, message);
     store.persist();
-    await store.persistScrapeProgress(job, undefined, jobLease || undefined).catch(() => {});
+    await store.persistScrapeProgress(job, jobLease || undefined).catch(() => {});
   } finally {
     if (leaseRenewal) clearInterval(leaseRenewal);
     await browser?.close().catch(() => {});
@@ -1806,17 +1745,6 @@ export async function createApp() {
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
-  });
-
-  app.post('/api/v1/jobs/:id/step', async (req: Request, res: Response) => {
-    const user = resolveUserFromRequest(req);
-    if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
-    const job = store.getState().jobs.find((item) => item.id === req.params.id && item.user_id === user.id);
-    if (!job) return res.status(404).json({ error: 'Coleta não encontrada.' });
-    return res.status(200).json({
-      success: true,
-      message: 'Coleta direta em execução contínua.',
-    });
   });
 
   app.get('/api/v1/jobs/:id', async (req: Request, res: Response) => {
