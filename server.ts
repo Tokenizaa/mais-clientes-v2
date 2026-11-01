@@ -1508,9 +1508,10 @@ async function executeScrapeJob(
                   await saveCheckpoint(item.url, 'duplicate', retriedPlace.name);
                 }
               }
-              recovered = true;
-              await audit('browser_recovery_succeeded', 'info', 'Ficha pendente processada após reconexão; reconstruindo o feed para continuar pela ficha seguinte.', {
+              await audit('candidate_recovery_processed', 'info', 'Ficha pendente reprocessada; preparando retomada do feed.', {
                 url: item.key, collected: job.total_collected, duplicates: job.total_duplicates,
+                original_error_name: error instanceof Error ? error.name : typeof error,
+                original_error_message: message.slice(0, 500),
               });
 
               // O browser e a página de pesquisa originais foram encerrados.
@@ -1526,11 +1527,25 @@ async function executeScrapeJob(
               seenThisRun.clear();
               previousCount = 0;
               stagnantRounds = 0;
+              recovered = true;
+              await audit('browser_recovery_succeeded', 'info', 'Ficha processada e feed reconstruído; a coleta continuará pela ficha seguinte.', {
+                url: item.key, collected: job.total_collected, duplicates: job.total_duplicates,
+                original_error_name: error instanceof Error ? error.name : typeof error,
+                original_error_message: message.slice(0, 500),
+                browser_connected: browser.isConnected(),
+                page_closed: page.isClosed(),
+              });
               await updateProgress(`Chromium reconectado; retomando após ${retriedPlace.name || 'a ficha processada'}...`);
             } catch (retryError) {
               const retryMessage = retryError instanceof Error ? retryError.message : String(retryError ?? 'Erro desconhecido');
               await audit('browser_recovery_failed', 'error', retryMessage, {
                 url: item.key, retry: 1, checkpoint_preserved: true,
+                original_error_name: error instanceof Error ? error.name : typeof error,
+                original_error_message: message.slice(0, 500),
+                recovery_error_name: retryError instanceof Error ? retryError.name : typeof retryError,
+                recovery_error_message: retryMessage.slice(0, 500),
+                browser_connected: browser?.isConnected() ?? false,
+                page_closed: page.isClosed(),
               });
             }
           }
@@ -1542,6 +1557,12 @@ async function executeScrapeJob(
               : 'Falha na ficha; checkpoint preservado para nova tentativa.';
             await audit(transientBrowserFailure ? 'browser_disconnected' : 'place_extraction_failed', 'error', message, {
               url: item.key, retryable: true, checkpoint_preserved: true, ordinal: Number(job.candidate_cursor || 0) + 1,
+              error_name: error instanceof Error ? error.name : typeof error,
+              error_message: message.slice(0, 500),
+              error_stack: error instanceof Error ? error.stack?.split('\n').slice(0, 6).join('\n') : null,
+              browser_connected: browser?.isConnected() ?? false,
+              detail_page_closed: detailPage?.isClosed() ?? null,
+              search_page_closed: page.isClosed(),
             });
             console.error(`[Scraper] Falha na ficha ${item.key}:`, message);
           }
@@ -1601,6 +1622,8 @@ async function executeScrapeJob(
     await audit('job_finished', job.status === 'failed' ? 'error' : 'info', job.status_message, {
       status: job.status, collected: job.total_collected, duplicates: job.total_duplicates,
       errors: job.total_errors, checkpoint: job.discovery_checkpoint?.last_processed_url || null,
+      stop_reason: cancelled ? 'user_cancelled' : pauseReason ? 'pause_reason' : job.total_collected >= limit ? 'target_reached' : 'feed_exhausted',
+      pause_reason: pauseReason || null, anchor_found: anchorFound, stagnant_rounds: stagnantRounds,
     });
   } catch (error: any) {
     const message = error instanceof Error ? error.message : String(error ?? 'Erro desconhecido');
