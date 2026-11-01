@@ -2,73 +2,71 @@
 
 ## Objetivo
 
-Pesquisar estabelecimentos no Google Maps, abrir cada ficha, extrair os campos definidos no contrato Firecrawl, evitar duplicidades e salvar cada contato no banco de dados.
+Pesquisar estabelecimentos no Google Maps, abrir somente fichas inéditas, extrair os campos do contrato Firecrawl e salvar cada novo estabelecimento no Supabase. A quantidade configurada representa a meta de novos registros efetivamente salvos.
 
-A coleta não usa uma etapa global de descoberta seguida de uma fila de processamento. O fluxo é sequencial e cada ficha concluída atualiza imediatamente o checkpoint.
+## Fluxo único por execução
 
-## Fluxo único
+1. POST /api/v1/jobs cria um job novo, com contadores zerados. Não reutiliza pesquisa, sessão, URL ou posição de execução anterior.
+2. O backend reivindica uma lease exclusiva do próprio job em scrape_jobs e abre uma sessão Chromium nova.
+3. O worker abre a pesquisa no Google Maps e percorre o feed normalmente.
+4. Para cada URL ainda não vista nesta execução, consulta is_scrape_place_duplicate usando Place ID e URL normalizada. Se já existir, registra o resultado como duplicado e segue sem abrir a ficha.
+5. Se for inédita, abre a ficha e executa extractPlaceDetails().
+6. persist_scraped_place repete a deduplicação no banco e insere o estabelecimento e atualiza os contadores na mesma transação. Essa segunda verificação protege contra duas execuções que encontrem a mesma ficha ao mesmo tempo.
+7. O worker segue até atingir a meta de novos registros ou confirmar o fim do feed.
 
-1. `POST /api/v1/jobs` cria uma execução e recupera o checkpoint da sessão para a combinação de usuário, segmento, localização, projeto e categoria.
-2. O worker abre a mesma pesquisa no Google Maps.
-3. Se já existe `last_processed_url`, reconstrói o feed virtualizado até localizar essa ficha e seleciona o resultado seguinte. Nunca usa pixels como identidade de retomada.
-4. Abre a ficha seguinte e executa `extractPlaceDetails()`.
-5. Consulta o banco para identificar a ficha por ID/URL da fonte e, quando necessário, nome + endereço.
-6. Se já existe, marca como duplicada e avança o checkpoint. Se for nova, salva todos os campos do contrato e avança o checkpoint.
-7. O checkpoint é persistido com a URL/ID da última ficha efetivamente processada, o resultado (salva ou duplicada), a data e a contagem.
-8. O próximo passo abre novamente a pesquisa e continua depois dessa ficha.
+Uma nova solicitação sempre começa do início do feed. Os registros já salvos são descartados pela deduplicação; não existe retomada automática.
 
-## Retomada e meta original
+## Tratamento de falhas
 
-Ao iniciar novamente a mesma pesquisa não esgotada, o backend reutiliza o mesmo job interrompido/parcial/falho e a mesma sessão. Não cria um job com contadores zerados.
+- **Falha isolada de extração:** record_scrape_place_error registra a falha e os contadores atomicamente. O worker descarta aquela ficha e segue para a próxima.
+- **Falha ao consultar duplicidade, registrar erro ou persistir:** encerra o job. Não continua coletando sem garantia de gravação.
+- **Falha de lease:** encerra a execução para impedir gravações por um worker que perdeu a propriedade do job.
+- **Desconexão do Chromium, frame ou página:** encerra a coleta. Não reconstrói navegador, feed ou posição.
+- **Timeout esperando novos resultados:** é tratado como ausência momentânea de avanço, não como desconexão. O worker tenta avançar novamente; depois de oito ciclos sem novos resultados, finaliza como parcial se não houver confirmação explícita de fim.
 
-- A meta é a quantidade original salva em `limit_requested`; mudar o seletor ao tentar retomar não reinicia nem amplia a meta daquele job.
-- `total_collected` permanece acumulado e representa somente inserts inéditos confirmados.
-- O saldo é `max(0, limit_requested - total_collected)`. Exemplo: uma meta de 20 com 15 inserts confirmados retoma para salvar no máximo mais 5.
-- Duplicados e resultados revisitados durante a reconstrução do feed não consomem a meta.
-- A retomada limpa a solicitação de cancelamento anterior, mantém o mesmo ID de job e continua pelo checkpoint persistido.
-- Ao alcançar a meta original, o loop encerra sem abrir a ficha seguinte.
+Erros reais de comunicação com a página não são convertidos em listas vazias ou em falsos sinais de fim do feed.
 
-## Regra do checkpoint
+## Lease e concorrência
 
-O checkpoint oficial é `discovery_checkpoint.last_processed_url`, acompanhado de `last_processed_source_key` e `last_processed_at`.
+- A lease é vinculada diretamente ao job, usando worker_locked_until, worker_lease_token e worker_lease_generation.
+- Apenas uma instância pode reivindicar um job em execução.
+- Renovação e gravações validam token e geração; uma instância antiga não pode gravar depois que perde a lease.
+- A deduplicação final usa locks transacionais por Place ID, URL e nome/endereço, além das restrições únicas existentes.
 
-- `last_seen_url` e `scroll_top` são dados históricos/diagnósticos; não determinam a retomada.
-- Uma ficha só vira checkpoint depois de ser salva ou reconhecida como duplicada.
-- Se a extração ou persistência falhar, o checkpoint continua apontando para a ficha anterior. A próxima tentativa abre novamente a ficha pendente.
-- Se o feed não reencontrar a âncora, a execução pausa e preserva o checkpoint. Não reinicia silenciosamente do primeiro resultado.
-- Sessões antigas são migradas usando a última linha de `scrape_candidates` com status `processed` ou `duplicate`. A fila antiga não recebe novos itens.
+## Compatibilidade com dados históricos
 
-## Execução e monitoramento
+As tabelas scrape_candidates e scrape_search_sessions, os campos antigos de checkpoint e os registros existentes foram mantidos para não apagar histórico. O fluxo novo não cria sessões, não registra candidatos e não atualiza checkpoints. A remoção física dessas estruturas fica para uma migração posterior, depois de confirmar que nenhum job histórico ou consumidor antigo depende delas.
 
-- `GET /api/v1/jobs/:id` é somente leitura: consulta progresso e não abre navegador.
-- `POST /api/v1/jobs/:id/step` agenda uma etapa limitada do worker.
-- A interface consulta o progresso e solicita explicitamente a próxima etapa quando o job continua `running`.
-- `worker_locked_until` impede que duas instâncias processem simultaneamente a mesma sessão.
-- Cada etapa processa até cinco fichas ou até atingir o orçamento de execução. O checkpoint é gravado ficha a ficha, não apenas no final do lote.
-- Três falhas consecutivas na ficha pendente pausam o job, mantendo a âncora anterior.
+## Monitoramento
+
+- GET /api/v1/jobs/:id apenas consulta o estado persistido.
+- A interface continua fazendo polling do progresso.
+- Não existe etapa manual /step; o backend executa a coleta continuamente até o estado terminal.
+- total_collected conta somente inserts inéditos confirmados.
+- total_duplicates conta fichas descartadas como duplicadas.
+- total_errors conta falhas isoladas de extração e falhas gerais registradas.
 
 ## Contrato de dados preservado
 
-O fluxo chama o extrator existente e preserva os campos de `PlaceRecord` definidos nos documentos:
+O fluxo usa o extrator existente e mantém os campos de PlaceRecord documentados em:
 
-- `docs/mapeamento-detalhado-ficha-google-maps-bearzil.md`
-- `docs/mapeamento-verificado-firecrawl-bearzil.md`
-- `docs/matriz-cobertura-firecrawl-implantacao.md`
-- `docs/validacao-cobertura-firecrawl-2026-10-27.md`
+- docs/mapeamento-detalhado-ficha-google-maps-bearzil.md
+- docs/mapeamento-verificado-firecrawl-bearzil.md
+- docs/matriz-cobertura-firecrawl-implantacao.md
+- docs/validacao-cobertura-firecrawl-2026-10-27.md
 
-Não coleta rótulos de interface como atributos comerciais, não inventa valores para campos vazios e mantém `field_status` para diferenciar o que foi capturado do que não foi observado naquela sessão.
+Não inventa valores para campos ausentes e preserva field_status para diferenciar o que foi capturado do que não foi observado.
 
-## Módulos
+## Arquivos principais
 
-- `src/server/scraper/browser.ts`: conexão com Browserless/Chromium remoto.
-- `src/server/scraper/job-runner.ts`: fluxo sequencial, retomada, deduplicação, salvamento e checkpoint.
-- `src/server/scraper/extractor.ts`: extração dos campos da ficha.
-- `src/server/scraper/normalizer.ts`: normalização, endereço e identificadores da fonte.
-- `server.ts`: persistência, sessão, lease e endpoints de execução/monitoramento.
-- `src/App.tsx`: polling de leitura e solicitação explícita da próxima etapa.
+- server.ts: job, lease, leitura do feed, deduplicação e persistência.
+- src/server/scraper/browser.ts: conexão com Chromium.
+- src/server/scraper/extractor.ts: extração da ficha.
+- src/server/scraper/normalizer.ts: normalização de URL, Place ID e endereço.
+- supabase/migrations/20261101160000_simplify_scrape_job_persistence.sql: lease por job e RPCs de persistência.
+- supabase/migrations/20261101161000_fix_scraped_place_required_defaults.sql: defaults dos campos obrigatórios da tabela places.
+- supabase/tests/scrape_job_atomic_persistence.sql: teste transacional de lease, deduplicação, gravação e contadores.
 
-## Compatibilidade e validação
+## Validação
 
-- A tabela `scrape_candidates` permanece apenas como fonte de migração para sessões antigas. O fluxo novo não descobre e persiste uma fila intermediária.
-- `candidate_cursor` e `next_ordinal` permanecem por compatibilidade com jobs/sessões antigos; o checkpoint por URL é a referência para novas execuções.
-- Não foi realizada coleta real nesta alteração. A aprovação de produção exige CI verde, deployment concluído e uma coleta pequena validando a retomada, a deduplicação e a persistência no banco remoto.
+O teste SQL foi executado no Supabase remoto e passou. Ainda é necessário validar o build/TypeScript e fazer uma coleta pequena em produção para conferir o comportamento real do Google Maps e do Chromium.
