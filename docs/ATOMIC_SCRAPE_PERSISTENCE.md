@@ -27,7 +27,7 @@ Garantir que cada ficha descoberta tenha um registro durável e que o resultado 
 
 ## Arquivos
 
-- `supabase/migrations/20261101030000_atomic_scrape_candidate_persistence.sql`: RPCs transacionais.
+- `supabase/migrations/20261101035329_atomic_scrape_candidate_persistence.sql`: RPCs transacionais.
 - `supabase/tests/atomic_scrape_candidate_persistence.sql`: teste de integração com fixtures dentro de transação e rollback.
 - `server.ts`: registro e conclusão de candidatos no fluxo principal.
 
@@ -36,7 +36,7 @@ Garantir que cada ficha descoberta tenha um registro durável e que o resultado 
 **A migration ainda não foi aplicada ao Supabase remoto.** O código novo depende das duas RPCs; portanto, não fazer merge/deploy de produção antes de:
 
 1. Confirmar que a migration aparece como pendente no projeto `xjfwpkkmhnbkgtkbaseh`.
-2. Aplicar a migration `20261101030000_atomic_scrape_candidate_persistence`.
+2. Aplicar a migration `20261101035329_atomic_scrape_candidate_persistence`.
 3. Confirmar que as funções existem com as assinaturas esperadas e que o acesso está restrito a `service_role`.
 4. Executar `supabase/tests/atomic_scrape_candidate_persistence.sql` no banco e confirmar que o bloco termina sem exceção e faz rollback dos fixtures.
 5. Fazer uma coleta controlada com meta pequena e verificar: ficha inédita salva uma vez; duplicado descartado; contador e checkpoint coerentes; retry não duplica.
