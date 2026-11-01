@@ -289,9 +289,15 @@
 
 
 /* Twin neon runners on application cards: cyan and magenta chase around the frame. */
+@property --app-card-neon-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
 @keyframes app-card-neon-orbit {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from { --app-card-neon-angle: 0deg; }
+  to { --app-card-neon-angle: 360deg; }
 }
 
 .app-content [class*="rounded-2xl"][class*="bg-[#0b1429]"]::after,
@@ -303,8 +309,9 @@
   padding: 1.5px;
   border-radius: inherit;
   pointer-events: none;
+  --app-card-neon-angle: 0deg;
   background: conic-gradient(
-    from 0deg,
+    from var(--app-card-neon-angle),
     transparent 0deg 35deg,
     rgb(0 229 255 / 12%) 42deg,
     #00e5ff 52deg,
