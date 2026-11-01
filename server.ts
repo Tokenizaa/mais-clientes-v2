@@ -840,7 +840,7 @@ class Store {
     }
   }
 
-  async persistScrapeProgress(job: ScrapeJob, newPlace?: PlaceRecord): Promise<boolean> {
+  async persistScrapeProgress(job: ScrapeJob, newPlace?: PlaceRecord, lease?: { token: string; generation: number }): Promise<boolean> {
     job.heartbeat_at = new Date().toISOString();
     if (!this.supabase) {
       this.save(this.state);
@@ -859,7 +859,13 @@ class Store {
     let placeInserted = true;
     this.pendingWrite = this.pendingWrite.catch(() => undefined).then(async () => {
       const client = this.supabase!;
-
+      if (lease && job.search_session_id) {
+        const { data: renewed, error: leaseError } = await client.rpc('renew_scrape_search_session_lease', {
+          p_session_id: job.search_session_id, p_user_id: job.user_id, p_lease_token: lease.token,
+          p_generation: lease.generation, p_lease_seconds: 90,
+        });
+        if (leaseError || renewed !== true) throw new Error('Lease perdida; gravação do worker bloqueada.');
+      }
       if (newPlace) {
         const p = newPlace;
         const sourceUrl = String(p.source_url || p.maps_url || '').trim();
@@ -959,8 +965,15 @@ class Store {
           discovery_checkpoint: job.discovery_checkpoint || {},
           exhausted: job.discovery_checkpoint?.exhausted === true,
           updated_at: new Date().toISOString(),
-        }).eq('id', job.search_session_id).eq('user_id', job.user_id);
+        }).eq('id', job.search_session_id).eq('user_id', job.user_id)
+          .eq('lease_token', lease?.token || null).eq('lease_generation', lease?.generation ?? -1);
         if (sessionError) throw new Error(`Falha ao sincronizar checkpoint da sessão de pesquisa: ${sessionError.message}`);
+        if (lease) {
+          const { data: owned, error: verifyError } = await client.from('scrape_search_sessions').select('id')
+            .eq('id', job.search_session_id).eq('user_id', job.user_id)
+            .eq('lease_token', lease.token).eq('lease_generation', lease.generation).maybeSingle();
+          if (verifyError || !owned) throw new Error('Lease perdida; checkpoint rejeitado.');
+        }
       }
     });
 
@@ -1238,6 +1251,26 @@ function buildCsvString(places: PlaceRecord[], fields: (keyof PlaceRecord)[]): s
 }
 
 const activeScrapeJobs = new Map<string, { cancel: () => void }>();
+type ScrapeSessionLease = { token: string; generation: number };
+async function claimScrapeSessionLease(job: ScrapeJob): Promise<ScrapeSessionLease | null> {
+  if (!job.search_session_id) throw new Error('Sessão durável ausente; execução bloqueada.');
+  const token = crypto.randomUUID();
+  const { data, error } = await (store as any).supabase.rpc('claim_scrape_search_session', {
+    p_session_id: job.search_session_id, p_user_id: job.user_id, p_lease_token: token, p_lease_seconds: 90,
+  });
+  if (error) throw new Error('Falha ao reivindicar sessão: ' + error.message);
+  const row = Array.isArray(data) ? data[0] : data;
+  return row?.acquired ? { token, generation: Number(row.generation) } : null;
+}
+async function releaseScrapeSessionLease(job: ScrapeJob, lease: ScrapeSessionLease): Promise<void> {
+  const client = (store as any).supabase;
+  if (!client || ! job.search_session_id) return;
+  const { error } = await client.rpc('release_scrape_search_session_lease', {
+    p_session_id: job.search_session_id, p_user_id: job.user_id,
+    p_lease_token: lease.token, p_generation: lease.generation,
+  });
+  if (error) console.error('[Scraper] Falha ao liberar lease:', error.message);
+}
 
 async function executeScrapeJob(
   jobId: string,
@@ -1253,7 +1286,37 @@ async function executeScrapeJob(
   const job = state.jobs.find((item) => item.id === jobId && item.user_id === userId);
   if (!job) return;
 
+  let sessionLease: ScrapeSessionLease | null = null;
+  let leaseLost = false;
+  let leaseRenewal: ReturnType<typeof setInterval> | null = null;
+  try {
+    sessionLease = await claimScrapeSessionLease(job);
+    if (!sessionLease) {
+      job.status = 'partial';
+      job.status_message = 'Esta pesquisa já está em execução em outra instância.';
+      job.current_step = 'Sessão ocupada';
+      await store.persistScrapeProgress(job, undefined, sessionLease || undefined);
+      return;
+    }
+  } catch (error) {
+    job.status = 'failed';
+    job.status_message = error instanceof Error ? error.message : String(error);
+    job.current_step = 'Falha ao adquirir lease';
+    await store.persistScrapeProgress(job).catch(() => {});
+    return;
+  }
   activeScrapeJobs.set(jobId, { cancel: () => { cancelled = true; } });
+  leaseRenewal = setInterval(async () => {
+    if (!sessionLease || !job.search_session_id) return;
+    try {
+      const { data, error } = await (store as any).supabase.rpc('renew_scrape_search_session_lease', {
+        p_session_id: job.search_session_id, p_user_id: job.user_id,
+        p_lease_token: sessionLease.token, p_generation: sessionLease.generation, p_lease_seconds: 90,
+      });
+      if (error || data !== true) { leaseLost = true; cancelled = true; pauseReason = 'Lease perdida; execução interrompida para proteger os dados.'; }
+    } catch { leaseLost = true; cancelled = true; pauseReason = 'Falha ao renovar lease; execução interrompida por segurança.'; }
+  }, 30000);
+  leaseRenewal.unref?.();
 
   const audit = async (event: string, level: 'debug' | 'info' | 'warn' | 'error', message: string, metadata: Record<string, unknown> = {}) => {
     try {
@@ -1321,7 +1384,7 @@ async function executeScrapeJob(
       resume_url: anchor || null,
     });
 
-    while (!cancelled && !pauseReason && job.total_collected < limit && stagnantRounds < 8) {
+    while (!cancelled && !pauseReason && !leaseLost && job.total_collected < limit && stagnantRounds < 8) {
       if (await store.isJobCancellationRequested(jobId, userId)) { cancelled = true; break; }
 
       const links: string[] = await page.$$eval('a[href*="/maps/place/"]', (anchors) =>
@@ -1332,7 +1395,7 @@ async function executeScrapeJob(
         .filter((item) => item.key);
 
       for (const item of normalizedLinks) {
-        if (cancelled || pauseReason || job.total_collected >= limit) break;
+        if (cancelled || pauseReason || leaseLost || job.total_collected >= limit) break;
         if (seenThisRun.has(item.key)) continue;
         seenThisRun.add(item.key);
 
@@ -1481,8 +1544,10 @@ async function executeScrapeJob(
     store.persist();
     await store.persistScrapeProgress(job).catch(() => {});
   } finally {
+    if (leaseRenewal) clearInterval(leaseRenewal);
     await browser?.close().catch(() => {});
     activeScrapeJobs.delete(jobId);
+    if (sessionLease) await releaseScrapeSessionLease(job, sessionLease);
   }
 }
 
