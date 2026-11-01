@@ -1604,7 +1604,7 @@ export async function createApp() {
   // 1. AUTHENTICATION ROUTES (/api/auth/*)
   // =========================================================================
 
-  app.post('/api/auth/register', (req: Request, res: Response) => {
+  app.post('/api/auth/register', async (req: Request, res: Response) => {
     try {
       const { name, email, password } = req.body;
       if (!email || !password) {
@@ -1628,6 +1628,10 @@ export async function createApp() {
 
       state.users.push(newUser);
       store.persist();
+      // Registration must not return a session until the user is durable in the
+      // shared Supabase app_state. Otherwise another Vercel instance can reject
+      // the freshly issued token because its snapshot does not contain this user.
+      await store.flush();
 
       const token = `sess_${newUser.id}`;
       return res.status(201).json({
