@@ -713,7 +713,6 @@ class Store {
           && existing.address.trim().toLowerCase() === place.address.trim().toLowerCase())
       );
       if (duplicate) { job.total_duplicates += 1; this.save(this.state); return 'duplicate'; }
-      this.state.places.push(place);
       job.total_collected += 1;
       this.save(this.state);
       return 'saved';
