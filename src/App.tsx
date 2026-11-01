@@ -249,7 +249,7 @@ export default function App() {
         sortOrder,
       });
 
-      const effectiveJobId = jobIdOverride || selectedJobId;
+      const effectiveJobId = jobIdOverride !== undefined ? jobIdOverride : selectedJobId;
       if (effectiveJobId) params.append('jobId', effectiveJobId);
       if (searchQuery.trim()) params.append('query', searchQuery.trim());
       if (categoryFilter) params.append('category', categoryFilter);
@@ -328,7 +328,7 @@ export default function App() {
           setCurrentPage(1);
           setSelectedJobId(undefined);
           setCurrentTab('results');
-          await loadPlaces();
+          await loadPlaces('');
         }
       } catch (err) {
         consecutiveErrors++;
