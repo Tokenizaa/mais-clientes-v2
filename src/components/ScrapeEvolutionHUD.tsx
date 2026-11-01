@@ -22,12 +22,16 @@ interface ScrapeEvolutionHUDProps {
   isScraping: boolean;
   onStopScrape: () => Promise<void>;
   onGoToResults: () => void;
+  regionalQuickActions: { label: string; location: string }[];
+  onStartRegionalScrape: (location: string) => Promise<void>;
 }
 
 export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
   currentJob,
   onStopScrape,
   onGoToResults,
+  regionalQuickActions,
+  onStartRegionalScrape,
 }) => {
   if (!currentJob) return null;
 
@@ -80,6 +84,27 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
                 <p className="mt-1 text-xs leading-relaxed text-slate-300">Foram salvos {currentJob.total_collected} de {currentJob.limit_requested}. O fim da lista não significa que toda a região foi coberta.</p>
                 {currentJob.total_errors > 0 && <p className="mt-2 text-xs text-slate-400">As {currentJob.total_errors} falhas individuais foram contabilizadas separadamente e não impediram a coleta de chegar ao fim do feed.</p>}
               </div>
+              {regionalQuickActions.length > 0 && (
+                <div className="mt-6 rounded-2xl border border-cyan-400/25 bg-cyan-950/20 p-4">
+                  <div className="mb-3 text-left">
+                    <p className="text-sm font-bold text-cyan-100">Continue a prospecção em outra região</p>
+                    <p className="mt-1 text-xs text-slate-300">Inicie outra coleta mantendo o mesmo segmento, município e meta de novos contatos.</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    {regionalQuickActions.map((action) => (
+                      <button
+                        key={action.location}
+                        type="button"
+                        onClick={() => void onStartRegionalScrape(action.location)}
+                        className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-3 py-3 text-sm font-bold text-cyan-100 transition hover:border-cyan-300/60 hover:bg-cyan-400/20"
+                      >
+                        Zona {action.label}
+                        <span className="mt-1 block text-[10px] font-medium text-cyan-200/70">Iniciar coleta</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-center">
                 <button type="button" onClick={() => setShowFeedExhaustedModal(false)} className="rounded-xl border border-slate-600/70 bg-slate-900/60 px-5 py-3 text-sm font-semibold text-slate-200 transition hover:bg-slate-800">Fechar aviso</button>
                 <button type="button" onClick={onGoToResults} className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-blue-950/40 transition hover:bg-blue-500">Ver os {currentJob.total_collected} leads salvos <ArrowRight className="h-4 w-4" /></button>
