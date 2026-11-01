@@ -697,6 +697,24 @@ class Store {
       updated_at: new Date().toISOString(),
     };
     if (!this.supabase) return row;
+
+    // Reuse the most recent non-exhausted session for the exact same search
+    // scope. This preserves the last confirmed URL and pagination ordinal when
+    // a job is restarted after a browser disconnect or a partial execution.
+    const existing = await this.supabase
+      .from('scrape_search_sessions')
+      .select('*')
+      .eq('user_id', input.userId)
+      .eq('scope_key', scopeKey)
+      .eq('exhausted', false)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (existing.error) {
+      throw new Error('Falha ao localizar sessão anterior de coleta: ' + existing.error.message);
+    }
+    if (existing.data) return existing.data as any;
+
     const inserted = await this.supabase.from('scrape_search_sessions').insert(row).select('*').single();
     if (inserted.error || !inserted.data) {
       throw new Error('Falha ao criar sessão isolada de coleta: ' + (inserted.error?.message || 'registro indisponível'));
@@ -704,56 +722,105 @@ class Store {
     return inserted.data as any;
   }
 
-  async isExistingPlace(place: Partial<PlaceRecord>): Promise<boolean> {
-    const sourceId = String(place.source_place_id || extractSourcePlaceId(place.source_url) || extractSourcePlaceId(place.maps_url) || '').trim();
-    const urls = Array.from(new Set([place.source_url, place.maps_url]
-      .map((value) => String(value || '').trim())
-      .filter(Boolean)));
-
+  async registerScrapeCandidate(
+    job: ScrapeJob,
+    sourceKey: string,
+    sourcePlaceId: string | null,
+    sourceUrl: string,
+    lease: { token: string; generation: number }
+  ): Promise<{ candidateId: string; ordinal: number; status: string; inserted: boolean }> {
+    const candidateId = 'cand_' + crypto.randomUUID();
     if (!this.supabase) {
-      const target = {
-        sourceId,
-        urls: new Set(urls),
-        name: String(place.name || '').trim().toLocaleLowerCase('pt-BR'),
-        address: String(place.address || '').trim().toLocaleLowerCase('pt-BR'),
-      };
-      return this.state.places.some((existing) => {
-        const existingId = String(existing.source_place_id || extractSourcePlaceId(existing.source_url) || extractSourcePlaceId(existing.maps_url) || '').trim();
-        const existingUrls = [existing.source_url, existing.maps_url].map((value) => String(value || '').trim());
-        return Boolean((target.sourceId && existingId === target.sourceId) ||
-          existingUrls.some((value) => value && target.urls.has(value)) ||
-          (target.name && target.address &&
-            String(existing.name || '').trim().toLocaleLowerCase('pt-BR') === target.name &&
-            String(existing.address || '').trim().toLocaleLowerCase('pt-BR') === target.address));
-      });
+      const ordinal = Math.max(0, Number(job.total_found || 0));
+      job.total_found = ordinal + 1;
+      return { candidateId, ordinal, status: 'discovered', inserted: true };
     }
+    const { data, error } = await this.supabase.rpc('register_scrape_candidate', {
+      p_candidate_id: candidateId,
+      p_job_id: job.id,
+      p_user_id: job.user_id,
+      p_session_id: job.search_session_id,
+      p_source_key: sourceKey,
+      p_source_place_id: sourcePlaceId,
+      p_source_url: normalizeMapsPlaceUrl(sourceUrl),
+      p_lease_token: lease.token,
+      p_lease_generation: lease.generation,
+    });
+    if (error || !data) throw new Error('Falha ao registrar ficha na fila durável: ' + (error?.message || 'resposta vazia'));
+    job.total_found = Number(data.total_found ?? job.total_found);
+    job.total_duplicates = Number(data.total_duplicates ?? job.total_duplicates);
+    job.total_collected = Number(data.total_collected ?? job.total_collected);
+    job.candidate_cursor = Number(data.candidate_cursor ?? job.candidate_cursor);
+    if (data.checkpoint && typeof data.checkpoint === 'object') job.discovery_checkpoint = data.checkpoint;
+    return {
+      candidateId: String(data.candidate_id),
+      ordinal: Number(data.ordinal || 0),
+      status: String(data.status || 'discovered'),
+      inserted: data.inserted === true,
+    };
+  }
 
-    const client = this.supabase;
-    if (sourceId) {
-      const { data, error } = await client.from('places').select('id')
-        .eq('source_place_id', sourceId).limit(1).maybeSingle();
-      if (error) throw new Error('Falha ao comparar identificador do estabelecimento no banco: ' + error.message);
-      if (data?.id) return true;
-    }
-
-    for (const url of urls) {
-      for (const column of ['source_url', 'maps_url'] as const) {
-        const { data, error } = await client.from('places').select('id')
-          .eq(column, url).limit(1).maybeSingle();
-        if (error) throw new Error('Falha ao comparar URL do estabelecimento no banco: ' + error.message);
-        if (data?.id) return true;
+  async completeScrapeCandidate(
+    job: ScrapeJob,
+    candidateId: string,
+    outcome: 'saved' | 'duplicate',
+    sourceKey: string,
+    sourceUrl: string,
+    place: PlaceRecord | undefined,
+    lease: { token: string; generation: number }
+  ): Promise<{ outcome: 'saved' | 'duplicate'; alreadyCompleted: boolean }> {
+    if (!this.supabase) {
+      const actual = outcome;
+      if (actual === 'saved' && place) {
+        job.total_collected += 1;
+      } else {
+        job.total_duplicates += 1;
       }
+      const previous = job.discovery_checkpoint || {};
+      job.discovery_checkpoint = {
+        ...previous,
+        version: 1,
+        last_processed_url: normalizeMapsPlaceUrl(sourceUrl),
+        last_processed_source_key: sourceKey,
+        last_processed_name: place?.name || previous.last_processed_name || '',
+        last_processed_outcome: actual,
+        last_processed_at: new Date().toISOString(),
+        last_checkpoint_at: new Date().toISOString(),
+        processed_count: Number(previous.processed_count || 0) + 1,
+      };
+      job.candidate_cursor = Number(job.candidate_cursor || 0) + 1;
+      this.save(this.state);
+      return { outcome: actual, alreadyCompleted: false };
     }
 
-    const name = String(place.name || '').trim();
-    const address = String(place.address || '').trim();
-    if (name && address) {
-      const { data, error } = await client.from('places').select('id')
-        .eq('name', name).eq('address', address).limit(1).maybeSingle();
-      if (error) throw new Error('Falha ao comparar nome e endereço do estabelecimento no banco: ' + error.message);
-      if (data?.id) return true;
+    const { data, error } = await this.supabase.rpc('complete_scrape_candidate', {
+      p_candidate_id: candidateId,
+      p_job_id: job.id,
+      p_user_id: job.user_id,
+      p_session_id: job.search_session_id,
+      p_outcome: outcome,
+      p_place: place ? {
+        ...place,
+        source_url: normalizeMapsPlaceUrl(place.source_url || sourceUrl),
+      } as unknown as Record<string, unknown> : null,
+      p_source_key: sourceKey,
+      p_source_url: sourceUrl,
+      p_lease_token: lease.token,
+      p_lease_generation: lease.generation,
+    });
+    if (error || !data) throw new Error('Falha ao concluir ficha de forma atômica: ' + (error?.message || 'resposta vazia'));
+
+    job.total_collected = Number(data.total_collected ?? job.total_collected);
+    job.total_duplicates = Number(data.total_duplicates ?? job.total_duplicates);
+    job.candidate_cursor = Number(data.candidate_cursor ?? job.candidate_cursor);
+    if (data.checkpoint && typeof data.checkpoint === 'object') {
+      job.discovery_checkpoint = data.checkpoint;
     }
-    return false;
+    job.heartbeat_at = new Date().toISOString();
+    return {
+      outcome: data.outcome === 'saved' || data.outcome === 'processed' ? 'saved' : 'duplicate',
+      alreadyCompleted: data.already_completed === true,
+    };
   }
 
   async isJobCancellationRequested(id: string, userId: string): Promise<boolean> {
@@ -863,7 +930,7 @@ class Store {
           p_session_id: job.search_session_id, p_user_id: job.user_id, p_lease_token: lease.token,
           p_generation: lease.generation, p_lease_seconds: 90,
         });
-        if (leaseError || renewed !== true) throw new Error('Lease perdida; gravação do worker bloqueada.');
+        if (leaseError || renewed !== true) throw new Error('Lease perdida; gravação bloqueada.');
       }
       if (newPlace) {
         const p = newPlace;
@@ -957,7 +1024,7 @@ class Store {
       }
       if (jobError) throw new Error(`Falha ao sincronizar progresso da coleta: ${jobError.message}`);
 
-      // A sessão só pode ser atualizada pelo worker que possui a lease.
+      // A sessão só pode ser atualizada pelo processo que possui a lease.
       // Nunca envie null/"null" como filtro UUID: sem lease, não toque no checkpoint.
       if (job.search_session_id && lease) {
         const { error: sessionError } = await client.from('scrape_search_sessions').update({
@@ -987,7 +1054,7 @@ class Store {
     }
 
     const snapshot = JSON.parse(JSON.stringify(this.state)) as StoreState;
-    // Candidate URLs are normalized in the relational queue and are hydrated by workers.
+    // Candidate URLs are normalized in the relational queue before inline extraction.
     for (const snapshotJob of snapshot.jobs) delete snapshotJob.candidate_urls;
     this.pendingWrite = this.pendingWrite.catch(() => undefined).then(async () => {
       const client = this.supabase!;
@@ -1284,7 +1351,6 @@ async function executeScrapeJob(
   const state = store.getState();
   const job = state.jobs.find((item) => item.id === jobId && item.user_id === userId);
   if (!job) return;
-
   let sessionLease: ScrapeSessionLease | null = null;
   let leaseLost = false;
   let leaseRenewal: ReturnType<typeof setInterval> | null = null;
@@ -1332,24 +1398,19 @@ async function executeScrapeJob(
     await store.persistScrapeProgress(job, undefined, sessionLease || undefined);
   };
 
-  const saveCheckpoint = async (url: string, outcome: 'saved' | 'duplicate', name?: string) => {
-    const previous = job.discovery_checkpoint || {};
-    job.discovery_checkpoint = {
-      ...previous,
-      version: 1,
-      last_processed_url: normalizeMapsPlaceUrl(url),
-      last_processed_source_key: extractSourcePlaceId(url) || normalizeMapsPlaceUrl(url),
-      last_processed_name: name || previous.last_processed_name || '',
-      last_processed_outcome: outcome,
-      last_processed_at: new Date().toISOString(),
-      last_checkpoint_at: new Date().toISOString(),
-      processed_count: Number(previous.processed_count || 0) + 1,
-    };
-    job.candidate_cursor = Number(job.candidate_cursor || 0) + 1;
-    await store.persistScrapeProgress(job, undefined, sessionLease || undefined);
-    await audit('candidate_checkpoint_saved', 'debug', 'Checkpoint atualizado após processar ficha.', {
-      url: normalizeMapsPlaceUrl(url), outcome, ordinal: job.candidate_cursor, name: name || null,
+  const completeCandidate = async (
+    candidateId: string, sourceKey: string, url: string,
+    outcome: 'saved' | 'duplicate', place?: PlaceRecord
+  ): Promise<{ outcome: 'saved' | 'duplicate'; alreadyCompleted: boolean }> => {
+    if (!sessionLease) throw new Error('Lease ausente ao concluir ficha.');
+    const result = await store.completeScrapeCandidate(
+      job, candidateId, outcome, sourceKey, url, place, sessionLease
+    );
+    await audit('candidate_checkpoint_saved', 'debug', 'Resultado, contador e checkpoint confirmados em uma única transação.', {
+      url: normalizeMapsPlaceUrl(url), outcome: result.outcome, ordinal: job.candidate_cursor, name: place?.name || null,
+      already_completed: result.alreadyCompleted,
     });
+    return result;
   };
 
   try {
@@ -1370,26 +1431,68 @@ async function executeScrapeJob(
     });
     await page.waitForSelector('div[role="feed"], a[href*="/maps/place/"]', { timeout: 15000 }).catch(() => {});
 
-    const anchor = normalizeMapsPlaceUrl(job.discovery_checkpoint?.last_processed_url || '');
+    let anchor = normalizeMapsPlaceUrl(job.discovery_checkpoint?.last_processed_url || '');
     let anchorFound = !anchor;
+    let feedExhausted = false;
     let previousCount = 0;
     let stagnantRounds = 0;
-    let ordinalThisRun = 0;
     const seenThisRun = new Set<string>();
     const locationFallback = parseSearchLocationFallback(location);
     const feedSelector = 'div[role="feed"]';
+
+    const rebuildFeedPage = async (): Promise<void> => {
+      const currentBrowser = browser as (Browser & { connected?: boolean; isConnected?: () => boolean }) | null;
+      const browserConnected = !!currentBrowser && (
+        typeof currentBrowser.isConnected === 'function'
+          ? currentBrowser.isConnected()
+          : currentBrowser.connected !== false
+      );
+      if (!browserConnected) {
+        await browser?.close().catch(() => {});
+        browser = await connectScraperBrowser(state.settings?.browserWsEndpoint);
+      }
+      await page.close().catch(() => {});
+      page = await browser!.newPage();
+      await page.setViewport({ width: 1280, height: 900 });
+      await page.setExtraHTTPHeaders({ 'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7' });
+      await page.goto('https://www.google.com/maps/search/' + encodeURIComponent(searchQuery), {
+        waitUntil: 'domcontentloaded', timeout: 45000,
+      });
+      await page.waitForSelector('div[role="feed"], a[href*="/maps/place/"]', { timeout: 20000 }).catch(() => {});
+      anchor = normalizeMapsPlaceUrl(job.discovery_checkpoint?.last_processed_url || anchor);
+      anchorFound = !anchor;
+      seenThisRun.clear();
+      previousCount = 0;
+      stagnantRounds = 0;
+    };
 
     await audit('feed_scan_started', 'info', anchor ? 'Reconstruindo feed até o último checkpoint.' : 'Iniciando leitura sequencial do feed.', {
       resume_url: anchor || null,
     });
 
-    while (!cancelled && !pauseReason && !leaseLost && job.total_collected < limit && stagnantRounds < 8) {
+    while (!cancelled && !pauseReason && !leaseLost && job.total_collected < limit) {
       if (await store.isJobCancellationRequested(jobId, userId)) { cancelled = true; break; }
 
-      const links: string[] = await page.$$eval('a[href*="/maps/place/"]', (anchors) =>
-        anchors.map((a) => (a as HTMLAnchorElement).href)
-          .filter((href): href is string => Boolean(href) && href.includes('/maps/place/'))
-      );
+      let links: string[];
+      try {
+        links = await page.evaluate(() =>
+          Array.from(document.querySelectorAll('a[href*="/maps/place/"]'))
+            .map((element) => (element as HTMLAnchorElement).href)
+            .filter((href): href is string => Boolean(href) && href.includes('/maps/place/'))
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error ?? 'Erro desconhecido');
+        if (!/detached frame|cannot find context|execution context.*destroyed|target closed|session closed/i.test(message)) throw error;
+        await audit('feed_frame_detached', 'warn', 'O Google Maps substituiu o frame do feed; reconstruindo a página e retomando pelo último checkpoint.', {
+          checkpoint: job.discovery_checkpoint?.last_processed_url || null,
+          error_message: message.slice(0, 500),
+        });
+        await rebuildFeedPage();
+        await audit('feed_frame_recovered', 'info', 'Feed reconstruído; retomada posicionada no último resultado confirmado.', {
+          checkpoint: job.discovery_checkpoint?.last_processed_url || null,
+        });
+        continue;
+      }
       const normalizedLinks = links.map((url) => ({ url, key: normalizeMapsPlaceUrl(url) }))
         .filter((item) => item.key);
 
@@ -1408,24 +1511,27 @@ async function executeScrapeJob(
 
         // The anchor itself is never processed twice.
         if (anchor && item.key === anchor) continue;
-        ordinalThisRun += 1;
-        job.total_found += 1;
-        await updateProgress(`Analisando ficha ${job.total_found}; ${job.total_collected}/${limit} novos contatos salvos...`);
-        await audit('candidate_discovered', 'debug', 'Ficha encontrada no feed; verificando URL no banco.', {
-          url: item.key, ordinal: Number(job.candidate_cursor || 0) + ordinalThisRun,
-        });
-
+        const sourceKey = extractSourcePlaceId(item.url) || item.key;
+        let candidateId = '';
         let detailPage: Page | null = null;
         try {
-          const isDuplicate = await store.isExistingPlace({ source_url: item.url, maps_url: item.url });
-          if (isDuplicate) {
-            job.total_duplicates += 1;
-            await saveCheckpoint(item.url, 'duplicate');
-            await audit('duplicate_skipped', 'info', 'URL já cadastrada; ficha descartada e feed avançado.', {
-              url: item.key, duplicate_count: job.total_duplicates,
-            });
+          if (!sessionLease) throw new Error('Lease ausente ao registrar ficha.');
+          const candidate = await store.registerScrapeCandidate(
+            job, sourceKey, extractSourcePlaceId(item.url) || null, item.key, sessionLease
+          );
+          candidateId = candidate.candidateId;
+          if (candidate.status === 'processed' || candidate.status === 'duplicate') {
+            if (candidate.status === 'duplicate') {
+              await audit('duplicate_skipped', 'info', 'Duplicado identificado no feed e descartado sem abrir a ficha.', {
+                url: item.key, duplicate_count: job.total_duplicates,
+              });
+            }
             continue;
           }
+          await updateProgress(`Analisando ficha ${job.total_found}; ${job.total_collected}/${limit} novos contatos salvos...`);
+          await audit('candidate_discovered', 'debug', 'Ficha registrada na fila durável; iniciando deduplicação e extração.', {
+            url: item.key, candidate_id: candidateId, ordinal: candidate.ordinal,
+          });
 
           await audit('extraction_started', 'debug', 'Abrindo ficha inédita para extração.', { url: item.key });
           detailPage = await browser!.newPage();
@@ -1437,28 +1543,15 @@ async function executeScrapeJob(
           if (!place.city && locationFallback.city) place.city = locationFallback.city;
           if (!place.state && locationFallback.state) place.state = locationFallback.state;
 
-          if (place.name && place.address && await store.isExistingPlace(place)) {
-            job.total_duplicates += 1;
-            await saveCheckpoint(item.url, 'duplicate', place.name);
-            await audit('duplicate_skipped', 'info', 'Ficha já cadastrada por identificador ou nome/endereço.', {
-              url: item.key, name: place.name, duplicate_count: job.total_duplicates,
-            });
-            continue;
-          }
-
-          const persisted = await store.persistScrapeProgress(job, place, sessionLease || undefined);
-          if (!persisted) {
-            job.total_duplicates += 1;
-            await saveCheckpoint(item.url, 'duplicate', place.name);
-            await audit('duplicate_skipped', 'info', 'A URL já foi gravada por outra execução; registro descartado sem duplicar.', {
+          const result = await completeCandidate(candidateId, sourceKey, item.key, 'saved', place);
+          if (result.outcome === 'duplicate') {
+            await audit('duplicate_skipped', 'info', 'Duplicado detectado atomicamente na persistência; registro descartado.', {
               url: item.key, name: place.name, duplicate_count: job.total_duplicates, race_condition: true,
             });
             continue;
           }
-          state.places.push(place);
-          job.total_collected += 1;
-          await saveCheckpoint(item.url, 'saved', place.name);
-          await audit('place_saved', 'info', 'Novo contato gravado no Supabase.', {
+          if (!result.alreadyCompleted) state.places.push(place);
+          await audit('place_saved', 'info', 'Novo contato gravado; contador e checkpoint confirmados atomicamente.', {
             url: item.key, name: place.name, collected: job.total_collected, target: limit,
           });
           await updateProgress(`Salvo: ${place.name || 'Estabelecimento sem nome'} (${job.total_collected}/${limit})`);
@@ -1489,24 +1582,11 @@ async function executeScrapeJob(
               if (!retriedPlace.city && locationFallback.city) retriedPlace.city = locationFallback.city;
               if (!retriedPlace.state && locationFallback.state) retriedPlace.state = locationFallback.state;
 
-              // Revalida antes de inserir: a primeira tentativa pode ter gravado antes de perder a conexão.
-              const alreadySaved = retriedPlace.name && retriedPlace.address
-                ? await store.isExistingPlace(retriedPlace)
-                : await store.isExistingPlace({ source_url: item.url, maps_url: item.url });
-              if (alreadySaved) {
-                job.total_duplicates += 1;
-                await saveCheckpoint(item.url, 'duplicate', retriedPlace.name);
-              } else {
-                const persisted = await store.persistScrapeProgress(job, retriedPlace, sessionLease || undefined);
-                if (persisted) {
-                  state.places.push(retriedPlace);
-                  job.total_collected += 1;
-                  await saveCheckpoint(item.url, 'saved', retriedPlace.name);
-                } else {
-                  job.total_duplicates += 1;
-                  await saveCheckpoint(item.url, 'duplicate', retriedPlace.name);
-                }
-              }
+              // A RPC decide duplicidade e persistência na mesma transação; não há SELECT prévio.
+              const result = await completeCandidate(
+                candidateId, sourceKey, item.key, 'saved', retriedPlace
+              );
+              if (result.outcome === 'saved' && !result.alreadyCompleted) state.places.push(retriedPlace);
               await audit('candidate_recovery_processed', 'info', 'Ficha pendente reprocessada; preparando retomada do feed.', {
                 url: item.key, collected: job.total_collected, duplicates: job.total_duplicates,
                 original_error_name: error instanceof Error ? error.name : typeof error,
@@ -1522,6 +1602,9 @@ async function executeScrapeJob(
                 waitUntil: 'domcontentloaded', timeout: 45000,
               });
               await page.waitForSelector('div[role="feed"], a[href*="/maps/place/"]', { timeout: 20000 }).catch(() => {});
+              // A ficha atual foi processada e checkpointada durante a recuperação.
+              // Use-a como nova âncora; nunca procure uma âncora vazia ou obsoleta.
+              anchor = item.key;
               anchorFound = false;
               seenThisRun.clear();
               previousCount = 0;
@@ -1567,14 +1650,54 @@ async function executeScrapeJob(
       }
 
       if (job.total_collected >= limit || cancelled || pauseReason) break;
-      if (!anchorFound) {
-        await page.$eval(feedSelector, (feed) => { (feed as HTMLElement).scrollTop = (feed as HTMLElement).scrollHeight; }).catch(() => {});
+      const beforeScroll = await page.evaluate((selector) => {
+        const feed = document.querySelector(selector) as HTMLElement | null;
+        const links = Array.from(document.querySelectorAll('a[href*="/maps/place/"]')) as HTMLAnchorElement[];
+        if (feed) feed.scrollTo({ top: feed.scrollHeight, behavior: 'instant' as ScrollBehavior });
+        else window.scrollBy(0, 1100);
+        return {
+          scrollHeight: feed?.scrollHeight || document.documentElement.scrollHeight,
+          scrollTop: feed?.scrollTop || window.scrollY,
+          linkCount: links.length,
+          lastHref: links.at(-1)?.href || '',
+        };
+      }, feedSelector).catch(() => ({ scrollHeight: 0, scrollTop: 0, linkCount: 0, lastHref: '' }));
+
+      // Google Maps uses infinite scrolling. Wait for actual feed growth or a
+      // changed tail result; a fixed sleep alone can miss delayed pagination.
+      await page.waitForFunction((selector, previous) => {
+        const feed = document.querySelector(selector) as HTMLElement | null;
+        const links = Array.from(document.querySelectorAll('a[href*="/maps/place/"]')) as HTMLAnchorElement[];
+        const body = document.body.innerText || '';
+        const endReached = body.includes('Você chegou ao final da lista') || body.includes("You've reached the end of the list");
+        const height = feed?.scrollHeight || document.documentElement.scrollHeight;
+        const tail = links.at(-1)?.href || '';
+        return endReached || height > previous.scrollHeight || links.length > previous.linkCount || (tail !== '' && tail !== previous.lastHref);
+      }, { timeout: 7000 }, feedSelector, beforeScroll).catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      const afterScroll = await page.evaluate((selector) => {
+        const feed = document.querySelector(selector) as HTMLElement | null;
+        const links = Array.from(document.querySelectorAll('a[href*="/maps/place/"]')) as HTMLAnchorElement[];
+        return {
+          scrollHeight: feed?.scrollHeight || document.documentElement.scrollHeight,
+          scrollTop: feed?.scrollTop || window.scrollY,
+          linkCount: links.length,
+          lastHref: links.at(-1)?.href || '',
+        };
+      }, feedSelector).catch(() => ({ scrollHeight: 0, scrollTop: 0, linkCount: 0, lastHref: '' }));
+      const paginationAdvanced = afterScroll.scrollHeight > beforeScroll.scrollHeight
+        || afterScroll.linkCount > beforeScroll.linkCount
+        || (afterScroll.lastHref !== '' && afterScroll.lastHref !== beforeScroll.lastHref);
+      if (paginationAdvanced) {
+        await audit('feed_pagination_advanced', 'debug', 'Rolagem infinita carregou novos resultados no feed.', {
+          before: beforeScroll, after: afterScroll, anchor_found: anchorFound,
+        });
       } else {
-        await page.$eval(feedSelector, (feed) => { (feed as HTMLElement).scrollTop = (feed as HTMLElement).scrollHeight; }).catch(() =>
-          page.evaluate(() => window.scrollBy(0, 1100)).catch(() => {})
-        );
+        await audit('feed_pagination_waiting', 'debug', 'Rolagem executada; aguardando novos resultados ou confirmação explícita do fim do feed.', {
+          before: beforeScroll, after: afterScroll, anchor_found: anchorFound,
+        });
       }
-      await new Promise((resolve) => setTimeout(resolve, 1000));
       const currentCount = seenThisRun.size;
       stagnantRounds = currentCount === previousCount ? stagnantRounds + 1 : 0;
       previousCount = currentCount;
@@ -1582,10 +1705,22 @@ async function executeScrapeJob(
         const body = document.body.innerText || '';
         return body.includes('Você chegou ao final da lista') || body.includes("You've reached the end of the list");
       }).catch(() => false);
-      if (endReached) break;
+      if (endReached) {
+        feedExhausted = true;
+        break;
+      }
+      if (stagnantRounds >= 8) {
+        pauseReason = 'O feed não apresentou novos resultados após oito tentativas de avanço. A coleta foi pausada sem declarar esgotamento; pode ser retomada.';
+        await audit('feed_stagnation_paused', 'warn', pauseReason, {
+          stagnant_rounds: stagnantRounds,
+          discovered_this_run: seenThisRun.size,
+          checkpoint: job.discovery_checkpoint?.last_processed_url || null,
+        });
+        break;
+      }
     }
 
-    if (!anchorFound) {
+    if (anchor && !anchorFound) {
       pauseReason = 'Não foi possível reencontrar a ficha do último checkpoint no feed. Nenhuma ficha foi pulada.';
       await audit('resume_anchor_missing', 'error', pauseReason, { resume_url: anchor });
     }
@@ -1602,11 +1737,15 @@ async function executeScrapeJob(
       job.status = 'completed';
       job.status_message = `Meta atingida: ${job.total_collected} novos contatos salvos.`;
       job.current_step = 'Meta atingida';
-    } else {
+    } else if (feedExhausted) {
       job.status = 'completed';
       job.status_message = `Feed esgotado: ${job.total_collected} novos contatos salvos, ${job.total_duplicates} duplicados ignorados.`;
       job.discovery_checkpoint = { ...(job.discovery_checkpoint || {}), exhausted: true };
       job.current_step = 'Feed esgotado';
+    } else {
+      job.status = 'partial';
+      job.status_message = 'Coleta pausada sem confirmação de esgotamento do feed.';
+      job.current_step = 'Pausada; pode ser retomada.';
     }
     job.completed_at = new Date().toISOString();
     store.persist();
@@ -1614,7 +1753,7 @@ async function executeScrapeJob(
     await audit('job_finished', job.status === 'failed' ? 'error' : 'info', job.status_message, {
       status: job.status, collected: job.total_collected, duplicates: job.total_duplicates,
       errors: job.total_errors, checkpoint: job.discovery_checkpoint?.last_processed_url || null,
-      stop_reason: cancelled ? 'user_cancelled' : pauseReason ? 'pause_reason' : job.total_collected >= limit ? 'target_reached' : 'feed_exhausted',
+      stop_reason: cancelled ? 'user_cancelled' : pauseReason ? 'pause_reason' : job.total_collected >= limit ? 'target_reached' : feedExhausted ? 'feed_exhausted' : 'discovery_paused',
       pause_reason: pauseReason || null, anchor_found: anchorFound, stagnant_rounds: stagnantRounds,
     });
   } catch (error: any) {
@@ -1807,7 +1946,8 @@ export async function createApp() {
       }
 
       const user = resolveUserFromRequest(req);
-      const userId = user ? user.id : 'usr_default';
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+      const userId = user.id;
       const parsedLimit = Number.parseInt(String(limit ?? ''), 10);
       const numLimit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(100, parsedLimit)) : 20;
       const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -1913,6 +2053,10 @@ export async function createApp() {
   });
 
   app.post('/api/v1/jobs/:id/step', async (req: Request, res: Response) => {
+    const user = resolveUserFromRequest(req);
+    if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+    const job = store.getState().jobs.find((item) => item.id === req.params.id && item.user_id === user.id);
+    if (!job) return res.status(404).json({ error: 'Coleta não encontrada.' });
     return res.status(200).json({
       success: true,
       message: 'Coleta direta em execução contínua.',
@@ -1969,13 +2113,15 @@ export async function createApp() {
 
   app.delete('/api/v1/jobs/:id', (req: Request, res: Response) => {
     try {
+      const user = resolveUserFromRequest(req);
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
       const state = store.getState();
-      const index = state.jobs.findIndex((j) => j.id === req.params.id);
+      const index = state.jobs.findIndex((j) => j.id === req.params.id && j.user_id === user.id);
       if (index === -1) {
         return res.status(404).json({ error: 'Coleta não encontrada.' });
       }
 
-      // Do not delete the durable cursor while a worker can still be processing it.
+      // Preserve the durable cursor while the candidate is still being processed.
       if (state.jobs[index].status === 'running') {
         return res.status(409).json({ error: 'Interrompa a coleta antes de excluir o histórico.' });
       }
@@ -1997,8 +2143,9 @@ export async function createApp() {
 
   app.get('/api/v1/leads', (req: Request, res: Response) => {
     try {
-      const state = store.getState();
       const user = resolveUserFromRequest(req);
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+      const state = store.getState();
       const ownedJobIds = new Set(state.jobs.filter((job) => job.user_id === user?.id).map((job) => job.id));
       const { jobId, query, category, sortBy = 'collected_at', sortOrder = 'desc', offset = '0', limit = '25' } = req.query;
 
@@ -2067,9 +2214,10 @@ export async function createApp() {
 
   app.get('/api/v1/categories', (req: Request, res: Response) => {
     try {
-      const state = store.getState();
       const user = resolveUserFromRequest(req);
-      const userId = user ? user.id : 'usr_default';
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+      const state = store.getState();
+      const userId = user.id;
       const userCategories = state.categories.filter((item) => item.user_id === userId);
       const userJobs = state.jobs.filter((item) => item.user_id === userId);
       const userJobIds = new Set(userJobs.map((item) => item.id));
@@ -2094,7 +2242,8 @@ export async function createApp() {
         return res.status(400).json({ error: 'Nome da categoria é obrigatório.' });
       }
       const user = resolveUserFromRequest(req);
-      const userId = user ? user.id : 'usr_default';
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+      const userId = user.id;
       const state = store.getState();
       let project = projectId
         ? state.projects.find((item) => item.id === String(projectId) && item.user_id === userId)
@@ -2129,9 +2278,11 @@ export async function createApp() {
 
   app.put('/api/v1/categories/:id', (req: Request, res: Response) => {
     try {
+      const user = resolveUserFromRequest(req);
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
       const { name } = req.body;
       const state = store.getState();
-      const cat = state.categories.find((c) => c.id === req.params.id);
+      const cat = state.categories.find((c) => c.id === req.params.id && c.user_id === user.id);
       if (!cat) return res.status(404).json({ error: 'Categoria não encontrada.' });
       if (name && String(name).trim()) {
         cat.name = String(name).trim();
@@ -2145,9 +2296,10 @@ export async function createApp() {
 
   app.delete('/api/v1/categories/:id', async (req: Request, res: Response) => {
     try {
-      const state = store.getState();
       const user = resolveUserFromRequest(req);
-      const userId = user ? user.id : 'usr_default';
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+      const state = store.getState();
+      const userId = user.id;
       const idx = state.categories.findIndex((c) => c.id === req.params.id && c.user_id === userId);
       if (idx === -1) return res.status(404).json({ error: 'Categoria não encontrada.' });
       const [removed] = state.categories.splice(idx, 1);
@@ -2166,9 +2318,10 @@ export async function createApp() {
 
   app.get('/api/v1/projects', (req: Request, res: Response) => {
     try {
-      const state = store.getState();
       const user = resolveUserFromRequest(req);
-      const userId = user ? user.id : 'usr_default';
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+      const state = store.getState();
+      const userId = user.id;
       const projects = state.projects.filter((item) => item.user_id === userId);
       return res.json({ data: projects, projects });
     } catch (err: any) {
@@ -2183,7 +2336,8 @@ export async function createApp() {
         return res.status(400).json({ error: 'Nome do projeto é obrigatório.' });
       }
       const user = resolveUserFromRequest(req);
-      const userId = user ? user.id : 'usr_default';
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+      const userId = user.id;
       const state = store.getState();
       const normalizedName = String(name).trim();
       const existing = state.projects.find((item) => item.user_id === userId && item.name.toLocaleLowerCase('pt-BR') === normalizedName.toLocaleLowerCase('pt-BR'));
@@ -2205,9 +2359,11 @@ export async function createApp() {
 
   app.put('/api/v1/projects/:id', (req: Request, res: Response) => {
     try {
+      const user = resolveUserFromRequest(req);
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
       const { name } = req.body;
       const state = store.getState();
-      const proj = state.projects.find((p) => p.id === req.params.id);
+      const proj = state.projects.find((p) => p.id === req.params.id && p.user_id === user.id);
       if (!proj) return res.status(404).json({ error: 'Projeto não encontrado.' });
       if (name && String(name).trim()) {
         proj.name = String(name).trim();
@@ -2224,11 +2380,12 @@ export async function createApp() {
     try {
       const state = store.getState();
       const user = resolveUserFromRequest(req);
-      const userId = user ? user.id : 'usr_default';
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+      const userId = user.id;
       const projectId = req.params.id;
 
-      // Find project by ID
-      const idx = state.projects.findIndex((p) => p.id === projectId);
+      // Find only a project owned by the authenticated user.
+      const idx = state.projects.findIndex((p) => p.id === projectId && p.user_id === userId);
       if (idx === -1) {
         return res.status(404).json({ error: 'Projeto não encontrado.' });
       }
@@ -2274,9 +2431,12 @@ export async function createApp() {
 
   app.get('/api/v1/field-coverage', (req: Request, res: Response) => {
     try {
+      const user = resolveUserFromRequest(req);
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
       const state = store.getState();
+      const ownedJobIds = new Set(state.jobs.filter((job) => job.user_id === user.id).map((job) => job.id));
       const { jobId } = req.query;
-      let targetPlaces = state.places;
+      let targetPlaces = state.places.filter((place) => ownedJobIds.has(place.job_id));
       if (jobId && typeof jobId === 'string' && jobId.trim()) {
         targetPlaces = targetPlaces.filter((p) => p.job_id === jobId.trim());
       }
@@ -2324,9 +2484,12 @@ export async function createApp() {
 
   app.post('/api/v1/export/csv', (req: Request, res: Response) => {
     try {
+      const user = resolveUserFromRequest(req);
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
       const { fields = [], filename, placeIds, jobId, query, category } = req.body;
       const state = store.getState();
-      let targetPlaces = state.places;
+      const ownedJobIds = new Set(state.jobs.filter((job) => job.user_id === user.id).map((job) => job.id));
+      let targetPlaces = state.places.filter((place) => ownedJobIds.has(place.job_id));
 
       if (Array.isArray(placeIds) && placeIds.length > 0) {
         const idSet = new Set(placeIds);
@@ -2349,7 +2512,6 @@ export async function createApp() {
         targetPlaces = targetPlaces.filter((p) => String(p.category || '').toLocaleLowerCase('pt-BR').includes(cat));
       }
 
-      const user = resolveUserFromRequest(req);
       const csvContent = buildCsvString(targetPlaces, fields as (keyof PlaceRecord)[]);
       const safeFilename = (filename || `mapscrape_export_${Date.now()}`).replace(/[^a-zA-Z0-9_\-]/g, '_');
 
@@ -2566,6 +2728,9 @@ export async function createApp() {
 
   app.post('/api/v1/scraper/settings', (req: Request, res: Response) => {
     try {
+      const user = resolveUserFromRequest(req);
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+      if (user.role !== 'admin') return res.status(403).json({ error: 'Acesso restrito a administradores.' });
       const { browserWsEndpoint, preferredEngine } = req.body;
       const state = store.getState();
       if (!state.settings) {
