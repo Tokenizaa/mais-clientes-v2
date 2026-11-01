@@ -753,7 +753,7 @@ class Store {
       return data?.cancel_requested === true;
     }
     const job = this.state.jobs.find((item) => item.id === id && item.user_id === userId);
-    return job?.status === 'stopped';
+    return (job as any)?.cancel_requested === true || job?.status === 'stopped';
   }
 
 
@@ -763,8 +763,7 @@ class Store {
         .from('scrape_jobs')
         .update({
           cancel_requested: true,
-          status: 'stopped',
-          status_message: 'Coleta interrompida pelo usuário.',
+          status_message: 'Pedido de interrupção recebido; aguardando encerrar a ficha atual.',
           current_step: 'Interrompendo...',
         })
         .eq('id', id)
@@ -775,18 +774,18 @@ class Store {
       if (!data) return null;
       const localJob = this.state.jobs.find((item) => item.id === id && item.user_id === userId);
       if (localJob) {
-        localJob.status = 'stopped';
-        localJob.status_message = 'Coleta interrompida pelo usuário.';
+        localJob.status_message = 'Pedido de interrupção recebido; aguardando encerrar a ficha atual.';
         localJob.current_step = 'Interrompendo...';
+        (localJob as any).cancel_requested = true;
       }
       return data as unknown as ScrapeJob;
     }
 
     const job = this.state.jobs.find((item) => item.id === id && item.user_id === userId);
     if (!job) return null;
-    job.status = 'stopped';
-    job.status_message = 'Coleta interrompida pelo usuário.';
+    job.status_message = 'Pedido de interrupção recebido; aguardando encerrar a ficha atual.';
     job.current_step = 'Interrompendo...';
+    (job as any).cancel_requested = true;
     store.persist();
     return job;
   }
@@ -1247,7 +1246,6 @@ async function executeScrapeJob(
   const updateProgress = async (message: string) => {
     job.current_step = message;
     job.heartbeat_at = new Date().toISOString();
-    store.persist();
     await store.persistScrapeProgress(job, jobLease || undefined);
   };
 
@@ -1329,6 +1327,10 @@ async function executeScrapeJob(
           if (!place.city && locationFallback.city) place.city = locationFallback.city;
           if (!place.state && locationFallback.state) place.state = locationFallback.state;
 
+          if (await store.isJobCancellationRequested(jobId, userId)) {
+            cancelled = true;
+            break;
+          }
           stage = 'persistence';
           const outcome = await store.persistScrapedPlace(job, place, sourcePlaceId, item.key, jobLease);
           if (outcome === 'duplicate') {
@@ -1461,7 +1463,6 @@ async function executeScrapeJob(
       job.current_step = 'Finalizada parcialmente';
     }
     job.completed_at = new Date().toISOString();
-    store.persist();
     await store.persistScrapeProgress(job, jobLease || undefined);
     await audit('job_finished', job.status === 'failed' ? 'error' : 'info', job.status_message, {
       status: job.status, collected: job.total_collected, duplicates: job.total_duplicates,
@@ -1483,7 +1484,6 @@ async function executeScrapeJob(
       retryable: false,
     });
     console.error(`[Scraper] Falha geral no trabalho ${jobId}:`, message);
-    store.persist();
     await store.persistScrapeProgress(job, jobLease || undefined).catch(() => {});
   } finally {
     if (leaseRenewal) clearInterval(leaseRenewal);
