@@ -82,3 +82,90 @@
 .animate-pulse-glow {
   animation: pulse-glow 2.5s ease-in-out infinite;
 }
+
+
+/* Restrained sci-fi ambience: visual depth stays behind the working surface. */
+.app-ambient {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 18% 12%, rgb(17 73 112 / 15%), transparent 42%),
+    radial-gradient(ellipse at 84% 78%, rgb(8 104 91 / 10%), transparent 38%),
+    linear-gradient(145deg, #050a16 0%, #071226 54%, #050b18 100%);
+}
+.app-ambient-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.62;
+}
+.app-ambient-glow {
+  position: absolute;
+  width: 34rem;
+  height: 34rem;
+  border-radius: 9999px;
+  filter: blur(90px);
+  opacity: 0.12;
+}
+.app-ambient-glow-a {
+  top: -24rem;
+  left: 18%;
+  background: #0ea5e9;
+}
+.app-ambient-glow-b {
+  right: -22rem;
+  bottom: -25rem;
+  background: #10b981;
+}
+
+/* Keep the app above the ambient layer. */
+.app-shell {
+  position: relative;
+  isolation: isolate;
+  min-height: 100vh;
+  background: transparent !important;
+}
+.app-shell > .app-ambient {
+  z-index: -1;
+}
+.app-content {
+  position: relative;
+}
+
+/* Subtle frosted surfaces only on primary content cards. */
+.app-content [class*="rounded-2xl"][class*="bg-[#0b1429]"] {
+  background: linear-gradient(145deg, rgb(13 27 51 / 82%), rgb(8 19 38 / 78%)) !important;
+  border-color: rgb(68 112 157 / 30%) !important;
+  box-shadow: 0 14px 38px rgb(0 0 0 / 20%), inset 0 1px 0 rgb(190 225 255 / 3%);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+.app-content [class*="rounded-2xl"][class*="bg-[#0b1429]"]:hover {
+  border-color: rgb(75 180 190 / 36%) !important;
+  box-shadow: 0 16px 42px rgb(0 0 0 / 24%), 0 0 22px rgb(14 165 233 / 5%);
+}
+
+/* Quiet green/cyan signal accents; red remains reserved for errors. */
+.app-shell :where(.text-emerald-400, .text-emerald-300) {
+  text-shadow: 0 0 12px rgb(52 211 153 / 18%);
+}
+.app-shell :where(.text-red-400, .text-rose-400, .text-red-300) {
+  text-shadow: 0 0 10px rgb(248 113 113 / 14%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell *,
+  .app-shell *::before,
+  .app-shell *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .app-ambient-canvas { display: none; }
+}
