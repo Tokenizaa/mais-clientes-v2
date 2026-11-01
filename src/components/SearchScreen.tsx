@@ -14,7 +14,7 @@ import {
   Folder,
   Tags,
 } from 'lucide-react';
-import { PlaceRecord, ScrapeJob } from '../shared/types';
+import { ScrapeJob } from '../shared/types';
 import { BRAZILIAN_STATES, POPULAR_CATEGORIES } from '../shared/brazilLocations';
 import { ScrapeEvolutionHUD } from './ScrapeEvolutionHUD';
 
@@ -36,8 +36,6 @@ interface SearchScreenProps {
   onGoToResults: () => void;
   initialProjectName?: string;
   initialCategoryName?: string;
-  places: PlaceRecord[];
-  totalPlaces: number;
   scrapeResultsContent?: React.ReactNode;
 }
 
@@ -50,8 +48,6 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   onGoToResults,
   initialProjectName,
   initialCategoryName,
-  places,
-  totalPlaces,
   scrapeResultsContent,
 }) => {
   const [segment, setSegment] = useState(initialCategoryName || '');
@@ -602,7 +598,6 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
               isScraping={isScraping}
               onStopScrape={onStopScrape}
               onGoToResults={onGoToResults}
-              recentPlaces={places}
             />
           </div>
 
