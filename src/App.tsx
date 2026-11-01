@@ -15,6 +15,7 @@ import { DashboardScreen } from './components/DashboardScreen';
 import { ProjectsScreen } from './components/ProjectsScreen';
 import { CredentialsScreen } from './components/CredentialsScreen';
 import { AuthScreen } from './components/AuthScreen';
+import { ProfileScreen } from './components/ProfileScreen';
 import { PlaceRecord, ScrapeJob } from './shared/types';
 import { Menu } from 'lucide-react';
 import { AmbientBackground } from './components/AmbientBackground';
@@ -49,7 +50,7 @@ export default function App() {
   const [currentTab, setCurrentTab] = useState<ScreenTab>('dashboard');
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [hasApiKey, setHasApiKey] = useState(() => Boolean(window.sessionStorage.getItem('mapscrape_session_token')));
-  const [authUser, setAuthUser] = useState<{ id: string; email: string; name: string; role: 'admin' | 'user' } | null>(() => {
+  const [authUser, setAuthUser] = useState<{ id: string; email: string; name: string; role: 'admin' | 'user'; createdAt?: string } | null>(() => {
     try { 
       const userJson = window.sessionStorage.getItem('mapscrape_user'); 
       return userJson ? JSON.parse(userJson) : null; 
@@ -187,7 +188,7 @@ export default function App() {
     setApiKeyInput('');
   };
 
-  const handleAuthenticated = (token: string, user: { id: string; email: string; name: string; role: 'admin' | 'user' }) => {
+  const handleAuthenticated = (token: string, user: { id: string; email: string; name: string; role: 'admin' | 'user'; createdAt?: string }) => {
     window.sessionStorage.removeItem('mapscrape_api_key');
     window.sessionStorage.setItem('mapscrape_session_token', token);
     window.sessionStorage.setItem('mapscrape_user', JSON.stringify(user));
@@ -527,6 +528,10 @@ export default function App() {
         isScrapingActive={isScraping}
         currentJob={currentJob}
         onStopScrape={handleStopScrape}
+        userName={authUser?.name || authUser?.email || 'Usuário'}
+        userEmail={authUser?.email || ''}
+        onProfileClick={() => setCurrentTab('profile')}
+        onLogout={handleDisconnectApiKey}
         isAdmin={authUser?.role === 'admin'}
         isOpenMobile={isMobileSidebarOpen}
         onCloseMobile={() => setIsMobileSidebarOpen(false)}
@@ -558,38 +563,15 @@ export default function App() {
           </div>
         )}
 
-        {/* Compact app toolbar: navigation and session actions, without redundant breadcrumb chrome. */}
-        <main className="app-content flex-1 min-w-0 px-4 sm:px-6 xl:px-8 py-4 sm:py-6">
+        <main className="app-content flex-1 min-w-0 px-4 sm:px-6 xl:px-8 pt-3 pb-6 sm:pt-5 sm:pb-8">
           <div className="mx-auto w-full max-w-[1600px]">
-            <div className="mb-5 flex min-h-10 items-center justify-between gap-3">
-              <button
-                type="button"
-                onClick={() => setIsMobileSidebarOpen(true)}
-                className="lg:hidden inline-flex h-10 w-10 items-center justify-center rounded-xl border border-cyan-400/20 bg-[#071326]/75 text-slate-300 shadow-lg shadow-black/20 backdrop-blur-xl"
-                aria-label="Abrir menu lateral"
-              >
-                <Menu className="h-5 w-5" />
-              </button>
-              <div className="ml-auto flex items-center gap-3">
-                {isScraping && (
-                  <span className="inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1.5 text-xs font-semibold text-cyan-200">
-                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-300" />
-                    Coleta ativa
-                  </span>
-                )}
-                <span className="hidden sm:inline text-xs text-slate-400">
-                  {authUser?.name || authUser?.email || 'Sessão conectada'}
-                </span>
-                <button
-                  type="button"
-                  onClick={handleDisconnectApiKey}
-                  className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-slate-300 transition-colors hover:border-cyan-400/30 hover:bg-cyan-400/10 hover:text-white"
-                >
-                  Sair
-                </button>
-              </div>
+            <div className="mb-3 flex items-center justify-between lg:hidden">
+              <button type="button" onClick={() => setIsMobileSidebarOpen(true)} className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-cyan-400/20 bg-[#071326]/75 text-slate-300 shadow-lg shadow-black/20 backdrop-blur-xl" aria-label="Abrir menu lateral"><Menu className="h-5 w-5" /></button>
+              {isScraping && <span className="inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1.5 text-xs font-semibold text-cyan-200"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-300" />Coleta ativa</span>}
             </div>
           {currentTab === 'dashboard' && <DashboardScreen totalPlaces={totalPlaces} jobs={jobs} currentJob={currentJob} isScraping={isScraping} onNavigate={setCurrentTab} />}
+
+          {currentTab === 'profile' && authUser && <ProfileScreen user={authUser} onSave={async (name) => { const response = await apiFetch('/api/auth/me', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }); const payload = await response.json().catch(() => ({})); if (!response.ok || !payload.user) throw new Error(payload.error || 'Não foi possível atualizar o perfil.'); setAuthUser(payload.user); window.sessionStorage.setItem('mapscrape_user', JSON.stringify(payload.user)); }} />}
 
           {currentTab === 'projects' && (
             <ProjectsScreen
