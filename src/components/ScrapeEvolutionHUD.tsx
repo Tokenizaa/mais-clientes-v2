@@ -247,8 +247,11 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
                 {percent}%
               </span>
               <span className="text-[10px] uppercase font-semibold text-blue-300/80 tracking-wider">
-                {currentJob.total_collected} de {currentJob.limit_requested}
+                {isFeedExhausted ? 'Lista encerrada' : isTargetReached ? 'Meta atingida' : isAccessRestricted ? 'Acesso limitado' : isFatalScrapeError ? 'Falha técnica' : `${currentJob.total_collected} de ${currentJob.limit_requested}`}
               </span>
+              {(isFeedExhausted || isTargetReached) && (
+                <span className="text-[9px] text-slate-400">{currentJob.total_collected} / {currentJob.limit_requested} novos</span>
+              )}
             </div>
           </div>
 
