@@ -912,7 +912,7 @@ class Store {
           p_session_id: job.search_session_id, p_user_id: job.user_id, p_lease_token: lease.token,
           p_generation: lease.generation, p_lease_seconds: 90,
         });
-        if (leaseError || renewed !== true) throw new Error('Lease perdida; gravação do worker bloqueada.');
+        if (leaseError || renewed !== true) throw new Error('Lease perdida; gravação bloqueada.');
       }
       if (newPlace) {
         const p = newPlace;
@@ -1006,7 +1006,7 @@ class Store {
       }
       if (jobError) throw new Error(`Falha ao sincronizar progresso da coleta: ${jobError.message}`);
 
-      // A sessão só pode ser atualizada pelo worker que possui a lease.
+      // A sessão só pode ser atualizada pelo processo que possui a lease.
       // Nunca envie null/"null" como filtro UUID: sem lease, não toque no checkpoint.
       if (job.search_session_id && lease) {
         const { error: sessionError } = await client.from('scrape_search_sessions').update({
@@ -1036,7 +1036,7 @@ class Store {
     }
 
     const snapshot = JSON.parse(JSON.stringify(this.state)) as StoreState;
-    // Candidate URLs are normalized in the relational queue and are hydrated by workers.
+    // Candidate URLs are normalized in the relational queue before inline extraction.
     for (const snapshotJob of snapshot.jobs) delete snapshotJob.candidate_urls;
     this.pendingWrite = this.pendingWrite.catch(() => undefined).then(async () => {
       const client = this.supabase!;
@@ -2063,7 +2063,7 @@ export async function createApp() {
         return res.status(404).json({ error: 'Coleta não encontrada.' });
       }
 
-      // Do not delete the durable cursor while a worker can still be processing it.
+      // Preserve the durable cursor while the candidate is still being processed.
       if (state.jobs[index].status === 'running') {
         return res.status(409).json({ error: 'Interrompa a coleta antes de excluir o histórico.' });
       }
