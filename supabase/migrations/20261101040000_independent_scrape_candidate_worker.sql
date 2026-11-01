@@ -269,17 +269,17 @@ begin
 
   -- A worker that dies on its final attempt cannot leave a permanent
   -- processing row after its lease expires.
-  update public.scrape_candidates
+  update public.scrape_candidates c
      set status = 'failed',
-         last_error = coalesce(last_error, 'Worker lease expired after maximum attempts'),
+         last_error = coalesce(c.last_error, 'Worker lease expired after maximum attempts'),
          processing_token = null,
          processing_locked_until = null,
          processing_worker_id = null,
          next_attempt_at = null,
          updated_at = now()
-   where status = 'processing'
-     and (processing_locked_until is null or processing_locked_until <= now())
-     and attempt_count >= p_max_attempts;
+   where c.status = 'processing'
+     and (c.processing_locked_until is null or c.processing_locked_until <= now())
+     and c.attempt_count >= p_max_attempts;
 
   return query
   with next_candidate as (
