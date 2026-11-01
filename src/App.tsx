@@ -8,6 +8,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Sidebar, ScreenTab } from './components/Sidebar';
 import { SearchScreen } from './components/SearchScreen';
 import { ResultsScreen } from './components/ResultsScreen';
+import { ScrapeResultCards } from './components/ScrapeResultCards';
 import { ExportScreen } from './components/ExportScreen';
 import { HistoryScreen } from './components/HistoryScreen';
 import { LogsScreen } from './components/LogsScreen';
@@ -337,17 +338,6 @@ export default function App() {
     progressPollRef.current = setInterval(() => { void pollStatus(); }, 2000);
   }, [loadHistory, loadPlaces]);
 
-  // Restore an in-progress job after a reload so its persisted cursor can resume.
-  useEffect(() => {
-    if (currentJob) return;
-    const resumableJob = jobs.find((job) => job.status === 'running' && Boolean(job.phase));
-    if (!resumableJob) return;
-    setCurrentJob(resumableJob);
-    setSelectedJobId(resumableJob.id);
-    setIsScraping(true);
-    subscribeToJobStream(resumableJob.id);
-  }, [jobs, currentJob, subscribeToJobStream]);
-
   // Clean up progress polling on unmount
   useEffect(() => {
     return () => {
@@ -369,7 +359,7 @@ export default function App() {
 
       const contentType = res.headers.get('content-type') || '';
       const responseText = await res.text();
-      let data: { data?: { jobId?: string }; jobId?: string; error?: string; message?: string; resumed?: boolean } | null = null;
+      let data: { data?: { jobId?: string }; jobId?: string; error?: string; message?: string } | null = null;
 
       if (contentType.includes('application/json')) {
         try {
@@ -409,9 +399,7 @@ export default function App() {
       subscribeToJobStream(jobId);
       void loadHistory();
       setAppNotification({
-        message: data?.resumed
-          ? (data.message || `Coleta retomada para "${segment}" em "${location}".`)
-          : `Coleta iniciada para "${segment}" em "${location}"!`,
+        message: `Coleta iniciada para "${segment}" em "${location}"!`,
         type: 'success',
       });
     } catch (err: any) {
@@ -422,38 +410,58 @@ export default function App() {
     }
   };
 
+  const resetScrapeView = () => {
+    if (progressPollRef.current) clearInterval(progressPollRef.current);
+    progressPollRef.current = null;
+    setIsScraping(false);
+    setCurrentJob(null);
+    setSelectedJobId(undefined);
+    setPlaces([]);
+    setTotalPlaces(0);
+    setSelectedPlaceIds(new Set());
+    setCurrentPage(1);
+  };
+
   const handleStopScrape = async () => {
     if (!currentJob || currentJob.status !== 'running') return;
+    const jobId = currentJob.id;
     try {
-      const response = await apiFetch(`/api/v1/jobs/${encodeURIComponent(currentJob.id)}/stop`, {
+      const response = await apiFetch(`/api/v1/jobs/${encodeURIComponent(jobId)}/stop`, {
         method: 'POST',
         headers: { Accept: 'application/json' },
         cache: 'no-store',
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok || body?.success !== true) {
-        throw new Error(body?.error || `Falha ao solicitar interrupção (HTTP ${response.status}).`);
+        throw new Error(body?.error || `Falha ao interromper (HTTP ${response.status}).`);
       }
-
-      // Keep polling until the worker confirms it has actually stopped.
-      setCurrentJob((job) => job && job.id === currentJob.id ? {
-        ...job,
-        status_message: 'Pedido recebido. Encerrando a coleta com segurança...',
-        current_step: 'Interrompendo...',
-      } : job);
-      void loadHistory();
-      setAppNotification({
-        message: 'Pedido de interrupção enviado ao motor de extração.',
-        type: 'info',
-      });
+      resetScrapeView();
+      await loadHistory();
+      setAppNotification({ message: 'Coleta interrompida. Uma nova pesquisa começará do zero.', type: 'info' });
     } catch (err: any) {
-      console.error('Stop error:', err);
-      setAppNotification({
-        message: err instanceof Error ? err.message : 'Não foi possível interromper a coleta.',
-        type: 'error',
-      });
+      setAppNotification({ message: err instanceof Error ? err.message : 'Não foi possível interromper a coleta.', type: 'error' });
     }
   };
+
+  // Se a aba for fechada ou atualizada, solicita cancelamento do job atual.
+  // keepalive permite enviar a solicitação durante o unload sem restaurar a coleta depois.
+  useEffect(() => {
+    if (!isScraping || !currentJob?.id) return;
+    const jobId = currentJob.id;
+    const stopOnPageExit = () => {
+      const token = getAuthToken();
+      void fetch(`/api/v1/jobs/${encodeURIComponent(jobId)}/stop`, {
+        method: 'POST',
+        keepalive: true,
+        headers: {
+          Accept: 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      }).catch(() => {});
+    };
+    window.addEventListener('pagehide', stopOnPageExit);
+    return () => window.removeEventListener('pagehide', stopOnPageExit);
+  }, [isScraping, currentJob?.id]);
 
   const handleDeleteJob = async (jobId: string) => {
     try {
@@ -652,34 +660,7 @@ export default function App() {
               onGoToResults={() => setCurrentTab('results')}
               initialProjectName={preselectedProject}
               initialCategoryName={preselectedCategory}
-              scrapeResultsContent={
-                <ResultsScreen
-                  places={places}
-                  totalPlaces={totalPlaces}
-                  jobs={jobs}
-                  selectedJobId={currentJob?.id || selectedJobId}
-                  onSelectJobId={(id) => {
-                    setSelectedJobId(id);
-                    if (id !== currentJob?.id) setCurrentTab('results');
-                  }}
-                  selectedPlaceIds={selectedPlaceIds}
-                  onToggleSelectPlace={handleToggleSelectPlace}
-                  onToggleSelectAll={handleToggleSelectAll}
-                  onGoToExport={() => setCurrentTab('export')}
-                  searchQuery={searchQuery}
-                  onSearchQueryChange={setSearchQuery}
-                  selectedCategory={categoryFilter}
-                  onCategoryChange={(value) => { setCategoryFilter(value); setCurrentPage(1); }}
-                  sortBy={sortBy}
-                  sortOrder={sortOrder}
-                  onSortChange={handleSortChange}
-                  currentPage={currentPage}
-                  pageSize={pageSize}
-                  onPageChange={setCurrentPage}
-                  onPageSizeChange={setPageSize}
-                  isLoading={isLoadingPlaces}
-                />
-              }
+              scrapeResults={currentJob ? places.filter((place) => place.job_id === currentJob.id) : []}
             />
           )}
 
