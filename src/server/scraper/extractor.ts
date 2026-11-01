@@ -55,7 +55,14 @@ export async function extractPlaceDetails(page: Page, jobId: string, targetUrl: 
     };
     const cleanLabel = (value: string): string => value.replace(/^(endereço|address|adresse|dirección|telefone|phone|téléphone|teléfono|site|website|sito web|sitio web|preço|price|prix)\s*:\s*/i, '').trim();
 
-    const name = firstText(selectors.title);
+    // Ignore overlay headings such as "Horários" and "Avaliações".
+    // The business title must be a real h1 outside dialogs.
+    const genericHeadings = /^(horários?|opening hours|reviews?|avaliações?|sobre|about|fotos|photos|directions|como chegar|menu)$/i;
+    const titleCandidates = Array.from(document.querySelectorAll('h1'))
+      .filter((node) => !node.closest('[role="dialog"],[aria-modal="true"]'))
+      .map((node) => text(node).replace(/\s+/g, ' ').trim())
+      .filter((value) => value && value.length <= 180 && !genericHeadings.test(value));
+    const name = titleCandidates[0] || '';
     const category = firstText(selectors.category);
 
     // Maps commonly puts rating and review count together in one accessible label.
@@ -135,17 +142,19 @@ export async function extractPlaceDetails(page: Page, jobId: string, targetUrl: 
     const scheduleRows = new Set<string>();
     const addScheduleRow = (value: string) => {
       const normalized = value.replace(/\s+/g, ' ').trim();
-      if (normalized && dayPattern.test(normalized) && /\d{1,2}[:h.]?\d{0,2}|fechado|closed|aberto|open|24 horas/i.test(normalized)) {
+      if (/^(segunda(?:-feira)?|terça(?:-feira)?|quarta(?:-feira)?|quinta(?:-feira)?|sexta(?:-feira)?|sábado|domingo|monday|tuesday|wednesday|thursday|friday|saturday|sunday|montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag)\b/i.test(normalized) &&
+          /\d{1,2}[:h.]?\d{0,2}|fechado|closed|aberto|open|24 horas/i.test(normalized)) {
         scheduleRows.add(normalized);
       }
     };
     if (hoursTable) {
       Array.from(hoursTable.querySelectorAll('tr,[role="row"]')).forEach((row) => addScheduleRow(text(row)));
     }
-    // Some Maps layouts render the weekly schedule as accessible rows rather than a table.
-    document.querySelectorAll('[role="row"],[aria-label],[data-item-id="oh"],button[data-item-id="oh"]').forEach((node) => {
+    // Read actual schedule rows only. Scanning every aria-label mixes unrelated
+    // controls, suggested businesses and navigation text into opening_hours.
+    document.querySelectorAll('[role="row"]').forEach((node) => {
       const value = [attr(node, 'aria-label'), text(node)].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
-      if (value.length < 220) addScheduleRow(value);
+      if (value.length < 160) addScheduleRow(value);
     });
     let opening_hours = Array.from(scheduleRows).join(' | ');
     if (!opening_hours) {
@@ -633,6 +642,10 @@ export async function extractPlaceDetails(page: Page, jobId: string, targetUrl: 
   }, SELECTORS.place);
 
   const finalUrl = raw.currentUrl || targetUrl;
+  const extractedName = cleanText(raw.name);
+  if (!extractedName || /^(horários?|opening hours|reviews?|avaliações?|sobre|about|fotos|photos|directions|como chegar|menu)$/i.test(extractedName)) {
+    throw new Error('place_name_not_found: painel sem título válido do estabelecimento; registro não será persistido');
+  }
   const coords = extractCoordinates(finalUrl);
   const address = normalizeAddress(raw.address);
   const addressComponents = parseAddressComponents(address);
