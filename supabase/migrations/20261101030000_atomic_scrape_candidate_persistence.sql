@@ -167,8 +167,25 @@ begin
     end if;
 
     v_place_json := p_place || jsonb_build_object(
+      'id', coalesce(nullif(p_place->>'id', ''), 'plc_' || gen_random_uuid()::text),
       'job_id', p_job_id,
-      'source_url', coalesce(nullif(p_place->>'source_url', ''), nullif(p_place->>'maps_url', ''), p_source_url)
+      'name', coalesce(p_place->>'name', ''),
+      'category', coalesce(p_place->>'category', ''),
+      'address', coalesce(p_place->>'address', ''),
+      'phone', coalesce(p_place->>'phone', ''),
+      'website', coalesce(p_place->>'website', ''),
+      'rating', coalesce(p_place->>'rating', ''),
+      'review_count', coalesce(p_place->>'review_count', ''),
+      'price_range', coalesce(p_place->>'price_range', ''),
+      'opening_hours', coalesce(p_place->>'opening_hours', ''),
+      'business_status', coalesce(p_place->>'business_status', ''),
+      'latitude', coalesce(p_place->>'latitude', ''),
+      'longitude', coalesce(p_place->>'longitude', ''),
+      'maps_url', coalesce(p_place->>'maps_url', ''),
+      'description', coalesce(p_place->>'description', ''),
+      'services_attributes', coalesce(p_place->>'services_attributes', ''),
+      'source_url', coalesce(nullif(p_place->>'source_url', ''), nullif(p_place->>'maps_url', ''), p_source_url),
+      'collected_at', coalesce(p_place->>'collected_at', now()::text)
     );
 
     -- Serialize all plausible identity keys in deterministic order. This
