@@ -1532,8 +1532,6 @@ async function executeScrapeJob(
                 url: item.key, collected: job.total_collected, duplicates: job.total_duplicates,
                 original_error_name: error instanceof Error ? error.name : typeof error,
                 original_error_message: message.slice(0, 500),
-                browser_connected: browser.isConnected(),
-                page_closed: page.isClosed(),
               });
               await updateProgress(`Chromium reconectado; retomando após ${retriedPlace.name || 'a ficha processada'}...`);
             } catch (retryError) {
@@ -1544,8 +1542,6 @@ async function executeScrapeJob(
                 original_error_message: message.slice(0, 500),
                 recovery_error_name: retryError instanceof Error ? retryError.name : typeof retryError,
                 recovery_error_message: retryMessage.slice(0, 500),
-                browser_connected: browser?.isConnected() ?? false,
-                page_closed: page.isClosed(),
               });
             }
           }
