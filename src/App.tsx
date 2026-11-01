@@ -632,7 +632,7 @@ export default function App() {
                   pageSize={500}
                   onPageChange={() => {}}
                   onPageSizeChange={() => {}}
-                  isLoading={isLoadingPlaces}
+                  isLoading={false}
                 />
               }
             />
