@@ -759,6 +759,7 @@ class Store {
   async registerScrapeCandidate(
     job: ScrapeJob,
     sourceKey: string,
+    sourcePlaceId: string | null,
     sourceUrl: string,
     lease: { token: string; generation: number }
   ): Promise<{ candidateId: string; ordinal: number; status: string; inserted: boolean }> {
@@ -773,11 +774,17 @@ class Store {
       p_user_id: job.user_id,
       p_session_id: job.search_session_id,
       p_source_key: sourceKey,
+      p_source_place_id: sourcePlaceId,
       p_source_url: sourceUrl,
       p_lease_token: lease.token,
       p_lease_generation: lease.generation,
     });
     if (error || !data) throw new Error('Falha ao registrar ficha na fila durável: ' + (error?.message || 'resposta vazia'));
+    job.total_found = Number(data.total_found ?? job.total_found);
+    job.total_duplicates = Number(data.total_duplicates ?? job.total_duplicates);
+    job.total_collected = Number(data.total_collected ?? job.total_collected);
+    job.candidate_cursor = Number(data.candidate_cursor ?? job.candidate_cursor);
+    if (data.checkpoint && typeof data.checkpoint === 'object') job.discovery_checkpoint = data.checkpoint;
     return {
       candidateId: String(data.candidate_id),
       ordinal: Number(data.ordinal || 0),
@@ -1498,26 +1505,22 @@ async function executeScrapeJob(
         let detailPage: Page | null = null;
         try {
           if (!sessionLease) throw new Error('Lease ausente ao registrar ficha.');
-          const candidate = await store.registerScrapeCandidate(job, sourceKey, item.url, sessionLease);
+          const candidate = await store.registerScrapeCandidate(
+            job, sourceKey, extractSourcePlaceId(item.url) || null, item.url, sessionLease
+          );
           candidateId = candidate.candidateId;
           if (candidate.status === 'processed' || candidate.status === 'duplicate') {
-            job.total_found = Math.max(job.total_found, candidate.ordinal + 1);
+            if (candidate.status === 'duplicate') {
+              await audit('duplicate_skipped', 'info', 'Duplicado identificado no feed e descartado sem abrir a ficha.', {
+                url: item.key, duplicate_count: job.total_duplicates,
+              });
+            }
             continue;
           }
-          job.total_found = Math.max(job.total_found, candidate.ordinal + 1);
           await updateProgress(`Analisando ficha ${job.total_found}; ${job.total_collected}/${limit} novos contatos salvos...`);
           await audit('candidate_discovered', 'debug', 'Ficha registrada na fila durável; iniciando deduplicação e extração.', {
             url: item.key, candidate_id: candidateId, ordinal: candidate.ordinal,
           });
-
-          const isDuplicate = await store.isExistingPlace({ source_url: item.url, maps_url: item.url });
-          if (isDuplicate) {
-            const result = await completeCandidate(candidateId, sourceKey, item.url, 'duplicate');
-            await audit('duplicate_skipped', 'info', 'Duplicado descartado silenciosamente; checkpoint confirmado.', {
-              url: item.key, duplicate_count: job.total_duplicates, outcome: result.outcome,
-            });
-            continue;
-          }
 
           await audit('extraction_started', 'debug', 'Abrindo ficha inédita para extração.', { url: item.key });
           detailPage = await browser!.newPage();
@@ -1528,14 +1531,6 @@ async function executeScrapeJob(
           if (job.category_id) (place as any).category_id = job.category_id;
           if (!place.city && locationFallback.city) place.city = locationFallback.city;
           if (!place.state && locationFallback.state) place.state = locationFallback.state;
-
-          if (place.name && place.address && await store.isExistingPlace(place)) {
-            const result = await completeCandidate(candidateId, sourceKey, item.url, 'duplicate', place);
-            await audit('duplicate_skipped', 'info', 'Duplicado descartado silenciosamente; checkpoint confirmado.', {
-              url: item.key, name: place.name, duplicate_count: job.total_duplicates, outcome: result.outcome,
-            });
-            continue;
-          }
 
           const result = await completeCandidate(candidateId, sourceKey, item.url, 'saved', place);
           if (result.outcome === 'duplicate') {
@@ -1576,14 +1571,9 @@ async function executeScrapeJob(
               if (!retriedPlace.city && locationFallback.city) retriedPlace.city = locationFallback.city;
               if (!retriedPlace.state && locationFallback.state) retriedPlace.state = locationFallback.state;
 
-              // Revalida antes de inserir: a primeira tentativa pode ter gravado antes de perder a conexão.
-              const alreadySaved = retriedPlace.name && retriedPlace.address
-                ? await store.isExistingPlace(retriedPlace)
-                : await store.isExistingPlace({ source_url: item.url, maps_url: item.url });
+              // A RPC decide duplicidade e persistência na mesma transação; não há SELECT prévio.
               const result = await completeCandidate(
-                candidateId, sourceKey, item.url,
-                alreadySaved ? 'duplicate' : 'saved',
-                retriedPlace
+                candidateId, sourceKey, item.url, 'saved', retriedPlace
               );
               if (result.outcome === 'saved' && !result.alreadyCompleted) state.places.push(retriedPlace);
               await audit('candidate_recovery_processed', 'info', 'Ficha pendente reprocessada; preparando retomada do feed.', {
