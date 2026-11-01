@@ -798,7 +798,6 @@ class Store {
     if (!this.supabase) {
       const actual = outcome;
       if (actual === 'saved' && place) {
-        this.state.places.push(place);
         job.total_collected += 1;
       } else {
         job.total_duplicates += 1;
@@ -1457,7 +1456,6 @@ async function executeScrapeJob(
     let feedExhausted = false;
     let previousCount = 0;
     let stagnantRounds = 0;
-    let ordinalThisRun = 0;
     const seenThisRun = new Set<string>();
     const locationFallback = parseSearchLocationFallback(location);
     const feedSelector = 'div[role="feed"]';
@@ -1492,10 +1490,12 @@ async function executeScrapeJob(
         // The anchor itself is never processed twice.
         if (anchor && item.key === anchor) continue;
         const sourceKey = extractSourcePlaceId(item.url) || item.key;
+        let candidateId = '';
         let detailPage: Page | null = null;
         try {
           if (!sessionLease) throw new Error('Lease ausente ao registrar ficha.');
           const candidate = await store.registerScrapeCandidate(job, sourceKey, item.url, sessionLease);
+          candidateId = candidate.candidateId;
           if (candidate.status === 'processed' || candidate.status === 'duplicate') {
             job.total_found = Math.max(job.total_found, candidate.ordinal + 1);
             continue;
@@ -1508,7 +1508,7 @@ async function executeScrapeJob(
 
           const isDuplicate = await store.isExistingPlace({ source_url: item.url, maps_url: item.url });
           if (isDuplicate) {
-            const actual = await completeCandidate(candidate.candidateId, sourceKey, item.url, 'duplicate');
+            const actual = await completeCandidate(candidateId, sourceKey, item.url, 'duplicate');
             await audit('duplicate_skipped', 'info', 'Duplicado descartado silenciosamente; checkpoint confirmado.', {
               url: item.key, duplicate_count: job.total_duplicates, outcome: actual,
             });
@@ -1577,7 +1577,7 @@ async function executeScrapeJob(
                 ? await store.isExistingPlace(retriedPlace)
                 : await store.isExistingPlace({ source_url: item.url, maps_url: item.url });
               const actual = await completeCandidate(
-                candidate.candidateId, sourceKey, item.url,
+                candidateId, sourceKey, item.url,
                 alreadySaved ? 'duplicate' : 'saved',
                 alreadySaved ? retriedPlace : retriedPlace
               );
