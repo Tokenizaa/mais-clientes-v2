@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { ScrapeJob } from './types.js';
-import { calculateScrapeProgressPercent } from './scrape-progress.js';
+import { calculateScrapeProgressPercent, isFeedExhaustedJob } from './scrape-progress.js';
 
 function job(overrides: Partial<ScrapeJob> = {}): ScrapeJob {
   return {
@@ -58,6 +58,26 @@ test('confirmed natural feed exhaustion reports 100 percent even when the new-co
     total_duplicates: 102,
     total_errors: 2,
   })), 100);
+});
+
+test('terminal job with explicit end-of-list step is recognized if completion_reason is missing', () => {
+  const ended = job({
+    status: 'partial',
+    current_step: 'Fim da lista de resultados',
+    total_found: 106,
+    total_collected: 0,
+    total_duplicates: 104,
+    total_errors: 2,
+  });
+  assert.equal(isFeedExhaustedJob(ended), true);
+  assert.equal(calculateScrapeProgressPercent(ended), 100);
+});
+
+test('a running job is never considered exhausted based only on a stale step label', () => {
+  assert.equal(isFeedExhaustedJob(job({
+    status: 'running',
+    current_step: 'Fim da lista de resultados',
+  })), false);
 });
 
 test('access restriction and unconfirmed stagnation do not masquerade as completed progress', () => {
