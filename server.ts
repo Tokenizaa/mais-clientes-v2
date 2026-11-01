@@ -675,34 +675,33 @@ class Store {
   }
 
 
-  async getOrCreateSearchSession(input: {
+  async createSearchSession(input: {
     userId: string; segment: string; location: string; projectId?: string; categoryId?: string;
   }): Promise<{ id: string; next_ordinal: number; total_found: number; discovery_checkpoint: Record<string, any>; exhausted: boolean }> {
     const normalize = (value: string) => value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('pt-BR');
     const scopeKey = crypto.createHash('sha256').update([
       normalize(input.segment), normalize(input.location), input.projectId || '', input.categoryId || '',
     ].join('|')).digest('hex');
-    if (!this.supabase) {
-      return { id: 'local_' + scopeKey.slice(0, 32), next_ordinal: 0, total_found: 0, discovery_checkpoint: {}, exhausted: false };
-    }
-    const client = this.supabase;
-    const read = async () => client.from('scrape_search_sessions').select('*')
-      .eq('user_id', input.userId).eq('scope_key', scopeKey).maybeSingle();
-    const current = await read();
-    if (current.error) throw new Error('Falha ao recuperar sessão de coleta: ' + current.error.message);
-    if (current.data) return current.data as any;
     const row = {
-      id: 'sess_' + scopeKey.slice(0, 32), user_id: input.userId, scope_key: scopeKey,
-      segment: input.segment, location: input.location, project_id: input.projectId || null,
-      category_id: input.categoryId || null, next_ordinal: 0, total_found: 0,
-      discovery_checkpoint: {}, exhausted: false, updated_at: new Date().toISOString(),
+      id: 'sess_' + crypto.randomUUID(),
+      user_id: input.userId,
+      scope_key: scopeKey,
+      segment: input.segment,
+      location: input.location,
+      project_id: input.projectId || null,
+      category_id: input.categoryId || null,
+      next_ordinal: 0,
+      total_found: 0,
+      discovery_checkpoint: {},
+      exhausted: false,
+      updated_at: new Date().toISOString(),
     };
-    const inserted = await client.from('scrape_search_sessions').insert(row).select('*').single();
-    if (!inserted.error && inserted.data) return inserted.data as any;
-    // A concurrent request may have created the unique user/scope row first.
-    const raced = await read();
-    if (!raced.error && raced.data) return raced.data as any;
-    throw new Error('Falha ao criar sessão de coleta: ' + (inserted.error?.message || raced.error?.message || 'registro indisponível'));
+    if (!this.supabase) return row;
+    const inserted = await this.supabase.from('scrape_search_sessions').insert(row).select('*').single();
+    if (inserted.error || !inserted.data) {
+      throw new Error('Falha ao criar sessão isolada de coleta: ' + (inserted.error?.message || 'registro indisponível'));
+    }
+    return inserted.data as any;
   }
 
   async isExistingPlace(place: Partial<PlaceRecord>): Promise<boolean> {
@@ -1556,10 +1555,7 @@ async function executeScrapeJob(
               error_name: error instanceof Error ? error.name : typeof error,
               error_message: message.slice(0, 500),
               error_stack: error instanceof Error ? error.stack?.split('\n').slice(0, 6).join('\n') : null,
-              browser_connected: browser?.isConnected() ?? false,
-              detail_page_closed: detailPage?.isClosed() ?? null,
-              search_page_closed: page.isClosed(),
-            });
+                          });
             console.error(`[Scraper] Falha na ficha ${item.key}:`, message);
           }
           // O feed original pode ter sido encerrado. Encerrar este ciclo é seguro:
@@ -1867,7 +1863,7 @@ export async function createApp() {
         };
         state.categories.unshift(category);
       }
-      const searchSession = await store.getOrCreateSearchSession({
+      const searchSession = await store.createSearchSession({
         userId, segment: String(segment).trim(), location: String(location).trim(),
         projectId: project.id, categoryId: category.id,
       });
