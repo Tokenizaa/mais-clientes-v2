@@ -1,5 +1,5 @@
 -- Transactional integration test for atomic scrape candidate persistence.
--- Run only after applying 20261101030000_atomic_scrape_candidate_persistence.sql.
+-- Run only after applying 20261101035329_atomic_scrape_candidate_persistence.sql.
 -- All fixture rows are rolled back; no production data is retained.
 
 begin;
