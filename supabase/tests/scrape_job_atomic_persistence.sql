@@ -86,7 +86,9 @@ begin
       v_job.total_found, v_job.total_collected, v_job.total_duplicates, v_job.total_errors;
   end if;
 
-  if public.claim_scrape_job_lease(v_job_id, v_user_id, gen_random_uuid(), 90) is not null then
+  select * into v_lease
+    from public.claim_scrape_job_lease(v_job_id, v_user_id, gen_random_uuid(), 90);
+  if v_lease.acquired is distinct from false then
     raise exception 'a second worker unexpectedly acquired an active job lease';
   end if;
 
