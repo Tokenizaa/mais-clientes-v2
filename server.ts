@@ -1457,8 +1457,9 @@ async function executeScrapeJob(
 
       let links: string[];
       try {
-        links = await page.$eval('a[href*="/maps/place/"]', (anchors) =>
-          anchors.map((a) => (a as HTMLAnchorElement).href)
+        links = await page.evaluate(() =>
+          Array.from(document.querySelectorAll('a[href*="/maps/place/"]'))
+            .map((element) => (element as HTMLAnchorElement).href)
             .filter((href): href is string => Boolean(href) && href.includes('/maps/place/'))
         );
       } catch (error) {
