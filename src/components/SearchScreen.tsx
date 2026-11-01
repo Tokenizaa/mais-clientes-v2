@@ -17,6 +17,8 @@ import {
 import { ScrapeJob } from '../shared/types';
 import { BRAZILIAN_STATES, POPULAR_CATEGORIES } from '../shared/brazilLocations';
 import { ScrapeEvolutionHUD } from './ScrapeEvolutionHUD';
+import { ScrapeResultCards } from './ScrapeResultCards';
+import type { PlaceRecord } from '../shared/types';
 
 async function accountFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const token =
@@ -36,7 +38,7 @@ interface SearchScreenProps {
   onGoToResults: () => void;
   initialProjectName?: string;
   initialCategoryName?: string;
-  scrapeResultsContent?: React.ReactNode;
+  scrapeResults?: PlaceRecord[];
 }
 
 export const SearchScreen: React.FC<SearchScreenProps> = ({
@@ -48,7 +50,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   onGoToResults,
   initialProjectName,
   initialCategoryName,
-  scrapeResultsContent,
+  scrapeResults = [],
 }) => {
   const [segment, setSegment] = useState(initialCategoryName || '');
   const [projectName, setProjectName] = useState(initialProjectName || '');
@@ -601,19 +603,8 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             />
           </div>
 
-          {/* Reutiliza a Base de Leads oficial para exibir os registros desta coleta. */}
-          <section className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
-              <div>
-                <h2 className="text-xl font-bold text-white">Resultados desta raspagem</h2>
-                <p className="mt-1 text-sm text-slate-400">Os registros abaixo são os mesmos persistidos na Base de Leads.</p>
-              </div>
-              <span className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-sm font-semibold text-blue-300 tabular-nums">
-                {currentJob.total_collected} / {currentJob.limit_requested} novos
-              </span>
-            </div>
-            {scrapeResultsContent}
-          </section>
+          {/* Apenas os cards dos estabelecimentos salvos nesta execução. */}
+          <ScrapeResultCards places={scrapeResults} />
         </>
       )}
 
