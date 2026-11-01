@@ -282,7 +282,7 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
             {latestPlaces.map((place) => (
               <div
                 key={place.id}
-                className="p-3.5 rounded-xl bg-[#081a33]/70 hover:bg-[#102b50] border border-blue-800/45 hover:border-blue-500/40 transition-all text-left space-y-2 group shadow-sm"
+                className="p-5 flex flex-col justify-between rounded-2xl border border-blue-800/45 bg-[#081a33]/95 shadow-lg shadow-black/25 transition-all hover:border-sky-500/50 text-left space-y-3 group"
               >
                 <div className="flex items-start justify-between gap-2">
                   <h4 className="text-base font-bold text-slate-100 group-hover:text-sky-300 transition-colors line-clamp-2 leading-snug">
@@ -300,7 +300,7 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
                   {place.category || currentJob.segment}
                 </div>
 
-                <div className="space-y-1 text-[10px] text-slate-400 border-t border-blue-800/45 pt-1.5">
+                <div className="space-y-1.5 text-xs text-slate-400 border-t border-blue-800/45 pt-3">
                   {place.phone ? (
                     <div className="flex items-center gap-1.5 text-slate-300">
                       <Phone className="w-3 h-3 text-cyan-400 shrink-0" />
@@ -314,8 +314,8 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
                   )}
 
                   {place.website ? (
-                    <div className="flex items-center gap-1.5 text-blue-400 truncate">
-                      <Globe className="w-3 h-3 text-blue-400 shrink-0" />
+                    <div className="flex items-center gap-1.5 text-sky-300 truncate">
+                      <Globe className="w-3 h-3 text-sky-300 shrink-0" />
                       <span className="truncate">{place.website.replace(/^https?:\/\/(www\.)?/, '')}</span>
                     </div>
                   ) : (
