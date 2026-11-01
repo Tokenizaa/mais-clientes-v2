@@ -756,6 +756,94 @@ class Store {
     return false;
   }
 
+  async registerScrapeCandidate(
+    job: ScrapeJob,
+    sourceKey: string,
+    sourceUrl: string,
+    lease: { token: string; generation: number }
+  ): Promise<{ candidateId: string; ordinal: number; status: string; inserted: boolean }> {
+    const candidateId = 'cand_' + crypto.randomUUID();
+    if (!this.supabase) {
+      const ordinal = Math.max(0, Number(job.total_found || 0));
+      return { candidateId, ordinal, status: 'discovered', inserted: true };
+    }
+    const { data, error } = await this.supabase.rpc('register_scrape_candidate', {
+      p_candidate_id: candidateId,
+      p_job_id: job.id,
+      p_user_id: job.user_id,
+      p_session_id: job.search_session_id,
+      p_source_key: sourceKey,
+      p_source_url: sourceUrl,
+      p_lease_token: lease.token,
+      p_lease_generation: lease.generation,
+    });
+    if (error || !data) throw new Error('Falha ao registrar ficha na fila durável: ' + (error?.message || 'resposta vazia'));
+    return {
+      candidateId: String(data.candidate_id),
+      ordinal: Number(data.ordinal || 0),
+      status: String(data.status || 'discovered'),
+      inserted: data.inserted === true,
+    };
+  }
+
+  async completeScrapeCandidate(
+    job: ScrapeJob,
+    candidateId: string,
+    outcome: 'saved' | 'duplicate',
+    sourceKey: string,
+    sourceUrl: string,
+    place: PlaceRecord | undefined,
+    lease: { token: string; generation: number }
+  ): Promise<'saved' | 'duplicate'> {
+    if (!this.supabase) {
+      const actual = outcome;
+      if (actual === 'saved' && place) {
+        this.state.places.push(place);
+        job.total_collected += 1;
+      } else {
+        job.total_duplicates += 1;
+      }
+      const previous = job.discovery_checkpoint || {};
+      job.discovery_checkpoint = {
+        ...previous,
+        version: 1,
+        last_processed_url: normalizeMapsPlaceUrl(sourceUrl),
+        last_processed_source_key: sourceKey,
+        last_processed_name: place?.name || previous.last_processed_name || '',
+        last_processed_outcome: actual,
+        last_processed_at: new Date().toISOString(),
+        last_checkpoint_at: new Date().toISOString(),
+        processed_count: Number(previous.processed_count || 0) + 1,
+      };
+      job.candidate_cursor = Number(job.candidate_cursor || 0) + 1;
+      this.save(this.state);
+      return actual;
+    }
+
+    const { data, error } = await this.supabase.rpc('complete_scrape_candidate', {
+      p_candidate_id: candidateId,
+      p_job_id: job.id,
+      p_user_id: job.user_id,
+      p_session_id: job.search_session_id,
+      p_outcome: outcome,
+      p_place: place ? place as unknown as Record<string, unknown> : null,
+      p_source_key: sourceKey,
+      p_source_url: sourceUrl,
+      p_lease_token: lease.token,
+      p_lease_generation: lease.generation,
+    });
+    if (error || !data) throw new Error('Falha ao concluir ficha de forma atômica: ' + (error?.message || 'resposta vazia'));
+
+    job.total_collected = Number(data.total_collected ?? job.total_collected);
+    job.total_duplicates = Number(data.total_duplicates ?? job.total_duplicates);
+    job.candidate_cursor = Number(data.candidate_cursor ?? job.candidate_cursor);
+    if (data.checkpoint && typeof data.checkpoint === 'object') {
+      job.discovery_checkpoint = data.checkpoint;
+    }
+    job.heartbeat_at = new Date().toISOString();
+    return data.outcome === 'saved' || data.outcome === 'processed' ? 'saved' : 'duplicate';
+  }
+
   async isJobCancellationRequested(id: string, userId: string): Promise<boolean> {
     if (this.supabase) {
       const { data, error } = await this.supabase
@@ -1332,24 +1420,18 @@ async function executeScrapeJob(
     await store.persistScrapeProgress(job, undefined, sessionLease || undefined);
   };
 
-  const saveCheckpoint = async (url: string, outcome: 'saved' | 'duplicate', name?: string) => {
-    const previous = job.discovery_checkpoint || {};
-    job.discovery_checkpoint = {
-      ...previous,
-      version: 1,
-      last_processed_url: normalizeMapsPlaceUrl(url),
-      last_processed_source_key: extractSourcePlaceId(url) || normalizeMapsPlaceUrl(url),
-      last_processed_name: name || previous.last_processed_name || '',
-      last_processed_outcome: outcome,
-      last_processed_at: new Date().toISOString(),
-      last_checkpoint_at: new Date().toISOString(),
-      processed_count: Number(previous.processed_count || 0) + 1,
-    };
-    job.candidate_cursor = Number(job.candidate_cursor || 0) + 1;
-    await store.persistScrapeProgress(job, undefined, sessionLease || undefined);
-    await audit('candidate_checkpoint_saved', 'debug', 'Checkpoint atualizado após processar ficha.', {
-      url: normalizeMapsPlaceUrl(url), outcome, ordinal: job.candidate_cursor, name: name || null,
+  const completeCandidate = async (
+    candidateId: string, sourceKey: string, url: string,
+    outcome: 'saved' | 'duplicate', place?: PlaceRecord
+  ): Promise<'saved' | 'duplicate'> => {
+    if (!sessionLease) throw new Error('Lease ausente ao concluir ficha.');
+    const actual = await store.completeScrapeCandidate(
+      job, candidateId, outcome, sourceKey, url, place, sessionLease
+    );
+    await audit('candidate_checkpoint_saved', 'debug', 'Resultado, contador e checkpoint confirmados em uma única transação.', {
+      url: normalizeMapsPlaceUrl(url), outcome: actual, ordinal: job.candidate_cursor, name: place?.name || null,
     });
+    return actual;
   };
 
   try {
@@ -1409,21 +1491,26 @@ async function executeScrapeJob(
 
         // The anchor itself is never processed twice.
         if (anchor && item.key === anchor) continue;
-        ordinalThisRun += 1;
-        job.total_found += 1;
-        await updateProgress(`Analisando ficha ${job.total_found}; ${job.total_collected}/${limit} novos contatos salvos...`);
-        await audit('candidate_discovered', 'debug', 'Ficha encontrada no feed; verificando URL no banco.', {
-          url: item.key, ordinal: Number(job.candidate_cursor || 0) + ordinalThisRun,
-        });
-
+        const sourceKey = extractSourcePlaceId(item.url) || item.key;
         let detailPage: Page | null = null;
         try {
+          if (!sessionLease) throw new Error('Lease ausente ao registrar ficha.');
+          const candidate = await store.registerScrapeCandidate(job, sourceKey, item.url, sessionLease);
+          if (candidate.status === 'processed' || candidate.status === 'duplicate') {
+            job.total_found = Math.max(job.total_found, candidate.ordinal + 1);
+            continue;
+          }
+          job.total_found = Math.max(job.total_found, candidate.ordinal + 1);
+          await updateProgress(`Analisando ficha ${job.total_found}; ${job.total_collected}/${limit} novos contatos salvos...`);
+          await audit('candidate_discovered', 'debug', 'Ficha registrada na fila durável; iniciando deduplicação e extração.', {
+            url: item.key, candidate_id: candidate.candidateId, ordinal: candidate.ordinal,
+          });
+
           const isDuplicate = await store.isExistingPlace({ source_url: item.url, maps_url: item.url });
           if (isDuplicate) {
-            job.total_duplicates += 1;
-            await saveCheckpoint(item.url, 'duplicate');
-            await audit('duplicate_skipped', 'info', 'URL já cadastrada; ficha descartada e feed avançado.', {
-              url: item.key, duplicate_count: job.total_duplicates,
+            const actual = await completeCandidate(candidate.candidateId, sourceKey, item.url, 'duplicate');
+            await audit('duplicate_skipped', 'info', 'Duplicado descartado silenciosamente; checkpoint confirmado.', {
+              url: item.key, duplicate_count: job.total_duplicates, outcome: actual,
             });
             continue;
           }
@@ -1439,27 +1526,22 @@ async function executeScrapeJob(
           if (!place.state && locationFallback.state) place.state = locationFallback.state;
 
           if (place.name && place.address && await store.isExistingPlace(place)) {
-            job.total_duplicates += 1;
-            await saveCheckpoint(item.url, 'duplicate', place.name);
-            await audit('duplicate_skipped', 'info', 'Ficha já cadastrada por identificador ou nome/endereço.', {
-              url: item.key, name: place.name, duplicate_count: job.total_duplicates,
+            const actual = await completeCandidate(candidate.candidateId, sourceKey, item.url, 'duplicate', place);
+            await audit('duplicate_skipped', 'info', 'Duplicado descartado silenciosamente; checkpoint confirmado.', {
+              url: item.key, name: place.name, duplicate_count: job.total_duplicates, outcome: actual,
             });
             continue;
           }
 
-          const persisted = await store.persistScrapeProgress(job, place, sessionLease || undefined);
-          if (!persisted) {
-            job.total_duplicates += 1;
-            await saveCheckpoint(item.url, 'duplicate', place.name);
-            await audit('duplicate_skipped', 'info', 'A URL já foi gravada por outra execução; registro descartado sem duplicar.', {
+          const actual = await completeCandidate(candidate.candidateId, sourceKey, item.url, 'saved', place);
+          if (actual === 'duplicate') {
+            await audit('duplicate_skipped', 'info', 'Duplicado detectado atomicamente na persistência; registro descartado.', {
               url: item.key, name: place.name, duplicate_count: job.total_duplicates, race_condition: true,
             });
             continue;
           }
           state.places.push(place);
-          job.total_collected += 1;
-          await saveCheckpoint(item.url, 'saved', place.name);
-          await audit('place_saved', 'info', 'Novo contato gravado no Supabase.', {
+          await audit('place_saved', 'info', 'Novo contato gravado; contador e checkpoint confirmados atomicamente.', {
             url: item.key, name: place.name, collected: job.total_collected, target: limit,
           });
           await updateProgress(`Salvo: ${place.name || 'Estabelecimento sem nome'} (${job.total_collected}/${limit})`);
@@ -1494,20 +1576,12 @@ async function executeScrapeJob(
               const alreadySaved = retriedPlace.name && retriedPlace.address
                 ? await store.isExistingPlace(retriedPlace)
                 : await store.isExistingPlace({ source_url: item.url, maps_url: item.url });
-              if (alreadySaved) {
-                job.total_duplicates += 1;
-                await saveCheckpoint(item.url, 'duplicate', retriedPlace.name);
-              } else {
-                const persisted = await store.persistScrapeProgress(job, retriedPlace, sessionLease || undefined);
-                if (persisted) {
-                  state.places.push(retriedPlace);
-                  job.total_collected += 1;
-                  await saveCheckpoint(item.url, 'saved', retriedPlace.name);
-                } else {
-                  job.total_duplicates += 1;
-                  await saveCheckpoint(item.url, 'duplicate', retriedPlace.name);
-                }
-              }
+              const actual = await completeCandidate(
+                candidate.candidateId, sourceKey, item.url,
+                alreadySaved ? 'duplicate' : 'saved',
+                alreadySaved ? retriedPlace : retriedPlace
+              );
+              if (actual === 'saved') state.places.push(retriedPlace);
               await audit('candidate_recovery_processed', 'info', 'Ficha pendente reprocessada; preparando retomada do feed.', {
                 url: item.key, collected: job.total_collected, duplicates: job.total_duplicates,
                 original_error_name: error instanceof Error ? error.name : typeof error,
