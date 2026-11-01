@@ -714,6 +714,7 @@ class Store {
     const candidateId = 'cand_' + crypto.randomUUID();
     if (!this.supabase) {
       const ordinal = Math.max(0, Number(job.total_found || 0));
+      job.total_found = ordinal + 1;
       return { candidateId, ordinal, status: 'discovered', inserted: true };
     }
     const { data, error } = await this.supabase.rpc('register_scrape_candidate', {
