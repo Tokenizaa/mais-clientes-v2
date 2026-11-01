@@ -1205,6 +1205,7 @@ async function executeScrapeJob(
   let cancelled = false;
   let pauseReason = '';
   let accessRestricted = false;
+  let browserErrorDuringExtraction = false;
   const state = store.getState();
   const job = state.jobs.find((item) => item.id === jobId && item.user_id === userId);
   if (!job) return;
@@ -1415,7 +1416,9 @@ async function executeScrapeJob(
           });
           console.error(`[Scraper] Falha na extração da ficha ${item.key}:`, message);
           if (browserUnavailable) {
-            pauseReason = 'O navegador perdeu a conexão; a coleta foi encerrada sem retomada automática.';
+            browserErrorDuringExtraction = true;
+            pauseReason = 'O navegador Chromium perdeu a conexão durante a extração; a coleta foi encerrada sem classificar isso como fim da lista.';
+            await audit('browser_disconnected', 'error', pauseReason, { url: item.key });
             break;
           }
           await updateProgress(`Falha isolada na ficha (${job.total_errors}); seguindo para a próxima...`);
@@ -1522,10 +1525,10 @@ async function executeScrapeJob(
       job.status_message = 'Coleta interrompida pelo usuário.';
       job.current_step = 'Interrompida';
     } else if (pauseReason) {
-      job.completion_reason = accessRestricted ? 'access_restricted' : 'feed_stagnation';
+      job.completion_reason = browserErrorDuringExtraction ? 'fatal_error' : accessRestricted ? 'access_restricted' : 'feed_stagnation';
       job.status = job.total_collected > 0 || job.total_duplicates > 0 ? 'partial' : 'failed';
       job.status_message = pauseReason;
-      job.current_step = accessRestricted ? 'Acesso limitado pelo Google Maps' : 'Finalizada sem confirmação do fim';
+      job.current_step = browserErrorDuringExtraction ? 'Falha no navegador Chromium' : accessRestricted ? 'Acesso limitado pelo Google Maps' : 'Finalizada sem confirmação do fim';
     } else if (job.total_collected >= limit) {
       job.completion_reason = 'target_reached';
       job.status = 'completed';
