@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Activity,
   CheckCircle2,
@@ -11,6 +11,8 @@ import {
   Cpu,
   Layers,
   Sparkles,
+  X,
+  Flag,
 } from 'lucide-react';
 import { ScrapeJob } from '../shared/types';
 import { calculateScrapeProgressPercent } from '../shared/scrape-progress';
@@ -39,6 +41,11 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
   const completionReason = currentJob.completion_reason;
   const isFeedExhausted = completionReason === 'feed_exhausted';
   const isTargetReached = completionReason === 'target_reached';
+  const [showFeedExhaustedModal, setShowFeedExhaustedModal] = useState(false);
+
+  useEffect(() => {
+    if (isFeedExhausted) setShowFeedExhaustedModal(true);
+  }, [currentJob.id, isFeedExhausted]);
 
   // Radius for SVG circular progress
   const radius = 64;
@@ -46,7 +53,40 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
   const strokeDashoffset = circumference - (percent / 100) * circumference;
 
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-b from-[#091a35] via-[#07152b] to-[#050e20] border border-blue-500/25 shadow-2xl shadow-blue-950/60 p-5 sm:p-7 space-y-6">
+    <>
+      {showFeedExhaustedModal && isFeedExhausted && !isRunning && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4 sm:p-6" role="presentation">
+          <section role="dialog" aria-modal="true" aria-labelledby="feed-exhausted-title" className="relative w-full max-w-2xl overflow-hidden rounded-3xl border border-amber-400/40 bg-gradient-to-br from-[#10233e] via-[#0a1930] to-[#071225] shadow-[0_25px_100px_rgba(0,0,0,0.65)]">
+            <div className="absolute -right-16 -top-20 h-64 w-64 rounded-full bg-amber-400/15 blur-3xl pointer-events-none" />
+            <div className="absolute -bottom-24 -left-16 h-64 w-64 rounded-full bg-blue-500/10 blur-3xl pointer-events-none" />
+            <button type="button" onClick={() => setShowFeedExhaustedModal(false)} aria-label="Fechar aviso" className="absolute right-4 top-4 z-10 rounded-full border border-slate-600/60 bg-slate-900/70 p-2 text-slate-300 transition hover:bg-slate-800 hover:text-white"><X className="h-5 w-5" /></button>
+            <div className="relative p-6 sm:p-9">
+              <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-amber-300/40 bg-amber-400/15 text-amber-300 shadow-lg shadow-amber-950/30"><Flag className="h-8 w-8" /></div>
+              <div className="text-center">
+                <span className="inline-flex items-center gap-2 rounded-full border border-amber-300/30 bg-amber-400/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.18em] text-amber-200">Pesquisa encerrada normalmente</span>
+                <h2 id="feed-exhausted-title" className="mt-4 text-2xl font-extrabold leading-tight text-white sm:text-3xl">Fim da lista de resultados</h2>
+                <p className="mx-auto mt-3 max-w-xl text-sm leading-relaxed text-slate-300 sm:text-base">O Google Maps chegou ao final dos resultados disponíveis para esta pesquisa. A coleta parou porque não havia mais resultados no feed — não por uma falha que interrompeu o processo.</p>
+              </div>
+              <div className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="rounded-xl border border-blue-400/20 bg-blue-950/40 p-3 text-center"><div className="text-2xl font-extrabold tabular-nums text-white">{currentJob.total_found}</div><div className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Detectados</div></div>
+                <div className="rounded-xl border border-blue-400/20 bg-blue-950/40 p-3 text-center"><div className="text-2xl font-extrabold tabular-nums text-blue-200">{currentJob.total_duplicates}</div><div className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Duplicados</div></div>
+                <div className="rounded-xl border border-emerald-400/20 bg-emerald-950/30 p-3 text-center"><div className="text-2xl font-extrabold tabular-nums text-emerald-300">{currentJob.total_collected}</div><div className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Novos salvos</div></div>
+                <div className="rounded-xl border border-amber-400/20 bg-amber-950/30 p-3 text-center"><div className="text-2xl font-extrabold tabular-nums text-amber-200">{currentJob.total_errors}</div><div className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Falhas individuais</div></div>
+              </div>
+              <div className="mt-5 rounded-xl border border-amber-300/20 bg-amber-400/10 px-4 py-3 text-center">
+                <p className="text-sm font-semibold text-amber-100">Meta solicitada: {currentJob.limit_requested} novos estabelecimentos</p>
+                <p className="mt-1 text-xs leading-relaxed text-slate-300">Foram salvos {currentJob.total_collected} de {currentJob.limit_requested}. O fim da lista não significa que toda a região foi coberta.</p>
+                {currentJob.total_errors > 0 && <p className="mt-2 text-xs text-slate-400">As {currentJob.total_errors} falhas individuais foram contabilizadas separadamente e não impediram a coleta de chegar ao fim do feed.</p>}
+              </div>
+              <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-center">
+                <button type="button" onClick={() => setShowFeedExhaustedModal(false)} className="rounded-xl border border-slate-600/70 bg-slate-900/60 px-5 py-3 text-sm font-semibold text-slate-200 transition hover:bg-slate-800">Fechar aviso</button>
+                <button type="button" onClick={onGoToResults} className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-blue-950/40 transition hover:bg-blue-500">Ver os {currentJob.total_collected} leads salvos <ArrowRight className="h-4 w-4" /></button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-b from-[#091a35] via-[#07152b] to-[#050e20] border border-blue-500/25 shadow-2xl shadow-blue-950/60 p-5 sm:p-7 space-y-6">
       {/* Background ambient glow effects */}
       <div className="absolute top-0 right-1/4 -mt-16 w-80 h-80 rounded-full bg-blue-600/10 blur-3xl pointer-events-none" />
       <div className="absolute bottom-0 left-10 -mb-16 w-64 h-64 rounded-full bg-blue-500/10 blur-3xl pointer-events-none" />
@@ -270,6 +310,8 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
         </div>
       </div>
 
+
     </div>
+    </>
   );
 };
