@@ -698,23 +698,7 @@ class Store {
     };
     if (!this.supabase) return row;
 
-    // Reuse the most recent non-exhausted session for the exact same search
-    // scope. This preserves the last confirmed URL and pagination ordinal when
-    // a job is restarted after a browser disconnect or a partial execution.
-    const existing = await this.supabase
-      .from('scrape_search_sessions')
-      .select('*')
-      .eq('user_id', input.userId)
-      .eq('scope_key', scopeKey)
-      .eq('exhausted', false)
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (existing.error) {
-      throw new Error('Falha ao localizar sessão anterior de coleta: ' + existing.error.message);
-    }
-    if (existing.data) return existing.data as any;
-
+    // Cada execução recebe uma sessão nova. Não há retomada de checkpoint entre pesquisas.
     const inserted = await this.supabase.from('scrape_search_sessions').insert(row).select('*').single();
     if (inserted.error || !inserted.data) {
       throw new Error('Falha ao criar sessão isolada de coleta: ' + (inserted.error?.message || 'registro indisponível'));
@@ -2008,57 +1992,7 @@ export async function createApp() {
         projectId: project.id, categoryId: category.id,
       });
 
-      // Retomada usa o MESMO job, não cria outro com contador zerado.
-      // Assim a meta escolhida originalmente e os inserts já confirmados permanecem acumulados.
-      const resumableJob = state.jobs.find((item) =>
-        item.user_id === userId &&
-        item.search_session_id === searchSession.id &&
-        ['stopped', 'partial', 'failed'].includes(item.status) &&
-        Number(item.total_collected || 0) < Number(item.limit_requested || 0)
-      );
-
-      if (resumableJob) {
-        const originalTarget = Math.max(1, Number(resumableJob.limit_requested || numLimit));
-        resumableJob.status = 'running';
-        resumableJob.status_message = `Retomando coleta: ${resumableJob.total_collected}/${originalTarget} novos contatos; faltam ${Math.max(0, originalTarget - resumableJob.total_collected)}.`;
-        resumableJob.current_step = 'Retomando pelo último estabelecimento confirmado...';
-        resumableJob.discovery_checkpoint = searchSession.discovery_checkpoint || resumableJob.discovery_checkpoint || {};
-        resumableJob.candidate_cursor = Math.max(
-          Number(resumableJob.candidate_cursor || 0),
-          Number(searchSession.next_ordinal || 0)
-        );
-        resumableJob.heartbeat_at = new Date().toISOString();
-        resumableJob.completed_at = undefined;
-
-        // Limpa somente a solicitação de cancelamento anterior antes de reabrir o mesmo job.
-        const supabase = (store as any).supabase;
-        if (supabase) {
-          const { error: resumeError } = await supabase.from('scrape_jobs').update({
-            cancel_requested: false,
-            status: 'running',
-            status_message: resumableJob.status_message,
-            current_step: resumableJob.current_step,
-            heartbeat_at: resumableJob.heartbeat_at,
-            completed_at: null,
-          }).eq('id', resumableJob.id).eq('user_id', userId);
-          if (resumeError) throw new Error('Falha ao reativar coleta interrompida: ' + resumeError.message);
-        }
-
-        await store.persistScrapeProgress(resumableJob);
-        if (process.env.VERCEL === '1') {
-          waitUntil(executeScrapeJob(resumableJob.id, resumableJob.segment, resumableJob.location, originalTarget, userId));
-        } else {
-          void executeScrapeJob(resumableJob.id, resumableJob.segment, resumableJob.location, originalTarget, userId);
-        }
-
-        return res.status(200).json({
-          data: { jobId: resumableJob.id, job: resumableJob },
-          jobId: resumableJob.id,
-          resumed: true,
-          message: `Coleta retomada: ${resumableJob.total_collected}/${originalTarget}. Serão salvos somente mais ${Math.max(0, originalTarget - resumableJob.total_collected)} novos contatos.`,
-        });
-      }
-
+      // Cada início cria um job novo, com contador e checkpoint zerados.
       const newJob: ScrapeJob = {
         id: jobId,
         user_id: userId,
