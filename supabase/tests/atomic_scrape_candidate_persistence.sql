@@ -42,7 +42,7 @@ begin
   );
   v_repeat := public.register_scrape_candidate(
     'test_candidate_1_repeat', v_job_id, v_user_id, v_session_id,
-    'stable-place-key-1', 'https://maps.example/place/one', v_lease_token, 1
+    'stable-place-key-1', '0x123:0x456', 'https://maps.example/place/one', v_lease_token, 1
   );
 
   if v_first->>'candidate_id' <> v_repeat->>'candidate_id'
