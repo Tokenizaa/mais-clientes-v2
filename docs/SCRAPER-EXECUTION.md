@@ -14,7 +14,7 @@ Pesquisar estabelecimentos no Google Maps, abrir somente fichas inéditas, extra
 6. persist_scraped_place repete a deduplicação no banco e insere o estabelecimento e atualiza os contadores na mesma transação. Essa segunda verificação protege contra duas execuções que encontrem a mesma ficha ao mesmo tempo.
 7. O worker segue até atingir a meta de novos registros ou confirmar o fim do feed.
 
-Uma nova solicitação sempre começa do início do feed. Os registros já salvos são descartados pela deduplicação; não existe retomada automática.
+Uma nova solicitação sempre começa do início do feed. Os registros já salvos são descartados pela deduplicação; não existe retomada automática nem fila intermediária de candidatos.
 
 ## Tratamento de falhas
 
@@ -28,7 +28,7 @@ Erros reais de comunicação com a página não são convertidos em listas vazia
 
 ## Lease e concorrência
 
-- A lease é vinculada diretamente ao job, usando worker_locked_until, worker_lease_token e worker_lease_generation.
+- A lease é vinculada diretamente ao job, usando worker_locked_until, worker_lease_token e worker_lease_generation. Não há fila Cloudflare, consumidor separado, ordinal ou registro intermediário de candidatos.
 - Apenas uma instância pode reivindicar um job em execução.
 - Renovação e gravações validam token e geração; uma instância antiga não pode gravar depois que perde a lease.
 - A deduplicação final usa locks transacionais por Place ID, URL e nome/endereço, além das restrições únicas existentes.
