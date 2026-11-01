@@ -1495,7 +1495,7 @@ async function executeScrapeJob(
         try {
           if (!sessionLease) throw new Error('Lease ausente ao registrar ficha.');
           const candidate = await store.registerScrapeCandidate(job, sourceKey, item.url, sessionLease);
-          candidateId = candidate.candidateId;
+          candidateId = candidateId;
           if (candidate.status === 'processed' || candidate.status === 'duplicate') {
             job.total_found = Math.max(job.total_found, candidate.ordinal + 1);
             continue;
@@ -1503,7 +1503,7 @@ async function executeScrapeJob(
           job.total_found = Math.max(job.total_found, candidate.ordinal + 1);
           await updateProgress(`Analisando ficha ${job.total_found}; ${job.total_collected}/${limit} novos contatos salvos...`);
           await audit('candidate_discovered', 'debug', 'Ficha registrada na fila durável; iniciando deduplicação e extração.', {
-            url: item.key, candidate_id: candidate.candidateId, ordinal: candidate.ordinal,
+            url: item.key, candidate_id: candidateId, ordinal: candidate.ordinal,
           });
 
           const isDuplicate = await store.isExistingPlace({ source_url: item.url, maps_url: item.url });
@@ -1526,14 +1526,14 @@ async function executeScrapeJob(
           if (!place.state && locationFallback.state) place.state = locationFallback.state;
 
           if (place.name && place.address && await store.isExistingPlace(place)) {
-            const actual = await completeCandidate(candidate.candidateId, sourceKey, item.url, 'duplicate', place);
+            const actual = await completeCandidate(candidateId, sourceKey, item.url, 'duplicate', place);
             await audit('duplicate_skipped', 'info', 'Duplicado descartado silenciosamente; checkpoint confirmado.', {
               url: item.key, name: place.name, duplicate_count: job.total_duplicates, outcome: actual,
             });
             continue;
           }
 
-          const actual = await completeCandidate(candidate.candidateId, sourceKey, item.url, 'saved', place);
+          const actual = await completeCandidate(candidateId, sourceKey, item.url, 'saved', place);
           if (actual === 'duplicate') {
             await audit('duplicate_skipped', 'info', 'Duplicado detectado atomicamente na persistência; registro descartado.', {
               url: item.key, name: place.name, duplicate_count: job.total_duplicates, race_condition: true,
