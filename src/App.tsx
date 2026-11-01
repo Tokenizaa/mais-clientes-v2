@@ -323,6 +323,12 @@ export default function App() {
         if (updatedJob.status !== 'running') {
           if (progressPollRef.current) clearInterval(progressPollRef.current);
           progressPollRef.current = null;
+          // A coleta terminou: abre a base consolidada e recarrega a visão global,
+          // sem manter o filtro restrito ao job recém-finalizado.
+          setCurrentPage(1);
+          setSelectedJobId(undefined);
+          setCurrentTab('results');
+          await loadPlaces();
         }
       } catch (err) {
         consecutiveErrors++;
@@ -603,6 +609,32 @@ export default function App() {
               initialProjectName={preselectedProject}
               initialCategoryName={preselectedCategory}
               scrapeResults={currentJob ? places.filter((place) => place.job_id === currentJob.id) : []}
+              liveResults={
+                <ResultsScreen
+                  compactCardsOnly
+                  places={places.filter((place) => place.job_id === currentJob?.id)}
+                  totalPlaces={places.filter((place) => place.job_id === currentJob?.id).length}
+                  jobs={jobs}
+                  selectedJobId={currentJob?.id}
+                  onSelectJobId={setSelectedJobId}
+                  selectedPlaceIds={selectedPlaceIds}
+                  onToggleSelectPlace={handleToggleSelectPlace}
+                  onToggleSelectAll={handleToggleSelectAll}
+                  onGoToExport={() => setCurrentTab('export')}
+                  searchQuery=""
+                  onSearchQueryChange={() => {}}
+                  selectedCategory=""
+                  onCategoryChange={() => {}}
+                  sortBy="collected_at"
+                  sortOrder="desc"
+                  onSortChange={() => {}}
+                  currentPage={1}
+                  pageSize={500}
+                  onPageChange={() => {}}
+                  onPageSizeChange={() => {}}
+                  isLoading={isLoadingPlaces}
+                />
+              }
             />
           )}
 
