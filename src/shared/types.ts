@@ -84,11 +84,11 @@ export interface ScrapeJob {
   total_duplicates: number;
   total_errors: number;
   current_step?: string;
-  /** Stable user/search-scope session shared by successive jobs. */
+  /** @deprecated Historical jobs only. New jobs do not use search sessions. */
   search_session_id?: string;
-  /** Kept for compatibility with historical jobs; new jobs use one sequential flow. */
+  /** @deprecated Historical phase marker; new jobs do not use phases. */
   phase?: 'discovering' | 'processing';
-  /** Durable resume checkpoint: the last listing fully processed and saved/recognized. */
+  /** @deprecated Historical checkpoint; new jobs never resume from it. */
   discovery_checkpoint?: {
     version?: number;
     scroll_round?: number;
@@ -105,8 +105,11 @@ export interface ScrapeJob {
     stagnant_rounds?: number;
     [key: string]: unknown;
   };
+  /** @deprecated Historical candidate queue state; new jobs do not populate it. */
   candidate_urls?: string[];
+  /** @deprecated Historical candidate cursor; new jobs do not populate it. */
   candidate_cursor?: number;
+  /** @deprecated Historical retry counter; new jobs do not populate it. */
   retry_count?: number;
   heartbeat_at?: string;
   created_at: string;
