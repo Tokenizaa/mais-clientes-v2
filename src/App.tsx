@@ -17,6 +17,7 @@ import { CredentialsScreen } from './components/CredentialsScreen';
 import { AuthScreen } from './components/AuthScreen';
 import { PlaceRecord, ScrapeJob } from './shared/types';
 import { Menu, ChevronRight, Activity, Database, FileSpreadsheet } from 'lucide-react';
+import { AmbientBackground } from './components/AmbientBackground';
 
 import { createClient } from '@supabase/supabase-js';
 
@@ -522,7 +523,8 @@ export default function App() {
   if (!hasApiKey) return <AuthScreen onAuthenticated={handleAuthenticated} />;
 
   return (
-    <div className="min-h-screen bg-[#060b18] text-slate-100 flex flex-col font-sans antialiased selection:bg-blue-600/30 selection:text-blue-200">
+    <div className="app-shell min-h-screen bg-transparent text-slate-100 flex flex-col font-sans antialiased selection:bg-blue-600/30 selection:text-blue-200">
+      <AmbientBackground />
       {/* Sidebar Navigation */}
       <Sidebar
         currentTab={currentTab}
@@ -617,7 +619,7 @@ export default function App() {
         )}
 
         {/* Main Content Area */}
-        <main className="flex-1 p-4 sm:p-6 lg:p-10">
+        <main className="app-content flex-1 p-4 sm:p-6 lg:p-10">
           {hasApiKey ? (
             <div className="mb-4 flex justify-end">
               <span className="mr-3 text-xs text-slate-400 font-mono">{authUser?.name || authUser?.email || 'Sessão Conectada'}</span>
