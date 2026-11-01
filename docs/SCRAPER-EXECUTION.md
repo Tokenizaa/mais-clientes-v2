@@ -17,6 +17,17 @@ A coleta não usa uma etapa global de descoberta seguida de uma fila de processa
 7. O checkpoint é persistido com a URL/ID da última ficha efetivamente processada, o resultado (salva ou duplicada), a data e a contagem.
 8. O próximo passo abre novamente a pesquisa e continua depois dessa ficha.
 
+## Retomada e meta original
+
+Ao iniciar novamente a mesma pesquisa não esgotada, o backend reutiliza o mesmo job interrompido/parcial/falho e a mesma sessão. Não cria um job com contadores zerados.
+
+- A meta é a quantidade original salva em `limit_requested`; mudar o seletor ao tentar retomar não reinicia nem amplia a meta daquele job.
+- `total_collected` permanece acumulado e representa somente inserts inéditos confirmados.
+- O saldo é `max(0, limit_requested - total_collected)`. Exemplo: uma meta de 20 com 15 inserts confirmados retoma para salvar no máximo mais 5.
+- Duplicados e resultados revisitados durante a reconstrução do feed não consomem a meta.
+- A retomada limpa a solicitação de cancelamento anterior, mantém o mesmo ID de job e continua pelo checkpoint persistido.
+- Ao alcançar a meta original, o loop encerra sem abrir a ficha seguinte.
+
 ## Regra do checkpoint
 
 O checkpoint oficial é `discovery_checkpoint.last_processed_url`, acompanhado de `last_processed_source_key` e `last_processed_at`.
