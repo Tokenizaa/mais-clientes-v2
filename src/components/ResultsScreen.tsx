@@ -49,6 +49,7 @@ interface ResultsScreenProps {
   onPageChange: (page: number) => void;
   onPageSizeChange: (size: number) => void;
   isLoading: boolean;
+  compactCardsOnly?: boolean;
 }
 
 const detailFields: { key: keyof PlaceRecord; label: string }[] = [
@@ -117,6 +118,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
   onPageChange,
   onPageSizeChange,
   isLoading,
+  compactCardsOnly = false,
 }) => {
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const [selectedPlace, setSelectedPlace] = useState<PlaceRecord | null>(null);
@@ -245,6 +247,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
 
   return (
     <div className="max-w-7xl mx-auto py-2 sm:py-6 space-y-6">
+      {!compactCardsOnly && (
       {/* Header Bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-5">
         <div>
@@ -482,6 +485,8 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
         </div>
       </div>
 
+      )}
+
       {/* Main Content Area */}
       {isLoading ? (
         <div className="p-16 text-center text-slate-400">
@@ -498,7 +503,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
               : 'Execute uma nova coleta na tela "1. Pesquisar" para extrair fichas do Google Maps.'}
           </p>
         </div>
-      ) : viewMode === 'cards' ? (
+      ) : (compactCardsOnly || viewMode === 'cards') ? (
         /* ================= CARDS VIEW (Linear/Stripe Minimalist Dark Mode) ================= */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {places.map((place) => {
@@ -859,6 +864,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
         </div>
       )}
 
+      {!compactCardsOnly && (
       {/* Pagination Bar */}
       {totalPlaces > 0 && (
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-slate-900/90 px-6 py-4 text-sm font-medium text-slate-400 shadow-xl">
@@ -885,6 +891,8 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             </button>
           </div>
         </div>
+      )}
+
       )}
 
       {/* ================= MODAL DE DETALHES COMPLETO DOS CAMPOS (Dark Minimalist) ================= */}
