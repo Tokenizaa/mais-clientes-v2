@@ -1609,14 +1609,32 @@ export async function createApp() {
   app.get('/api/auth/me', (req: Request, res: Response) => {
     try {
       const user = resolveUserFromRequest(req);
-      if (!user) {
-        return res.status(401).json({ error: 'Sessão inválida ou expirada.' });
-      }
-      return res.json({
-        user: { id: user.id, email: user.email, name: user.name, role: user.role },
+      if (!user) return res.status(401).json({ error: 'Sessão inválida ou expirada.' });
+      return res.setHeader('Cache-Control', 'no-store').json({
+        user: { id: user.id, email: user.email, name: user.name, role: user.role, createdAt: user.createdAt },
       });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch('/api/auth/me', async (req: Request, res: Response) => {
+    try {
+      const authenticated = resolveUserFromRequest(req);
+      if (!authenticated) return res.status(401).json({ error: 'Sessão inválida ou expirada.' });
+      const user = store.getState().users.find((item) => item.id === authenticated.id);
+      if (!user) return res.status(401).json({ error: 'Apenas contas da plataforma podem editar o perfil.' });
+      const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+      if (name.length < 2 || name.length > 100) return res.status(400).json({ error: 'O nome deve ter entre 2 e 100 caracteres.' });
+      user.name = name;
+      store.persist();
+      await store.flush();
+      return res.setHeader('Cache-Control', 'no-store').json({
+        user: { id: user.id, email: user.email, name: user.name, role: user.role, createdAt: user.createdAt },
+      });
+    } catch (err: any) {
+      console.error('[Auth] Falha ao atualizar perfil:', err);
+      return res.status(500).json({ error: 'Não foi possível salvar as alterações do perfil.' });
     }
   });
 
