@@ -1475,10 +1475,10 @@ async function executeScrapeJob(
       job.completion_reason = 'feed_exhausted';
       job.status = job.total_errors > 0 ? 'partial' : 'completed';
       job.status_message = job.total_errors > 0
-        ? `Feed esgotado com ${job.total_errors} falha(s): ${job.total_collected} novos contatos salvos; ${job.total_duplicates} duplicados ignorados.`
-        : `Feed esgotado: ${job.total_collected} novos contatos salvos, ${job.total_duplicates} duplicados ignorados.`;
+        ? `Fim dos resultados disponíveis nesta pesquisa: ${job.total_collected} novos contatos salvos, ${job.total_duplicates} duplicados ignorados e ${job.total_errors} ficha(s) com falha individual de extração.`
+        : `Fim dos resultados disponíveis nesta pesquisa: ${job.total_collected} novos contatos salvos e ${job.total_duplicates} duplicados ignorados.`;
       job.discovery_checkpoint = { ...(job.discovery_checkpoint || {}), exhausted: true };
-      job.current_step = job.total_errors > 0 ? 'Concluída com falhas' : 'Feed esgotado';
+      job.current_step = 'Fim da lista de resultados';
     } else {
       job.completion_reason = 'feed_stagnation';
       job.status = 'partial';
