@@ -16,8 +16,9 @@ import { ProjectsScreen } from './components/ProjectsScreen';
 import { CredentialsScreen } from './components/CredentialsScreen';
 import { AuthScreen } from './components/AuthScreen';
 import { PlaceRecord, ScrapeJob } from './shared/types';
-import { Menu, ChevronRight, Activity, Database, FileSpreadsheet } from 'lucide-react';
+import { Menu } from 'lucide-react';
 import { AmbientBackground } from './components/AmbientBackground';
+import { HolographicGridOverlay } from './components/HolographicGridOverlay';
 
 import { createClient } from '@supabase/supabase-js';
 
@@ -508,16 +509,7 @@ export default function App() {
     }
   };
 
-  const tabLabels: Record<ScreenTab, string> = {
-    dashboard: 'Painel Geral',
-    projects: 'Projetos & Campanhas',
-    credentials: 'Credenciais de API',
-    search: 'Nova Coleta',
-    results: 'Base de Leads',
-    export: 'Exportação de Leads',
-    history: 'Projetos & Histórico',
-    logs: 'Auditoria & Sistema',
-  };
+
 
   // If user is not authenticated, show AuthScreen
   if (!hasApiKey) return <AuthScreen onAuthenticated={handleAuthenticated} />;
@@ -525,6 +517,7 @@ export default function App() {
   return (
     <div className="app-shell min-h-screen bg-transparent text-slate-100 flex flex-col font-sans antialiased selection:bg-blue-600/30 selection:text-blue-200">
       <AmbientBackground />
+      <HolographicGridOverlay />
       {/* Sidebar Navigation */}
       <Sidebar
         currentTab={currentTab}
@@ -541,59 +534,6 @@ export default function App() {
 
       {/* Main Content Area with Desktop Sidebar Offset */}
       <div className="lg:pl-72 flex-1 flex flex-col min-w-0">
-        {/* Modern Dark Navy Top Bar */}
-        <header className="h-16 px-4 sm:px-8 border-b border-[#152347] bg-[#070e20]/90 backdrop-blur-md sticky top-0 z-30 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setIsMobileSidebarOpen(true)}
-              className="lg:hidden p-2 rounded-lg text-slate-400 hover:text-white hover:bg-[#0e1b38] transition-colors"
-              aria-label="Abrir menu lateral"
-            >
-              <Menu className="w-5 h-5" />
-            </button>
-
-            {/* Contextual Breadcrumb trail */}
-            <div className="flex items-center gap-2 text-sm">
-              <span className="font-bold text-slate-400">MapScrape</span>
-              <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
-              <span className="font-bold text-white text-base">{tabLabels[currentTab]}</span>
-            </div>
-          </div>
-
-          {/* Top Actions & Quick Indicators */}
-          <div className="flex items-center gap-3">
-            {isScraping && (
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-600/20 border border-blue-500/40 text-blue-300 text-xs font-semibold">
-                <span className="w-2 h-2 rounded-full bg-blue-400 animate-ping inline-block" />
-                <span>Coleta ativa</span>
-              </div>
-            )}
-
-            {totalPlaces > 0 && currentTab !== 'results' && (
-              <button
-                type="button"
-                onClick={() => setCurrentTab('results')}
-                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0b1429] border border-[#1d3162] text-slate-300 hover:text-white hover:bg-[#122247] text-xs font-semibold transition-colors cursor-pointer"
-              >
-                <Database className="w-3.5 h-3.5 text-blue-400" />
-                <span>{totalPlaces.toLocaleString('pt-BR')} salvos</span>
-              </button>
-            )}
-
-            {selectedPlaceIds.size > 0 && currentTab !== 'export' && (
-              <button
-                type="button"
-                onClick={() => setCurrentTab('export')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-all shadow-md shadow-blue-600/30 cursor-pointer"
-              >
-                <FileSpreadsheet className="w-3.5 h-3.5" />
-                <span>Exportar ({selectedPlaceIds.size})</span>
-              </button>
-            )}
-          </div>
-        </header>
-
         {/* Floating in-app notification banner */}
         {appNotification && (
           <div className="px-4 sm:px-8 pt-4">
@@ -618,18 +558,37 @@ export default function App() {
           </div>
         )}
 
-        {/* Main Content Area */}
-        <main className="app-content flex-1 p-4 sm:p-6 lg:p-10">
-          {hasApiKey ? (
-            <div className="mb-4 flex justify-end">
-              <span className="mr-3 text-xs text-slate-400 font-mono">{authUser?.name || authUser?.email || 'Sessão Conectada'}</span>
-              <button type="button" onClick={handleDisconnectApiKey} className="text-xs text-blue-400 hover:text-blue-300 font-medium">Sair da conta</button>
+        {/* Compact app toolbar: navigation and session actions, without redundant breadcrumb chrome. */}
+        <main className="app-content flex-1 min-w-0 px-4 sm:px-6 xl:px-8 py-4 sm:py-6">
+          <div className="mx-auto w-full max-w-[1600px]">
+            <div className="mb-5 flex min-h-10 items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => setIsMobileSidebarOpen(true)}
+                className="lg:hidden inline-flex h-10 w-10 items-center justify-center rounded-xl border border-cyan-400/20 bg-[#071326]/75 text-slate-300 shadow-lg shadow-black/20 backdrop-blur-xl"
+                aria-label="Abrir menu lateral"
+              >
+                <Menu className="h-5 w-5" />
+              </button>
+              <div className="ml-auto flex items-center gap-3">
+                {isScraping && (
+                  <span className="inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1.5 text-xs font-semibold text-cyan-200">
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-300" />
+                    Coleta ativa
+                  </span>
+                )}
+                <span className="hidden sm:inline text-xs text-slate-400">
+                  {authUser?.name || authUser?.email || 'Sessão conectada'}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleDisconnectApiKey}
+                  className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-slate-300 transition-colors hover:border-cyan-400/30 hover:bg-cyan-400/10 hover:text-white"
+                >
+                  Sair
+                </button>
+              </div>
             </div>
-          ) : (
-            <div className="mb-4 flex justify-end">
-              <span className="mr-3 text-xs text-slate-400">Não autenticado</span>
-            </div>
-          )}
           {currentTab === 'dashboard' && <DashboardScreen totalPlaces={totalPlaces} jobs={jobs} currentJob={currentJob} isScraping={isScraping} onNavigate={setCurrentTab} />}
 
           {currentTab === 'projects' && (
@@ -720,12 +679,8 @@ export default function App() {
           )}
 
           {currentTab === 'logs' && <LogsScreen />}
+          </div>
         </main>
-
-        {/* Minimal Footer */}
-        <footer className="border-t border-slate-800/80 py-5 px-6 text-center text-xs text-slate-400">
-          <p>MapScrape &mdash; Extração direta e transparente de fichas públicas do Google Maps com Puppeteer e SQLite.</p>
-        </footer>
       </div>
 
     </div>

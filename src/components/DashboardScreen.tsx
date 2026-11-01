@@ -62,7 +62,7 @@ export const DashboardScreen: React.FC<Props> = ({
   ];
 
   return (
-    <div className="mx-auto max-w-7xl space-y-8 py-2 sm:py-6">
+    <div className="mx-auto max-w-7xl space-y-6 py-0 sm:py-2">
       {/* Header */}
       <header className="border-b border-[#152347] pb-6">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/25 text-blue-300 text-xs font-semibold uppercase tracking-wider mb-2 font-mono">
