@@ -247,3 +247,41 @@
   position: relative;
   z-index: 1;
 }
+
+
+/* Multicolor Ambilight bloom and LED edge on actual application panels. */
+.app-content [class*="rounded-2xl"][class*="bg-[#0b1429]"],
+.app-visual-panel {
+  position: relative;
+  isolation: isolate;
+}
+.app-content [class*="rounded-2xl"][class*="bg-[#0b1429]"]::before,
+.app-visual-panel::before {
+  content: "";
+  position: absolute;
+  inset: -15px;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: 2rem;
+  background: radial-gradient(ellipse at 50% 50%, rgb(0 240 255 / 22%), rgb(0 255 102 / 13%) 44%, rgb(255 0 127 / 10%) 72%, transparent 100%);
+  filter: blur(26px);
+  opacity: .82;
+  transition: opacity 260ms ease, inset 260ms ease, filter 260ms ease;
+}
+.app-content [class*="rounded-2xl"][class*="bg-[#0b1429]"]:hover::before,
+.app-visual-panel:hover::before {
+  inset: -22px;
+  opacity: 1;
+  filter: blur(34px);
+}
+.app-visual-panel {
+  background: linear-gradient(145deg, rgb(5 11 26 / 91%), rgb(7 16 34 / 88%)) !important;
+  border-color: rgb(0 210 235 / 48%) !important;
+  box-shadow: 0 0 15px rgb(0 210 235 / 14%), 0 22px 54px rgb(0 0 0 / 48%), inset 0 0 22px rgb(0 210 235 / 7%), inset 0 1px 0 rgb(255 255 255 / 7%);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+}
+.app-visual-panel:focus-within {
+  border-color: rgb(0 240 255 / 75%) !important;
+  box-shadow: 0 0 18px rgb(0 240 255 / 22%), 0 22px 54px rgb(0 0 0 / 48%), inset 0 0 24px rgb(0 210 235 / 9%);
+}
