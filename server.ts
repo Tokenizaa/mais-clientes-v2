@@ -1989,8 +1989,10 @@ export async function createApp() {
 
   app.delete('/api/v1/jobs/:id', (req: Request, res: Response) => {
     try {
+      const user = resolveUserFromRequest(req);
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
       const state = store.getState();
-      const index = state.jobs.findIndex((j) => j.id === req.params.id);
+      const index = state.jobs.findIndex((j) => j.id === req.params.id && j.user_id === user.id);
       if (index === -1) {
         return res.status(404).json({ error: 'Coleta não encontrada.' });
       }
@@ -2149,9 +2151,11 @@ export async function createApp() {
 
   app.put('/api/v1/categories/:id', (req: Request, res: Response) => {
     try {
+      const user = resolveUserFromRequest(req);
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
       const { name } = req.body;
       const state = store.getState();
-      const cat = state.categories.find((c) => c.id === req.params.id);
+      const cat = state.categories.find((c) => c.id === req.params.id && c.user_id === user.id);
       if (!cat) return res.status(404).json({ error: 'Categoria não encontrada.' });
       if (name && String(name).trim()) {
         cat.name = String(name).trim();
@@ -2225,9 +2229,11 @@ export async function createApp() {
 
   app.put('/api/v1/projects/:id', (req: Request, res: Response) => {
     try {
+      const user = resolveUserFromRequest(req);
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
       const { name } = req.body;
       const state = store.getState();
-      const proj = state.projects.find((p) => p.id === req.params.id);
+      const proj = state.projects.find((p) => p.id === req.params.id && p.user_id === user.id);
       if (!proj) return res.status(404).json({ error: 'Projeto não encontrado.' });
       if (name && String(name).trim()) {
         proj.name = String(name).trim();
@@ -2244,11 +2250,12 @@ export async function createApp() {
     try {
       const state = store.getState();
       const user = resolveUserFromRequest(req);
-      const userId = user ? user.id : 'usr_default';
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+      const userId = user.id;
       const projectId = req.params.id;
 
-      // Find project by ID
-      const idx = state.projects.findIndex((p) => p.id === projectId);
+      // Find only a project owned by the authenticated user.
+      const idx = state.projects.findIndex((p) => p.id === projectId && p.user_id === userId);
       if (idx === -1) {
         return res.status(404).json({ error: 'Projeto não encontrado.' });
       }
