@@ -46,7 +46,12 @@ let shuttingDown = false;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function ensureBrowser(): Promise<Browser> {
-  if (browser && browser.connected) return browser;
+  if (browser) {
+    const compatible = browser as Browser & { connected?: boolean; isConnected?: () => boolean };
+    if (typeof compatible.isConnected === 'function' ? compatible.isConnected() : compatible.connected !== false) {
+      return browser;
+    }
+  }
   browser = await connectScraperBrowser();
   browser.on('disconnected', () => { browser = null; });
   return browser;
