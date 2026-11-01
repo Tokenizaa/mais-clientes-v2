@@ -158,6 +158,29 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     return parts.join(', ');
   };
 
+  const getRegionalQuickActions = () => {
+    if (!currentJob) return [];
+    const match = currentJob.location.match(/^(?:(Zona Norte|Zona Sul|Zona Leste|Zona Oeste),\\s*)?(.+,\\s*[A-Z]{2})$/i);
+    if (!match) return [];
+    const currentRegion = match[1]?.toLocaleLowerCase('pt-BR') || '';
+    const baseLocation = match[2].trim();
+    const regions = [
+      { label: 'Norte', value: 'Zona Norte' },
+      { label: 'Sul', value: 'Zona Sul' },
+      { label: 'Leste', value: 'Zona Leste' },
+      { label: 'Oeste', value: 'Zona Oeste' },
+    ];
+    return regions
+      .filter((region) => region.value.toLocaleLowerCase('pt-BR') !== currentRegion)
+      .map((region) => ({ label: region.label, location: `${region.value}, ${baseLocation}` }));
+  };
+
+  const startRegionalQuickAction = async (location: string) => {
+    if (!currentJob || isScraping) return;
+    const project = currentJob.project_name || `${currentJob.segment} · ${location}`;
+    await onStartScrape(project, currentJob.segment, currentJob.segment, location, currentJob.limit_requested);
+  };
+
   const createProject = async () => {
     const name = projectName.trim();
     if (!name) return;
@@ -597,6 +620,8 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
               isScraping={isScraping}
               onStopScrape={onStopScrape}
               onGoToResults={onGoToResults}
+              regionalQuickActions={getRegionalQuickActions()}
+              onStartRegionalScrape={startRegionalQuickAction}
             />
           </div>
 
