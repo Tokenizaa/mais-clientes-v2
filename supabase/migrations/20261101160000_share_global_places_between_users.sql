@@ -157,3 +157,10 @@ begin
 end;
 $function$
 
+
+-- Preserve access for all users who already owned a scrape containing the place.
+insert into public.user_places (user_id, place_id, job_id)
+select j.user_id, p.id, p.job_id
+from public.places p
+join public.scrape_jobs j on j.id = p.job_id
+on conflict (user_id, place_id, job_id) do nothing;
