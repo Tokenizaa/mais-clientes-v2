@@ -958,7 +958,9 @@ class Store {
       }
       if (jobError) throw new Error(`Falha ao sincronizar progresso da coleta: ${jobError.message}`);
 
-      if (job.search_session_id) {
+      // A sessão só pode ser atualizada pelo worker que possui a lease.
+      // Nunca envie null/"null" como filtro UUID: sem lease, não toque no checkpoint.
+      if (job.search_session_id && lease) {
         const { error: sessionError } = await client.from('scrape_search_sessions').update({
           next_ordinal: Math.max(0, job.candidate_cursor || 0),
           total_found: Math.max(0, job.total_found || 0),
@@ -966,14 +968,12 @@ class Store {
           exhausted: job.discovery_checkpoint?.exhausted === true,
           updated_at: new Date().toISOString(),
         }).eq('id', job.search_session_id).eq('user_id', job.user_id)
-          .eq('lease_token', lease?.token || null).eq('lease_generation', lease?.generation ?? -1);
+          .eq('lease_token', lease.token).eq('lease_generation', lease.generation);
         if (sessionError) throw new Error(`Falha ao sincronizar checkpoint da sessão de pesquisa: ${sessionError.message}`);
-        if (lease) {
-          const { data: owned, error: verifyError } = await client.from('scrape_search_sessions').select('id')
-            .eq('id', job.search_session_id).eq('user_id', job.user_id)
-            .eq('lease_token', lease.token).eq('lease_generation', lease.generation).maybeSingle();
-          if (verifyError || !owned) throw new Error('Lease perdida; checkpoint rejeitado.');
-        }
+        const { data: owned, error: verifyError } = await client.from('scrape_search_sessions').select('id')
+          .eq('id', job.search_session_id).eq('user_id', job.user_id)
+          .eq('lease_token', lease.token).eq('lease_generation', lease.generation).maybeSingle();
+        if (verifyError || !owned) throw new Error('Lease perdida; checkpoint rejeitado.');
       }
     });
 
@@ -1302,7 +1302,7 @@ async function executeScrapeJob(
     job.status = 'failed';
     job.status_message = error instanceof Error ? error.message : String(error);
     job.current_step = 'Falha ao adquirir lease';
-    await store.persistScrapeProgress(job).catch(() => {});
+    await store.persistScrapeProgress(job, undefined, sessionLease || undefined).catch(() => {});
     return;
   }
   activeScrapeJobs.set(jobId, { cancel: () => { cancelled = true; } });
@@ -1330,7 +1330,7 @@ async function executeScrapeJob(
     job.current_step = message;
     job.heartbeat_at = new Date().toISOString();
     store.persist();
-    await store.persistScrapeProgress(job);
+    await store.persistScrapeProgress(job, undefined, sessionLease || undefined);
   };
 
   const saveCheckpoint = async (url: string, outcome: 'saved' | 'duplicate', name?: string) => {
@@ -1347,7 +1347,7 @@ async function executeScrapeJob(
       processed_count: Number(previous.processed_count || 0) + 1,
     };
     job.candidate_cursor = Number(job.candidate_cursor || 0) + 1;
-    await store.persistScrapeProgress(job);
+    await store.persistScrapeProgress(job, undefined, sessionLease || undefined);
     await audit('candidate_checkpoint_saved', 'debug', 'Checkpoint atualizado após processar ficha.', {
       url: normalizeMapsPlaceUrl(url), outcome, ordinal: job.candidate_cursor, name: name || null,
     });
@@ -1447,7 +1447,7 @@ async function executeScrapeJob(
             continue;
           }
 
-          const persisted = await store.persistScrapeProgress(job, place);
+          const persisted = await store.persistScrapeProgress(job, place, sessionLease || undefined);
           if (!persisted) {
             job.total_duplicates += 1;
             await saveCheckpoint(item.url, 'duplicate', place.name);
@@ -1522,7 +1522,7 @@ async function executeScrapeJob(
     }
     job.completed_at = new Date().toISOString();
     store.persist();
-    await store.persistScrapeProgress(job);
+    await store.persistScrapeProgress(job, undefined, sessionLease || undefined);
     await audit('job_finished', job.status === 'failed' ? 'error' : 'info', job.status_message, {
       status: job.status, collected: job.total_collected, duplicates: job.total_duplicates,
       errors: job.total_errors, checkpoint: job.discovery_checkpoint?.last_processed_url || null,
@@ -1542,7 +1542,7 @@ async function executeScrapeJob(
     });
     console.error(`[Scraper] Falha geral no trabalho ${jobId}:`, message);
     store.persist();
-    await store.persistScrapeProgress(job).catch(() => {});
+    await store.persistScrapeProgress(job, undefined, sessionLease || undefined).catch(() => {});
   } finally {
     if (leaseRenewal) clearInterval(leaseRenewal);
     await browser?.close().catch(() => {});
