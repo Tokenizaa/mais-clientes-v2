@@ -15,7 +15,7 @@ import {
   Flag,
 } from 'lucide-react';
 import { ScrapeJob } from '../shared/types';
-import { calculateScrapeProgressPercent } from '../shared/scrape-progress';
+import { calculateScrapeProgressPercent, isFeedExhaustedJob } from '../shared/scrape-progress';
 
 interface ScrapeEvolutionHUDProps {
   currentJob: ScrapeJob | null;
@@ -26,20 +26,20 @@ interface ScrapeEvolutionHUDProps {
 
 export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
   currentJob,
-  isScraping,
   onStopScrape,
   onGoToResults,
 }) => {
   if (!currentJob) return null;
 
   const percent = calculateScrapeProgressPercent(currentJob);
-  const isRunning = currentJob.status === 'running' || isScraping;
+  // The persisted job status is authoritative; a stale local flag must not hide completion UI.
+  const isRunning = currentJob.status === 'running';
   const isCompleted = currentJob.status === 'completed';
   const isStopped = currentJob.status === 'stopped';
   const isFailed = currentJob.status === 'failed';
   const isPartial = currentJob.status === 'partial';
   const completionReason = currentJob.completion_reason;
-  const isFeedExhausted = completionReason === 'feed_exhausted';
+  const isFeedExhausted = isFeedExhaustedJob(currentJob);
   const isTargetReached = completionReason === 'target_reached';
   const isAccessRestricted = completionReason === 'access_restricted';
   const isFatalScrapeError = completionReason === 'fatal_error';
