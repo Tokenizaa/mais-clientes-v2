@@ -6,10 +6,6 @@ alter table public.scrape_jobs
   add column if not exists worker_lease_token uuid,
   add column if not exists worker_lease_generation bigint not null default 0;
 
-create index if not exists scrape_jobs_worker_lease_expiry_idx
-  on public.scrape_jobs (worker_locked_until)
-  where worker_locked_until is not null;
-
 create or replace function public.claim_scrape_job_lease(
   p_job_id text,
   p_user_id text,
