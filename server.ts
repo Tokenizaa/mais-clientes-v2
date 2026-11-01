@@ -697,6 +697,24 @@ class Store {
       updated_at: new Date().toISOString(),
     };
     if (!this.supabase) return row;
+
+    // Reuse the most recent non-exhausted session for the exact same search
+    // scope. This preserves the last confirmed URL and pagination ordinal when
+    // a job is restarted after a browser disconnect or a partial execution.
+    const existing = await this.supabase
+      .from('scrape_search_sessions')
+      .select('*')
+      .eq('user_id', input.userId)
+      .eq('scope_key', scopeKey)
+      .eq('exhausted', false)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (existing.error) {
+      throw new Error('Falha ao localizar sessão anterior de coleta: ' + existing.error.message);
+    }
+    if (existing.data) return existing.data as any;
+
     const inserted = await this.supabase.from('scrape_search_sessions').insert(row).select('*').single();
     if (inserted.error || !inserted.data) {
       throw new Error('Falha ao criar sessão isolada de coleta: ' + (inserted.error?.message || 'registro indisponível'));
@@ -1632,14 +1650,54 @@ async function executeScrapeJob(
       }
 
       if (job.total_collected >= limit || cancelled || pauseReason) break;
-      if (!anchorFound) {
-        await page.$eval(feedSelector, (feed) => { (feed as HTMLElement).scrollTop = (feed as HTMLElement).scrollHeight; }).catch(() => {});
+      const beforeScroll = await page.evaluate((selector) => {
+        const feed = document.querySelector(selector) as HTMLElement | null;
+        const links = Array.from(document.querySelectorAll('a[href*="/maps/place/"]')) as HTMLAnchorElement[];
+        if (feed) feed.scrollTo({ top: feed.scrollHeight, behavior: 'instant' as ScrollBehavior });
+        else window.scrollBy(0, 1100);
+        return {
+          scrollHeight: feed?.scrollHeight || document.documentElement.scrollHeight,
+          scrollTop: feed?.scrollTop || window.scrollY,
+          linkCount: links.length,
+          lastHref: links.at(-1)?.href || '',
+        };
+      }, feedSelector).catch(() => ({ scrollHeight: 0, scrollTop: 0, linkCount: 0, lastHref: '' }));
+
+      // Google Maps uses infinite scrolling. Wait for actual feed growth or a
+      // changed tail result; a fixed sleep alone can miss delayed pagination.
+      await page.waitForFunction((selector, previous) => {
+        const feed = document.querySelector(selector) as HTMLElement | null;
+        const links = Array.from(document.querySelectorAll('a[href*="/maps/place/"]')) as HTMLAnchorElement[];
+        const body = document.body.innerText || '';
+        const endReached = body.includes('Você chegou ao final da lista') || body.includes("You've reached the end of the list");
+        const height = feed?.scrollHeight || document.documentElement.scrollHeight;
+        const tail = links.at(-1)?.href || '';
+        return endReached || height > previous.scrollHeight || links.length > previous.linkCount || (tail !== '' && tail !== previous.lastHref);
+      }, { timeout: 7000 }, feedSelector, beforeScroll).catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      const afterScroll = await page.evaluate((selector) => {
+        const feed = document.querySelector(selector) as HTMLElement | null;
+        const links = Array.from(document.querySelectorAll('a[href*="/maps/place/"]')) as HTMLAnchorElement[];
+        return {
+          scrollHeight: feed?.scrollHeight || document.documentElement.scrollHeight,
+          scrollTop: feed?.scrollTop || window.scrollY,
+          linkCount: links.length,
+          lastHref: links.at(-1)?.href || '',
+        };
+      }, feedSelector).catch(() => ({ scrollHeight: 0, scrollTop: 0, linkCount: 0, lastHref: '' }));
+      const paginationAdvanced = afterScroll.scrollHeight > beforeScroll.scrollHeight
+        || afterScroll.linkCount > beforeScroll.linkCount
+        || (afterScroll.lastHref !== '' && afterScroll.lastHref !== beforeScroll.lastHref);
+      if (paginationAdvanced) {
+        await audit('feed_pagination_advanced', 'debug', 'Rolagem infinita carregou novos resultados no feed.', {
+          before: beforeScroll, after: afterScroll, anchor_found: anchorFound,
+        });
       } else {
-        await page.$eval(feedSelector, (feed) => { (feed as HTMLElement).scrollTop = (feed as HTMLElement).scrollHeight; }).catch(() =>
-          page.evaluate(() => window.scrollBy(0, 1100)).catch(() => {})
-        );
+        await audit('feed_pagination_waiting', 'debug', 'Rolagem executada; aguardando novos resultados ou confirmação explícita do fim do feed.', {
+          before: beforeScroll, after: afterScroll, anchor_found: anchorFound,
+        });
       }
-      await new Promise((resolve) => setTimeout(resolve, 1000));
       const currentCount = seenThisRun.size;
       stagnantRounds = currentCount === previousCount ? stagnantRounds + 1 : 0;
       previousCount = currentCount;
