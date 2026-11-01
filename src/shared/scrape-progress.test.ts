@@ -48,3 +48,27 @@ test('partial, failed and stopped jobs show the target actually achieved', () =>
 test('completed jobs report 100 percent', () => {
   assert.equal(calculateScrapeProgressPercent(job({ status: 'completed', total_collected: 20 })), 100);
 });
+
+test('confirmed natural feed exhaustion reports 100 percent even when the new-contact target was not met', () => {
+  assert.equal(calculateScrapeProgressPercent(job({
+    status: 'partial',
+    completion_reason: 'feed_exhausted',
+    total_found: 108,
+    total_collected: 4,
+    total_duplicates: 102,
+    total_errors: 2,
+  })), 100);
+});
+
+test('access restriction and unconfirmed stagnation do not masquerade as completed progress', () => {
+  assert.equal(calculateScrapeProgressPercent(job({
+    status: 'partial',
+    completion_reason: 'access_restricted',
+    total_collected: 4,
+  })), 20);
+  assert.equal(calculateScrapeProgressPercent(job({
+    status: 'partial',
+    completion_reason: 'feed_stagnation',
+    total_collected: 4,
+  })), 20);
+});
