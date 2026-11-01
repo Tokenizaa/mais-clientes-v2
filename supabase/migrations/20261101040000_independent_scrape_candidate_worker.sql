@@ -56,29 +56,6 @@ begin
    where id = p_session_id and user_id = p_user_id
    for update;
   if not found then raise exception 'scrape session not found or not owned'; end if;
-  -- Inline discovery workers authenticate with the session lease. Independent
-  -- processors authenticate with the candidate-specific lease returned by
-  -- claim_scrape_candidate; neither worker can impersonate the other.
-  if v_session.lease_token is distinct from p_lease_token
-     or v_session.lease_generation <> p_lease_generation
-     or v_session.lease_expires_at is null
-     or v_session.lease_expires_at <= now() then
-    select * into v_candidate
-      from public.scrape_candidates
-     where id = p_candidate_id
-       and job_id = p_job_id
-       and user_id = p_user_id
-       and session_id = p_session_id
-     for update;
-    if not found
-       or v_candidate.processing_token is distinct from p_lease_token
-       or v_candidate.processing_generation <> p_lease_generation
-       or v_candidate.processing_locked_until is null
-       or v_candidate.processing_locked_until <= now() then
-      raise exception 'scrape candidate lease lost';
-    end if;
-  end if;
-
   select * into v_candidate
     from public.scrape_candidates
    where id = p_candidate_id
@@ -100,6 +77,29 @@ begin
       'checkpoint', v_job.discovery_checkpoint,
       'already_completed', true
     );
+  end if;
+
+  -- Inline discovery workers authenticate with the session lease. Independent
+  -- processors authenticate with the candidate-specific lease returned by
+  -- claim_scrape_candidate; neither worker can impersonate the other.
+  if v_session.lease_token is distinct from p_lease_token
+     or v_session.lease_generation <> p_lease_generation
+     or v_session.lease_expires_at is null
+     or v_session.lease_expires_at <= now() then
+    select * into v_candidate
+      from public.scrape_candidates
+     where id = p_candidate_id
+       and job_id = p_job_id
+       and user_id = p_user_id
+       and session_id = p_session_id
+     for update;
+    if not found
+       or v_candidate.processing_token is distinct from p_lease_token
+       or v_candidate.processing_generation <> p_lease_generation
+       or v_candidate.processing_locked_until is null
+       or v_candidate.processing_locked_until <= now() then
+      raise exception 'scrape candidate lease lost';
+    end if;
   end if;
 
   v_actual_outcome := p_outcome;
