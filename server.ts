@@ -528,6 +528,7 @@ function markStaleRunningJobs(state: StoreState, userId: string, now = Date.now(
     const lastHeartbeat = Date.parse(job.heartbeat_at || job.created_at);
     if (!Number.isFinite(lastHeartbeat) || now - lastHeartbeat <= staleAfterMs) continue;
     job.status = 'failed';
+    job.completion_reason = 'fatal_error';
     job.status_message = 'A execução expirou por inatividade.';
     job.current_step = 'Execução expirada';
     job.completed_at = new Date(now).toISOString();
@@ -664,6 +665,7 @@ class Store {
           search_session_id: (data as any).search_session_id ?? snapshotJob.search_session_id,
           phase: (data as any).phase ?? snapshotJob.phase,
           discovery_checkpoint: (data as any).discovery_checkpoint ?? snapshotJob.discovery_checkpoint,
+          completion_reason: snapshotJob.completion_reason ?? (data as any).completion_reason,
           candidate_urls: snapshotJob.candidate_urls,
           candidate_cursor: (data as any).candidate_cursor ?? snapshotJob.candidate_cursor,
           retry_count: (data as any).retry_count ?? snapshotJob.retry_count,
@@ -1216,6 +1218,7 @@ async function executeScrapeJob(
     }
   } catch (error) {
     job.status = 'failed';
+    job.completion_reason = 'fatal_error';
     job.status_message = error instanceof Error ? error.message : String(error);
     job.current_step = 'Falha ao adquirir lease';
     await store.persistScrapeProgress(job, jobLease || undefined).catch(() => {});
@@ -1432,10 +1435,13 @@ async function executeScrapeJob(
       const currentCount = seenThisRun.size;
       stagnantRounds = currentCount === previousCount ? stagnantRounds + 1 : 0;
       previousCount = currentCount;
-      const endReached = await page.evaluate(() => {
-        const body = document.body.innerText || '';
-        return body.includes('Você chegou ao final da lista') || body.includes("You've reached the end of the list");
-      });
+      const endReached = await page.evaluate((selector) => {
+        const feed = document.querySelector(selector) as HTMLElement | null;
+        if (!feed) return false;
+        const feedText = feed.innerText || '';
+        return feedText.includes('Você chegou ao final da lista')
+          || feedText.includes("You've reached the end of the list");
+      }, feedSelector);
       if (endReached) {
         feedExhausted = true;
         break;
@@ -1451,18 +1457,22 @@ async function executeScrapeJob(
     }
 
     if (cancelled) {
+      job.completion_reason = 'user_stopped';
       job.status = 'stopped';
       job.status_message = 'Coleta interrompida pelo usuário.';
       job.current_step = 'Interrompida';
     } else if (pauseReason) {
+      job.completion_reason = 'feed_stagnation';
       job.status = job.total_collected > 0 || job.total_duplicates > 0 ? 'partial' : 'failed';
       job.status_message = pauseReason;
       job.current_step = 'Finalizada com falhas';
     } else if (job.total_collected >= limit) {
+      job.completion_reason = 'target_reached';
       job.status = 'completed';
       job.status_message = `Meta atingida: ${job.total_collected} novos contatos salvos.`;
       job.current_step = 'Meta atingida';
     } else if (feedExhausted) {
+      job.completion_reason = 'feed_exhausted';
       job.status = job.total_errors > 0 ? 'partial' : 'completed';
       job.status_message = job.total_errors > 0
         ? `Feed esgotado com ${job.total_errors} falha(s): ${job.total_collected} novos contatos salvos; ${job.total_duplicates} duplicados ignorados.`
@@ -1470,6 +1480,7 @@ async function executeScrapeJob(
       job.discovery_checkpoint = { ...(job.discovery_checkpoint || {}), exhausted: true };
       job.current_step = job.total_errors > 0 ? 'Concluída com falhas' : 'Feed esgotado';
     } else {
+      job.completion_reason = 'feed_stagnation';
       job.status = 'partial';
       job.status_message = 'Coleta finalizada sem confirmação de esgotamento do feed.';
       job.current_step = 'Finalizada parcialmente';
@@ -1479,13 +1490,14 @@ async function executeScrapeJob(
     await audit('job_finished', job.status === 'failed' ? 'error' : 'info', job.status_message, {
       status: job.status, collected: job.total_collected, duplicates: job.total_duplicates,
       errors: job.total_errors,
-      stop_reason: cancelled ? 'user_cancelled' : pauseReason ? 'execution_error' : job.total_collected >= limit ? 'target_reached' : feedExhausted ? 'feed_exhausted' : 'feed_stagnation',
+      stop_reason: job.completion_reason,
       pause_reason: pauseReason || null, stagnant_rounds: stagnantRounds,
     });
   } catch (error: any) {
     const message = error instanceof Error ? error.message : String(error ?? 'Erro desconhecido');
     const browserFailure = /connection closed|target closed|detached frame|session closed|websocket|browser.*disconnect|protocol error|cannot find context|execution context.*destroyed/i.test(message);
     job.status = job.total_collected > 0 ? 'partial' : 'failed';
+    job.completion_reason = 'fatal_error';
     job.status_message = browserFailure
       ? 'Conexão do navegador encerrada. A coleta foi finalizada sem retomada automática.'
       : `Falha na coleta: ${message}`;
