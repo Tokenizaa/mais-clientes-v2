@@ -700,6 +700,16 @@ class Store {
     job.heartbeat_at = new Date().toISOString();
   }
 
+  async getUserPlaceAssociations(userId: string): Promise<Array<{ place_id: string; job_id: string }> | null> {
+    if (!this.supabase) return null;
+    const { data, error } = await this.supabase
+      .from('user_places')
+      .select('place_id, job_id')
+      .eq('user_id', userId);
+    if (error) throw new Error('Falha ao carregar vínculos dos estabelecimentos: ' + error.message);
+    return (data || []) as Array<{ place_id: string; job_id: string }>;
+  }
+
   async persistScrapedPlace(
     job: ScrapeJob, place: PlaceRecord | null, sourcePlaceId: string | null,
     sourceUrl: string, lease: { token: string; generation: number }
@@ -1988,33 +1998,43 @@ export async function createApp() {
   // 3. LEADS / PLACES (/api/v1/leads)
   // =========================================================================
 
-  app.get('/api/v1/leads', (req: Request, res: Response) => {
+  app.get('/api/v1/leads', async (req: Request, res: Response) => {
     try {
       const user = resolveUserFromRequest(req);
       if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
       const state = store.getState();
-      const ownedJobIds = new Set(state.jobs.filter((job) => job.user_id === user?.id).map((job) => job.id));
       const { jobId, query, category, sortBy = 'collected_at', sortOrder = 'desc', offset = '0', limit = '25' } = req.query;
 
-      let filtered = state.places.filter((place) => ownedJobIds.has(place.job_id));
-
-      if (jobId && typeof jobId === 'string' && jobId.trim()) {
-        filtered = filtered.filter((p) => p.job_id === jobId.trim());
+      let visiblePlaces: PlaceRecord[];
+      const associations = await store.getUserPlaceAssociations(user.id);
+      if (associations) {
+        const requestedJobId = typeof jobId === 'string' ? jobId.trim() : '';
+        const visiblePlaceIds = new Set(
+          associations
+            .filter((link) => !requestedJobId || link.job_id === requestedJobId)
+            .map((link) => link.place_id)
+        );
+        visiblePlaces = state.places.filter((place) => visiblePlaceIds.has(place.id));
+      } else {
+        const ownedJobIds = new Set(state.jobs.filter((job) => job.user_id === user.id).map((job) => job.id));
+        visiblePlaces = state.places.filter((place) => ownedJobIds.has(place.job_id));
+        if (jobId && typeof jobId === 'string' && jobId.trim()) {
+          visiblePlaces = visiblePlaces.filter((place) => place.job_id === jobId.trim());
+        }
       }
 
+      let filtered = visiblePlaces;
       if (query && typeof query === 'string' && query.trim()) {
         const q = query.trim().toLowerCase();
-        filtered = filtered.filter((p) => {
-          return (
-            p.name.toLowerCase().includes(q) ||
-            p.category.toLowerCase().includes(q) ||
-            p.address.toLowerCase().includes(q) ||
-            p.phone.toLowerCase().includes(q) ||
-            p.website.toLowerCase().includes(q) ||
-            p.city?.toLowerCase().includes(q) ||
-            p.description?.toLowerCase().includes(q)
-          );
-        });
+        filtered = filtered.filter((p) =>
+          p.name.toLowerCase().includes(q) ||
+          p.category.toLowerCase().includes(q) ||
+          p.address.toLowerCase().includes(q) ||
+          p.phone.toLowerCase().includes(q) ||
+          p.website.toLowerCase().includes(q) ||
+          p.city?.toLowerCase().includes(q) ||
+          p.description?.toLowerCase().includes(q)
+        );
       }
 
       if (category && typeof category === 'string' && category.trim()) {
@@ -2022,32 +2042,22 @@ export async function createApp() {
         filtered = filtered.filter((p) => p.category.toLowerCase().includes(cat));
       }
 
-      // Sort
       const sortKey = String(sortBy) as keyof PlaceRecord;
       const asc = String(sortOrder).toLowerCase() === 'asc';
-
       filtered.sort((a, b) => {
         const valA = a[sortKey] || '';
         const valB = b[sortKey] || '';
-        if (typeof valA === 'number' && typeof valB === 'number') {
-          return asc ? valA - valB : valB - valA;
-        }
+        if (typeof valA === 'number' && typeof valB === 'number') return asc ? valA - valB : valB - valA;
         return asc ? String(valA).localeCompare(String(valB)) : String(valB).localeCompare(String(valA));
       });
 
       const numOffset = Math.max(0, parseInt(String(offset), 10) || 0);
       const numLimit = Math.max(1, Math.min(500, parseInt(String(limit), 10) || 25));
       const paginated = filtered.slice(numOffset, numOffset + numLimit);
-
       return res.json({
         data: paginated,
         places: paginated,
-        pagination: {
-          total: filtered.length,
-          offset: numOffset,
-          limit: numLimit,
-          hasMore: numOffset + numLimit < filtered.length,
-        },
+        pagination: { total: filtered.length, offset: numOffset, limit: numLimit, hasMore: numOffset + numLimit < filtered.length },
         total: filtered.length,
       });
     } catch (err: any) {
