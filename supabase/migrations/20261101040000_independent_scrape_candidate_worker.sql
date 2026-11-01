@@ -278,6 +278,7 @@ begin
          next_attempt_at = null,
          updated_at = now()
    where c.status = 'processing'
+     and c.session_id is not null
      and (c.processing_locked_until is null or c.processing_locked_until <= now())
      and c.attempt_count >= p_max_attempts;
 
@@ -287,6 +288,8 @@ begin
       from public.scrape_candidates c
       join public.scrape_jobs j on j.id = c.job_id
      where c.status in ('discovered', 'processing')
+       and c.session_id is not null
+       and c.session_id = j.search_session_id
        and (c.next_attempt_at is null or c.next_attempt_at <= now())
        and (c.status = 'discovered'
             or c.processing_locked_until is null
