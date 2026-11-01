@@ -1,5 +1,5 @@
 -- Integration test for the simplified job lease and atomic place persistence.
--- Run after 20261101160000_simplify_scrape_job_persistence.sql.
+-- Run after 20261101080912_simplify_scrape_job_persistence.sql.
 -- All fixtures are rolled back.
 
 begin;
