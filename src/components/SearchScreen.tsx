@@ -483,18 +483,22 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                 </div>
 
                 <div>
-                  <label htmlFor="neighborhood-input" className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-                    Bairro ou Região <span className="text-slate-500 font-normal">(opcional)</span>
+                  <label htmlFor="neighborhood-select" className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                    Região da cidade <span className="text-slate-500 font-normal">(opcional)</span>
                   </label>
-                  <input
-                    id="neighborhood-input"
-                    type="text"
+                  <select
+                    id="neighborhood-select"
                     value={neighborhood}
                     onChange={(e) => setNeighborhood(e.target.value)}
                     disabled={isScraping}
-                    placeholder="Ex: Centro, Jardins..."
                     className="w-full py-3 px-3 bg-[#070e20] border border-[#1d3162] rounded-xl text-slate-100 text-sm font-medium focus:border-blue-500 outline-none"
-                  />
+                  >
+                    <option value="">Todas as regiões</option>
+                    <option value="Zona Norte">Norte</option>
+                    <option value="Zona Sul">Sul</option>
+                    <option value="Zona Leste">Leste</option>
+                    <option value="Zona Oeste">Oeste</option>
+                  </select>
                 </div>
               </div>
             ) : (
@@ -513,13 +517,6 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
               </div>
             )}
 
-            <div className="flex items-center gap-2 text-xs text-slate-400 bg-[#070e20] border border-[#17274f] rounded-xl px-4 py-2.5">
-              <MapPin className="w-4 h-4 text-blue-400 shrink-0" />
-              <span>
-                Termo de localização:{' '}
-                <strong className="text-slate-200">{getComputedLocation() || '(Aguardando preenchimento)'}</strong>
-              </span>
-            </div>
           </div>
 
           {/* Step 5: Limit of Fresh Places */}
