@@ -3,16 +3,18 @@
 @source "../index.html";
 
 @layer base {
+
+  /* Shared dark-navy surfaces and accessible focus states. */
   :root {
     --app-bg: #050a16;
     --app-surface: #0b1429;
     --app-surface-raised: #101e39;
     --app-border: #20365f;
-    --app-accent: #00e5ff;
-    --app-accent-strong: #00b8d4;
-    --app-success: #b6ff00;
+    --app-accent: #3b82f6;
+    --app-accent-strong: #2563eb;
+    --app-success: #10b981;
     --app-warning: #f59e0b;
-    --app-danger: #ff1744;
+    --app-danger: #f43f5e;
   }
 
   :where(button, input, select, textarea):focus-visible {
@@ -21,7 +23,7 @@
   }
 
   ::selection {
-    background: rgb(0 229 255 / 35%);
+    background: rgb(59 130 246 / 35%);
     color: #fff;
   }
 
@@ -36,40 +38,53 @@
     overflow-x: hidden;
   }
 
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { background: #050a16; }
-  ::-webkit-scrollbar-thumb { background: #263b61; border-radius: 9999px; }
-  ::-webkit-scrollbar-thumb:hover { background: #3b5b91; }
-}
-
-@property --holo-angle {
-  syntax: '<angle>';
-  inherits: false;
-  initial-value: 0deg;
-}
-
-@keyframes holo-border-orbit {
-  to { --holo-angle: 360deg; }
+  /* Custom minimal dark navy scrollbars */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #050a16;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #263b61;
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #3b5b91;
+  }
 }
 
 @keyframes radar-sweep {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 .animate-radar-sweep {
   animation: radar-sweep 3s linear infinite;
-  filter: drop-shadow(0 0 7px rgb(0 229 255 / 48%));
 }
 
 @keyframes pulse-glow {
-  0%, 100% { opacity: 0.55; transform: scale(1); }
-  50% { opacity: 1; transform: scale(1.045); }
+  0%, 100% {
+    opacity: 0.4;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.05);
+  }
 }
 
-.animate-pulse-glow { animation: pulse-glow 2.5s ease-in-out infinite; }
+.animate-pulse-glow {
+  animation: pulse-glow 2.5s ease-in-out infinite;
+}
 
-/* Ambient control-room atmosphere: stronger color, still behind the work surface. */
+
+/* Restrained sci-fi ambience: visual depth stays behind the working surface. */
 .app-ambient {
   position: fixed;
   inset: 0;
@@ -77,168 +92,76 @@
   overflow: hidden;
   pointer-events: none;
   background:
-    radial-gradient(ellipse at 16% 18%, rgb(0 174 255 / 16%), transparent 42%),
-    radial-gradient(ellipse at 84% 72%, rgb(0 255 102 / 11%), transparent 38%),
-    radial-gradient(ellipse at 50% 110%, rgb(0 229 255 / 8%), transparent 46%),
-    linear-gradient(145deg, #040916 0%, #07152b 54%, #040a17 100%);
+    radial-gradient(ellipse at 18% 12%, rgb(17 73 112 / 15%), transparent 42%),
+    radial-gradient(ellipse at 84% 78%, rgb(8 104 91 / 10%), transparent 38%),
+    linear-gradient(145deg, #050a16 0%, #071226 54%, #050b18 100%);
 }
-
 .app-ambient-canvas {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  opacity: 0.9;
+  opacity: 0.62;
 }
-
 .app-ambient-glow {
   position: absolute;
-  width: 36rem;
-  height: 36rem;
+  width: 34rem;
+  height: 34rem;
   border-radius: 9999px;
-  filter: blur(100px);
-  opacity: 0.2;
+  filter: blur(90px);
+  opacity: 0.12;
 }
 .app-ambient-glow-a {
-  top: -23rem;
-  left: 12%;
-  background: #00d9ff;
+  top: -24rem;
+  left: 18%;
+  background: #0ea5e9;
 }
 .app-ambient-glow-b {
-  right: -20rem;
-  bottom: -24rem;
-  background: #a3ff00;
+  right: -22rem;
+  bottom: -25rem;
+  background: #10b981;
 }
 
+/* Keep the app above the ambient layer. */
 .app-shell {
   position: relative;
   isolation: isolate;
   min-height: 100vh;
   background: transparent !important;
 }
-.app-shell > .app-ambient { z-index: -1; }
-.app-content { position: relative; }
-
-/*
- * Holographic floating panels.
- * The moving conic-gradient is clipped to the perimeter; the blurred
- * pseudo-element creates the backlight without changing component markup.
- */
-.app-content [class*="rounded-2xl"][class*="bg-[#0b1429]"],
-.app-shell main > section > .rounded-2xl {
-  --panel-glow: 0 0 18px rgb(0 229 255 / 18%), 0 18px 48px rgb(0 0 0 / 42%);
-  position: relative;
-  isolation: isolate;
-  border: 1px solid rgb(0 229 255 / 48%) !important;
-  background: linear-gradient(145deg, rgb(10 25 48 / 94%), rgb(5 15 32 / 92%)) !important;
-  box-shadow:
-    var(--panel-glow),
-    inset 0 1px 0 rgb(225 250 255 / 10%),
-    inset 0 0 24px rgb(0 229 255 / 4%);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  transition: transform 240ms ease, border-color 240ms ease, box-shadow 240ms ease;
-}
-
-/* Orbiting energy line around the card edge. */
-.app-content [class*="rounded-2xl"][class*="bg-[#0b1429]"]::before,
-.app-shell main > section > .rounded-2xl::before {
-  content: "";
-  position: absolute;
-  inset: -1px;
-  z-index: 2;
-  padding: 1.5px;
-  border-radius: inherit;
-  pointer-events: none;
-  background: conic-gradient(
-    from var(--holo-angle),
-    transparent 0deg 238deg,
-    rgb(0 229 255 / 18%) 258deg,
-    #00e5ff 278deg,
-    #b6ff00 294deg,
-    #ffffff 300deg,
-    #00e5ff 310deg,
-    transparent 332deg 360deg
-  );
-  animation: holo-border-orbit 5.5s linear infinite;
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-}
-
-/* Soft colored backlight, offset from the panel to suggest levitation. */
-.app-content [class*="rounded-2xl"][class*="bg-[#0b1429]"]::after,
-.app-shell main > section > .rounded-2xl::after {
-  content: "";
-  position: absolute;
-  inset: -15px;
+.app-shell > .app-ambient {
   z-index: -1;
-  border-radius: inherit;
-  pointer-events: none;
-  background:
-    radial-gradient(ellipse at 18% 10%, rgb(0 229 255 / 28%), transparent 52%),
-    radial-gradient(ellipse at 82% 92%, rgb(182 255 0 / 20%), transparent 55%);
-  filter: blur(24px);
-  opacity: 0.72;
-  transition: opacity 240ms ease, filter 240ms ease;
+}
+.app-content {
+  position: relative;
 }
 
-.app-content [class*="rounded-2xl"][class*="bg-[#0b1429]"]:hover,
-.app-shell main > section > .rounded-2xl:hover {
-  transform: translateY(-2px);
-  border-color: rgb(0 229 255 / 78%) !important;
-  box-shadow:
-    0 0 22px rgb(0 229 255 / 24%),
-    0 22px 54px rgb(0 0 0 / 48%),
-    inset 0 1px 0 rgb(255 255 255 / 14%),
-    inset 0 0 28px rgb(0 229 255 / 7%);
+/* Subtle frosted surfaces only on primary content cards. */
+.app-content [class*="rounded-2xl"][class*="bg-[#0b1429]"] {
+  background: linear-gradient(145deg, rgb(13 27 51 / 82%), rgb(8 19 38 / 78%)) !important;
+  border-color: rgb(68 112 157 / 30%) !important;
+  box-shadow: 0 14px 38px rgb(0 0 0 / 20%), inset 0 1px 0 rgb(190 225 255 / 3%);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
 }
-.app-content [class*="rounded-2xl"][class*="bg-[#0b1429]"]:hover::after,
-.app-shell main > section > .rounded-2xl:hover::after {
-  opacity: 0.95;
-  filter: blur(29px);
+.app-content [class*="rounded-2xl"][class*="bg-[#0b1429]"]:hover {
+  border-color: rgb(75 180 190 / 36%) !important;
+  box-shadow: 0 16px 42px rgb(0 0 0 / 24%), 0 0 22px rgb(14 165 233 / 5%);
 }
 
-/* High-chroma status colors: vivid but reserved for meaningful signals. */
-.app-shell :where(.text-emerald-400, .text-emerald-300, .text-green-400) {
-  color: #b6ff00 !important;
-  text-shadow: 0 0 7px rgb(182 255 0 / 62%), 0 0 18px rgb(182 255 0 / 34%);
+/* Quiet green/cyan signal accents; red remains reserved for errors. */
+.app-shell :where(.text-emerald-400, .text-emerald-300) {
+  text-shadow: 0 0 12px rgb(52 211 153 / 18%);
 }
-.app-shell :where(.text-red-400, .text-red-300, .text-rose-400, .text-rose-300) {
-  color: #ff3158 !important;
-  text-shadow: 0 0 7px rgb(255 23 68 / 62%), 0 0 18px rgb(255 23 68 / 34%);
-}
-.app-shell :where(.bg-emerald-500, .bg-emerald-600) {
-  box-shadow: 0 0 14px rgb(182 255 0 / 22%);
-}
-.app-shell :where(.border-emerald-500\/30, .border-emerald-500\/40) {
-  border-color: rgb(182 255 0 / 38%);
-}
-
-/* The live collection gauge gets a brighter holographic sweep, not fake radar data. */
-.app-shell .animate-radar-sweep {
-  mix-blend-mode: screen;
-  opacity: 0.72;
-}
-.app-shell :where(.text-cyan-400, .text-cyan-300) {
-  text-shadow: 0 0 8px rgb(0 229 255 / 35%);
-}
-
-@media (hover: none) {
-  .app-content [class*="rounded-2xl"][class*="bg-[#0b1429]"]:hover,
-  .app-shell main > section > .rounded-2xl:hover {
-    transform: none;
-  }
-}
-
-@media (max-width: 640px) {
-  .app-ambient-glow { opacity: 0.13; }
-  .app-content [class*="rounded-2xl"][class*="bg-[#0b1429]"]::after,
-  .app-shell main > section > .rounded-2xl::after { filter: blur(18px); opacity: 0.48; }
+.app-shell :where(.text-red-400, .text-rose-400, .text-red-300) {
+  text-shadow: 0 0 10px rgb(248 113 113 / 14%);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .app-shell *, .app-shell *::before, .app-shell *::after {
+  .app-shell *,
+  .app-shell *::before,
+  .app-shell *::after {
     scroll-behavior: auto !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
