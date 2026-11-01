@@ -8,7 +8,6 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Sidebar, ScreenTab } from './components/Sidebar';
 import { SearchScreen } from './components/SearchScreen';
 import { ResultsScreen } from './components/ResultsScreen';
-import { ScrapeResultCards } from './components/ScrapeResultCards';
 import { ExportScreen } from './components/ExportScreen';
 import { HistoryScreen } from './components/HistoryScreen';
 import { LogsScreen } from './components/LogsScreen';
