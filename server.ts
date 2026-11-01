@@ -1360,7 +1360,7 @@ async function executeScrapeJob(
     });
     await updateProgress('Conectando ao navegador...');
     browser = await connectScraperBrowser(state.settings?.browserWsEndpoint);
-    const page = await browser.newPage();
+    let page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 900 });
     await page.setExtraHTTPHeaders({ 'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7' });
 
@@ -1509,11 +1509,24 @@ async function executeScrapeJob(
                 }
               }
               recovered = true;
-              pauseReason = 'Conexão com o Chromium recuperada; ficha pendente processada. A próxima execução continua da ficha seguinte.';
-              await audit('browser_recovery_succeeded', 'info', 'Ficha pendente processada após reconexão; feed será retomado pelo checkpoint.', {
+              await audit('browser_recovery_succeeded', 'info', 'Ficha pendente processada após reconexão; reconstruindo o feed para continuar pela ficha seguinte.', {
                 url: item.key, collected: job.total_collected, duplicates: job.total_duplicates,
               });
-              await updateProgress(pauseReason);
+
+              // O browser e a página de pesquisa originais foram encerrados.
+              // Reconstrói o feed na nova sessão e reposiciona pelo checkpoint persistido.
+              page = await browser.newPage();
+              await page.setViewport({ width: 1280, height: 900 });
+              await page.setExtraHTTPHeaders({ 'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7' });
+              await page.goto('https://www.google.com/maps/search/' + encodeURIComponent(searchQuery), {
+                waitUntil: 'domcontentloaded', timeout: 45000,
+              });
+              await page.waitForSelector('div[role="feed"], a[href*="/maps/place/"]', { timeout: 20000 }).catch(() => {});
+              anchorFound = false;
+              seenThisRun.clear();
+              previousCount = 0;
+              stagnantRounds = 0;
+              await updateProgress(`Chromium reconectado; retomando após ${retriedPlace.name || 'a ficha processada'}...`);
             } catch (retryError) {
               const retryMessage = retryError instanceof Error ? retryError.message : String(retryError ?? 'Erro desconhecido');
               await audit('browser_recovery_failed', 'error', retryMessage, {
