@@ -1378,7 +1378,7 @@ async function executeScrapeJob(
     }
   };
 
-  const refreshExternalJobState = async (): Promise<string> => {
+  const refreshExternalJobState = async (): Promise<ScrapeJob['status']> => {
     const client = (store as any).supabase;
     const { data, error } = await client.from('scrape_jobs')
       .select('status,status_message,current_step,completed_at,total_found,total_collected,total_duplicates,total_errors')
@@ -1392,7 +1392,7 @@ async function executeScrapeJob(
     job.total_collected = Number(data.total_collected || 0);
     job.total_duplicates = Number(data.total_duplicates || 0);
     job.total_errors = Number(data.total_errors || 0);
-    return String(data.status);
+    return data.status as ScrapeJob['status'];
   };
 
   const updateProgress = async (message: string) => {
