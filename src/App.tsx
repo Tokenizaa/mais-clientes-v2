@@ -16,7 +16,7 @@ import { ProjectsScreen } from './components/ProjectsScreen';
 import { CredentialsScreen } from './components/CredentialsScreen';
 import { AuthScreen } from './components/AuthScreen';
 import { PlaceRecord, ScrapeJob } from './shared/types';
-import { Menu, Database, FileSpreadsheet } from 'lucide-react';
+import { Menu } from 'lucide-react';
 import { AmbientBackground } from './components/AmbientBackground';
 import { HolographicGridOverlay } from './components/HolographicGridOverlay';
 
@@ -509,16 +509,7 @@ export default function App() {
     }
   };
 
-  const tabLabels: Record<ScreenTab, string> = {
-    dashboard: 'Painel Geral',
-    projects: 'Projetos & Campanhas',
-    credentials: 'Credenciais de API',
-    search: 'Nova Coleta',
-    results: 'Base de Leads',
-    export: 'Exportação de Leads',
-    history: 'Projetos & Histórico',
-    logs: 'Auditoria & Sistema',
-  };
+
 
   // If user is not authenticated, show AuthScreen
   if (!hasApiKey) return <AuthScreen onAuthenticated={handleAuthenticated} />;
@@ -688,9 +679,8 @@ export default function App() {
           )}
 
           {currentTab === 'logs' && <LogsScreen />}
-        </main>
-
           </div>
+        </main>
       </div>
 
     </div>
