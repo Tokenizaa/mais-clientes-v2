@@ -78,7 +78,7 @@ begin
         case when nullif(trim(coalesce(p_source_place_id, '')), '') is not null
           then 'place-id:' || lower(trim(p_source_place_id)) end,
         case when nullif(trim(coalesce(p_source_url, '')), '') is not null
-          then 'url:' || regexp_replace(lower(trim(p_source_url)), '/+$', '') end
+          then 'url:' || regexp_replace(regexp_replace(lower(trim(p_source_url)), '[?#].*$', ''), '/+$', '') end
       ]) as keys(key)
      where key is not null
      order by key
@@ -92,8 +92,8 @@ begin
             and lower(trim(p.source_place_id)) = lower(trim(p_source_place_id)))
         or (nullif(trim(coalesce(p_source_url, '')), '') is not null
             and (
-              regexp_replace(lower(trim(p.source_url)), '/+$', '') = regexp_replace(lower(trim(p_source_url)), '/+$', '')
-              or regexp_replace(lower(trim(p.maps_url)), '/+$', '') = regexp_replace(lower(trim(p_source_url)), '/+$', '')
+              regexp_replace(regexp_replace(lower(trim(p.source_url)), '[?#].*$', ''), '/+$', '') = regexp_replace(regexp_replace(lower(trim(p_source_url)), '[?#].*$', ''), '/+$', '')
+              or regexp_replace(regexp_replace(lower(trim(p.maps_url)), '[?#].*$', ''), '/+$', '') = regexp_replace(regexp_replace(lower(trim(p_source_url)), '[?#].*$', ''), '/+$', '')
             ))
   ) then
     v_is_duplicate := true;
@@ -263,9 +263,9 @@ begin
           case when nullif(trim(coalesce(v_place_json->>'source_place_id', '')), '') is not null
             then 'place-id:' || lower(trim(v_place_json->>'source_place_id')) end,
           case when nullif(trim(coalesce(v_place_json->>'source_url', '')), '') is not null
-            then 'url:' || regexp_replace(lower(trim(v_place_json->>'source_url')), '/+$', '') end,
+            then 'url:' || regexp_replace(regexp_replace(lower(trim(v_place_json->>'source_url')), '[?#].*$', ''), '/+$', '') end,
           case when nullif(trim(coalesce(v_place_json->>'maps_url', '')), '') is not null
-            then 'url:' || regexp_replace(lower(trim(v_place_json->>'maps_url')), '/+$', '') end,
+            then 'url:' || regexp_replace(regexp_replace(lower(trim(v_place_json->>'maps_url')), '[?#].*$', ''), '/+$', '') end,
           case when nullif(trim(coalesce(v_place_json->>'name', '')), '') is not null
                  and nullif(trim(coalesce(v_place_json->>'address', '')), '') is not null
             then 'name-address:' || lower(regexp_replace(trim(v_place_json->>'name') || '|' || trim(v_place_json->>'address'), '\s+', ' ', 'g')) end
