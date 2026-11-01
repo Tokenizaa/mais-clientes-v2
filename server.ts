@@ -1464,14 +1464,76 @@ async function executeScrapeJob(
           });
           await updateProgress(`Salvo: ${place.name || 'Estabelecimento sem nome'} (${job.total_collected}/${limit})`);
         } catch (error: any) {
-          job.total_errors += 1;
           const message = error instanceof Error ? error.message : String(error ?? 'Erro desconhecido');
-          const browserFailure = /connection closed|target closed|detached frame|session closed|websocket|browser.*disconnect|protocol error/i.test(message);
-          pauseReason = browserFailure ? 'Conexão com o navegador encerrada; ficha mantida pendente para retomada.' : 'Falha na ficha; checkpoint preservado para nova tentativa.';
-          await audit(browserFailure ? 'browser_disconnected' : 'place_extraction_failed', 'error', message, {
-            url: item.key, retryable: true, checkpoint_preserved: true, ordinal: Number(job.candidate_cursor || 0) + 1,
-          });
-          console.error(`[Scraper] Falha na ficha ${item.key}:`, message);
+          const transientBrowserFailure = /timeout|timed out|navigation.*timeout|connection closed|target closed|detached frame|session closed|websocket|browser.*disconnect|protocol error|cannot find context/i.test(message);
+          let recovered = false;
+
+          // Uma falha transitória não deve encerrar a coleta sem uma tentativa de recuperação.
+          // A ficha atual permanece pendente até ser persistida e receber checkpoint.
+          if (transientBrowserFailure && !cancelled && !leaseLost) {
+            await audit('browser_recovery_started', 'warn', 'Tentando reconectar ao Chromium e repetir a ficha pendente.', {
+              url: item.key, retry: 1, checkpoint_preserved: true,
+            });
+            try {
+              await detailPage?.close().catch(() => {});
+              await browser?.close().catch(() => {});
+              browser = await connectScraperBrowser(state.settings?.browserWsEndpoint);
+              detailPage = await browser.newPage();
+              await detailPage.setViewport({ width: 1280, height: 900 });
+              await detailPage.setExtraHTTPHeaders({ 'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7' });
+              await detailPage.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+              await new Promise((resolve) => setTimeout(resolve, 800));
+
+              const retriedPlace = await extractPlaceDetails(detailPage, jobId, item.url);
+              if (job.project_id) (retriedPlace as any).project_id = job.project_id;
+              if (job.category_id) (retriedPlace as any).category_id = job.category_id;
+              if (!retriedPlace.city && locationFallback.city) retriedPlace.city = locationFallback.city;
+              if (!retriedPlace.state && locationFallback.state) retriedPlace.state = locationFallback.state;
+
+              // Revalida antes de inserir: a primeira tentativa pode ter gravado antes de perder a conexão.
+              const alreadySaved = retriedPlace.name && retriedPlace.address
+                ? await store.isExistingPlace(retriedPlace)
+                : await store.isExistingPlace({ source_url: item.url, maps_url: item.url });
+              if (alreadySaved) {
+                job.total_duplicates += 1;
+                await saveCheckpoint(item.url, 'duplicate', retriedPlace.name);
+              } else {
+                const persisted = await store.persistScrapeProgress(job, retriedPlace, sessionLease || undefined);
+                if (persisted) {
+                  state.places.push(retriedPlace);
+                  job.total_collected += 1;
+                  await saveCheckpoint(item.url, 'saved', retriedPlace.name);
+                } else {
+                  job.total_duplicates += 1;
+                  await saveCheckpoint(item.url, 'duplicate', retriedPlace.name);
+                }
+              }
+              recovered = true;
+              pauseReason = 'Conexão com o Chromium recuperada; ficha pendente processada. A próxima execução continua da ficha seguinte.';
+              await audit('browser_recovery_succeeded', 'info', 'Ficha pendente processada após reconexão; feed será retomado pelo checkpoint.', {
+                url: item.key, collected: job.total_collected, duplicates: job.total_duplicates,
+              });
+              await updateProgress(pauseReason);
+            } catch (retryError) {
+              const retryMessage = retryError instanceof Error ? retryError.message : String(retryError ?? 'Erro desconhecido');
+              await audit('browser_recovery_failed', 'error', retryMessage, {
+                url: item.key, retry: 1, checkpoint_preserved: true,
+              });
+            }
+          }
+
+          if (!recovered) {
+            job.total_errors += 1;
+            pauseReason = transientBrowserFailure
+              ? 'Não foi possível recuperar a conexão com o Chromium; ficha mantida pendente para retomada.'
+              : 'Falha na ficha; checkpoint preservado para nova tentativa.';
+            await audit(transientBrowserFailure ? 'browser_disconnected' : 'place_extraction_failed', 'error', message, {
+              url: item.key, retryable: true, checkpoint_preserved: true, ordinal: Number(job.candidate_cursor || 0) + 1,
+            });
+            console.error(`[Scraper] Falha na ficha ${item.key}:`, message);
+          }
+          // O feed original pode ter sido encerrado. Encerrar este ciclo é seguro:
+          // o checkpoint aponta para a ficha concluída (se recuperada) ou para a anterior.
           break;
         } finally {
           if (detailPage) await detailPage.close().catch(() => {});
