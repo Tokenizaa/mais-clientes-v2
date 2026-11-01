@@ -654,6 +654,34 @@ export default function App() {
               initialCategoryName={preselectedCategory}
               places={places}
               totalPlaces={totalPlaces}
+              scrapeResultsContent={
+                <ResultsScreen
+                  places={places}
+                  totalPlaces={totalPlaces}
+                  jobs={jobs}
+                  selectedJobId={currentJob?.id || selectedJobId}
+                  onSelectJobId={(id) => {
+                    setSelectedJobId(id);
+                    if (id !== currentJob?.id) setCurrentTab('results');
+                  }}
+                  selectedPlaceIds={selectedPlaceIds}
+                  onToggleSelectPlace={handleToggleSelectPlace}
+                  onToggleSelectAll={handleToggleSelectAll}
+                  onGoToExport={() => setCurrentTab('export')}
+                  searchQuery={searchQuery}
+                  onSearchQueryChange={setSearchQuery}
+                  selectedCategory={categoryFilter}
+                  onCategoryChange={(value) => { setCategoryFilter(value); setCurrentPage(1); }}
+                  sortBy={sortBy}
+                  sortOrder={sortOrder}
+                  onSortChange={handleSortChange}
+                  currentPage={currentPage}
+                  pageSize={pageSize}
+                  onPageChange={setCurrentPage}
+                  onPageSizeChange={setPageSize}
+                  isLoading={isLoadingPlaces}
+                />
+              }
             />
           )}
 
