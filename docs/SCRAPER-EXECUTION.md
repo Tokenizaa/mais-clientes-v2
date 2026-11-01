@@ -63,8 +63,8 @@ Não inventa valores para campos ausentes e preserva field_status para diferenci
 - src/server/scraper/browser.ts: conexão com Chromium.
 - src/server/scraper/extractor.ts: extração da ficha.
 - src/server/scraper/normalizer.ts: normalização de URL, Place ID e endereço.
-- supabase/migrations/20261101160000_simplify_scrape_job_persistence.sql: lease por job e RPCs de persistência.
-- supabase/migrations/20261101161000_fix_scraped_place_required_defaults.sql: defaults dos campos obrigatórios da tabela places.
+- supabase/migrations/20261101080912_simplify_scrape_job_persistence.sql: lease por job e RPCs de persistência.
+- supabase/migrations/20261101080953_fix_scraped_place_required_defaults.sql: defaults dos campos obrigatórios da tabela places.
 - supabase/tests/scrape_job_atomic_persistence.sql: teste transacional de lease, deduplicação, gravação e contadores.
 
 ## Validação
