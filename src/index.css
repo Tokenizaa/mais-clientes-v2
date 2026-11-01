@@ -276,10 +276,11 @@
 }
 .app-visual-panel {
   background: linear-gradient(145deg, rgb(5 11 26 / 91%), rgb(7 16 34 / 88%)) !important;
-  border-color: rgb(0 210 235 / 48%) !important;
+  border-color: rgb(0 210 235 / 62%) !important;
+  border-width: 2px !important;
   box-shadow: 0 0 15px rgb(0 210 235 / 14%), 0 22px 54px rgb(0 0 0 / 48%), inset 0 0 22px rgb(0 210 235 / 7%), inset 0 1px 0 rgb(255 255 255 / 7%);
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
+  backdrop-filter: blur(28px) !important;
+  -webkit-backdrop-filter: blur(28px) !important;
 }
 .app-visual-panel:focus-within {
   border-color: rgb(0 240 255 / 75%) !important;
