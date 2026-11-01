@@ -1333,11 +1333,6 @@ async function executeScrapeJob(
   const state = store.getState();
   const job = state.jobs.find((item) => item.id === jobId && item.user_id === userId);
   if (!job) return;
-  const externalCandidateWorkerEnabled = process.env.SCRAPE_CANDIDATE_PROCESSOR_MODE === 'external';
-  if (externalCandidateWorkerEnabled && !(store as any).supabase) {
-    throw new Error('O consumidor externo exige Supabase remoto configurado.');
-  }
-
   let sessionLease: ScrapeSessionLease | null = null;
   let leaseLost = false;
   let leaseRenewal: ReturnType<typeof setInterval> | null = null;
@@ -1378,33 +1373,9 @@ async function executeScrapeJob(
     }
   };
 
-  const refreshExternalJobState = async (): Promise<ScrapeJob['status']> => {
-    const client = (store as any).supabase;
-    const { data, error } = await client.from('scrape_jobs')
-      .select('status,status_message,current_step,completed_at,total_found,total_collected,total_duplicates,total_errors')
-      .eq('id', jobId).eq('user_id', userId).maybeSingle();
-    if (error || !data) throw new Error('Falha ao sincronizar progresso do consumidor: ' + (error?.message || 'job não encontrado'));
-    job.status = data.status as ScrapeJob['status'];
-    job.status_message = data.status_message || job.status_message;
-    job.current_step = data.current_step || job.current_step;
-    job.completed_at = data.completed_at || job.completed_at;
-    job.total_found = Number(data.total_found || 0);
-    job.total_collected = Number(data.total_collected || 0);
-    job.total_duplicates = Number(data.total_duplicates || 0);
-    job.total_errors = Number(data.total_errors || 0);
-    return data.status as ScrapeJob['status'];
-  };
-
   const updateProgress = async (message: string) => {
     job.current_step = message;
     job.heartbeat_at = new Date().toISOString();
-    if (externalCandidateWorkerEnabled) {
-      const { error } = await (store as any).supabase.from('scrape_jobs')
-        .update({ current_step: message, heartbeat_at: job.heartbeat_at })
-        .eq('id', jobId).eq('user_id', userId).in('status', ['running', 'partial']);
-      if (error) throw new Error('Falha ao atualizar etapa da descoberta: ' + error.message);
-      return;
-    }
     store.persist();
     await store.persistScrapeProgress(job, undefined, sessionLease || undefined);
   };
@@ -1451,6 +1422,32 @@ async function executeScrapeJob(
     const locationFallback = parseSearchLocationFallback(location);
     const feedSelector = 'div[role="feed"]';
 
+    const rebuildFeedPage = async (): Promise<void> => {
+      const currentBrowser = browser as (Browser & { connected?: boolean; isConnected?: () => boolean }) | null;
+      const browserConnected = !!currentBrowser && (
+        typeof currentBrowser.isConnected === 'function'
+          ? currentBrowser.isConnected()
+          : currentBrowser.connected !== false
+      );
+      if (!browserConnected) {
+        await browser?.close().catch(() => {});
+        browser = await connectScraperBrowser(state.settings?.browserWsEndpoint);
+      }
+      await page.close().catch(() => {});
+      page = await browser!.newPage();
+      await page.setViewport({ width: 1280, height: 900 });
+      await page.setExtraHTTPHeaders({ 'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7' });
+      await page.goto('https://www.google.com/maps/search/' + encodeURIComponent(searchQuery), {
+        waitUntil: 'domcontentloaded', timeout: 45000,
+      });
+      await page.waitForSelector('div[role="feed"], a[href*="/maps/place/"]', { timeout: 20000 }).catch(() => {});
+      anchor = normalizeMapsPlaceUrl(job.discovery_checkpoint?.last_processed_url || anchor);
+      anchorFound = !anchor;
+      seenThisRun.clear();
+      previousCount = 0;
+      stagnantRounds = 0;
+    };
+
     await audit('feed_scan_started', 'info', anchor ? 'Reconstruindo feed até o último checkpoint.' : 'Iniciando leitura sequencial do feed.', {
       resume_url: anchor || null,
     });
@@ -1458,28 +1455,25 @@ async function executeScrapeJob(
     while (!cancelled && !pauseReason && !leaseLost && job.total_collected < limit) {
       if (await store.isJobCancellationRequested(jobId, userId)) { cancelled = true; break; }
 
-      if (externalCandidateWorkerEnabled) {
-        const remoteStatus = await refreshExternalJobState();
-        if (!['running', 'partial'].includes(remoteStatus)) {
-          cancelled = remoteStatus === 'stopped';
-          break;
-        }
-        const { count: pendingCount, error: pendingError } = await (store as any).supabase
-          .from('scrape_candidates').select('id', { count: 'exact', head: true })
-          .eq('job_id', jobId).in('status', ['discovered', 'processing']);
-        if (pendingError) throw new Error('Falha ao consultar fila de processamento: ' + pendingError.message);
-        // Keep discovery slightly ahead of extraction without building an
-        // unbounded backlog or consuming the requested new-place target early.
-        if ((pendingCount || 0) >= 4) {
-          await new Promise((resolve) => setTimeout(resolve, 1200));
-          continue;
-        }
+      let links: string[];
+      try {
+        links = await page.$eval('a[href*="/maps/place/"]', (anchors) =>
+          anchors.map((a) => (a as HTMLAnchorElement).href)
+            .filter((href): href is string => Boolean(href) && href.includes('/maps/place/'))
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error ?? 'Erro desconhecido');
+        if (!/detached frame|cannot find context|execution context.*destroyed|target closed|session closed/i.test(message)) throw error;
+        await audit('feed_frame_detached', 'warn', 'O Google Maps substituiu o frame do feed; reconstruindo a página e retomando pelo último checkpoint.', {
+          checkpoint: job.discovery_checkpoint?.last_processed_url || null,
+          error_message: message.slice(0, 500),
+        });
+        await rebuildFeedPage();
+        await audit('feed_frame_recovered', 'info', 'Feed reconstruído; retomada posicionada no último resultado confirmado.', {
+          checkpoint: job.discovery_checkpoint?.last_processed_url || null,
+        });
+        continue;
       }
-
-      const links: string[] = await page.$$eval('a[href*="/maps/place/"]', (anchors) =>
-        anchors.map((a) => (a as HTMLAnchorElement).href)
-          .filter((href): href is string => Boolean(href) && href.includes('/maps/place/'))
-      );
       const normalizedLinks = links.map((url) => ({ url, key: normalizeMapsPlaceUrl(url) }))
         .filter((item) => item.key);
 
@@ -1515,14 +1509,6 @@ async function executeScrapeJob(
             }
             continue;
           }
-          if (externalCandidateWorkerEnabled) {
-            await audit('candidate_enqueued_for_worker', 'info', 'Ficha inédita registrada; extração delegada ao consumidor independente.', {
-              url: item.key, candidate_id: candidateId, ordinal: candidate.ordinal,
-            });
-            await updateProgress(`Fila: ${job.total_found} descobertos; ${job.total_collected}/${limit} novos contatos salvos...`);
-            continue;
-          }
-
           await updateProgress(`Analisando ficha ${job.total_found}; ${job.total_collected}/${limit} novos contatos salvos...`);
           await audit('candidate_discovered', 'debug', 'Ficha registrada na fila durável; iniciando deduplicação e extração.', {
             url: item.key, candidate_id: candidateId, ordinal: candidate.ordinal,
@@ -1680,22 +1666,7 @@ async function executeScrapeJob(
       await audit('resume_anchor_missing', 'error', pauseReason, { resume_url: anchor });
     }
 
-    let remoteStatus = job.status;
-    if (externalCandidateWorkerEnabled) {
-      remoteStatus = await refreshExternalJobState();
-      if (feedExhausted && job.search_session_id) {
-        const { error: exhaustedError } = await (store as any).supabase
-          .from('scrape_search_sessions')
-          .update({ exhausted: true, updated_at: new Date().toISOString() })
-          .eq('id', job.search_session_id).eq('user_id', userId);
-        if (exhaustedError) throw new Error('Falha ao registrar esgotamento explícito da sessão: ' + exhaustedError.message);
-      }
-    }
-
-    if (externalCandidateWorkerEnabled && ['completed', 'stopped', 'failed'].includes(remoteStatus)) {
-      job.status = remoteStatus as any;
-      job.current_step = remoteStatus === 'completed' ? 'Concluído' : remoteStatus === 'stopped' ? 'Interrompida' : 'Falha';
-    } else if (cancelled) {
+    if (cancelled) {
       job.status = 'stopped';
       job.status_message = 'Coleta interrompida pelo usuário.';
       job.current_step = 'Interrompida';
@@ -1703,18 +1674,6 @@ async function executeScrapeJob(
       job.status = job.total_collected > 0 || job.total_duplicates > 0 ? 'partial' : 'failed';
       job.status_message = pauseReason;
       job.current_step = 'Pausada; próxima execução retoma da ficha pendente.';
-    } else if (externalCandidateWorkerEnabled && remoteStatus === 'partial' && feedExhausted) {
-      // The consumer may already have finalized a drained queue with exhausted candidates.
-      job.status = 'partial';
-      job.current_step = 'Concluído parcialmente';
-    } else if (externalCandidateWorkerEnabled && (feedExhausted || job.total_collected >= limit)) {
-      // The independent processor owns final completion after the queue drains.
-      job.status = 'running';
-      job.status_message = feedExhausted
-        ? 'Descoberta encerrada; aguardando o consumidor processar as fichas pendentes.'
-        : 'Meta de novos registros atingida; sincronizando o encerramento do consumidor.';
-      job.current_step = 'Aguardando processamento da fila';
-      job.phase = 'processing';
     } else if (job.total_collected >= limit) {
       job.status = 'completed';
       job.status_message = `Meta atingida: ${job.total_collected} novos contatos salvos.`;
@@ -1729,22 +1688,9 @@ async function executeScrapeJob(
       job.status_message = 'Coleta pausada sem confirmação de esgotamento do feed.';
       job.current_step = 'Pausada; pode ser retomada.';
     }
-    if (!externalCandidateWorkerEnabled || !['running', 'partial'].includes(job.status)) {
-      job.completed_at = new Date().toISOString();
-    }
-    if (externalCandidateWorkerEnabled) {
-      const { error: statusError } = await (store as any).supabase.from('scrape_jobs')
-        .update({
-          status: job.status, status_message: job.status_message, current_step: job.current_step,
-          completed_at: job.completed_at || null, phase: job.phase || 'discovering',
-          heartbeat_at: new Date().toISOString(),
-        })
-        .eq('id', jobId).eq('user_id', userId).in('status', ['running', 'partial']);
-      if (statusError) throw new Error('Falha ao salvar estado final da descoberta: ' + statusError.message);
-    } else {
-      store.persist();
-      await store.persistScrapeProgress(job, undefined, sessionLease || undefined);
-    }
+    job.completed_at = new Date().toISOString();
+    store.persist();
+    await store.persistScrapeProgress(job, undefined, sessionLease || undefined);
     await audit('job_finished', job.status === 'failed' ? 'error' : 'info', job.status_message, {
       status: job.status, collected: job.total_collected, duplicates: job.total_duplicates,
       errors: job.total_errors, checkpoint: job.discovery_checkpoint?.last_processed_url || null,
