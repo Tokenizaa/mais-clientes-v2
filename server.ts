@@ -1384,7 +1384,7 @@ async function executeScrapeJob(
       .select('status,status_message,current_step,completed_at,total_found,total_collected,total_duplicates,total_errors')
       .eq('id', jobId).eq('user_id', userId).maybeSingle();
     if (error || !data) throw new Error('Falha ao sincronizar progresso do consumidor: ' + (error?.message || 'job não encontrado'));
-    job.status = data.status;
+    job.status = data.status as ScrapeJob['status'];
     job.status_message = data.status_message || job.status_message;
     job.current_step = data.current_step || job.current_step;
     job.completed_at = data.completed_at || job.completed_at;
