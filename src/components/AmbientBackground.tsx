@@ -4,7 +4,6 @@ const CONTROL_ROOM_IMAGE = 'https://raw.githubusercontent.com/Tokenizaa/sci-fi/m
 const PALETTE = [
   { color: '0, 240, 255', glow: '0, 240, 255' },
   { color: '255, 0, 127', glow: '255, 0, 127' },
-  { color: '0, 255, 102', glow: '0, 255, 102' },
   { color: '255, 23, 68', glow: '255, 23, 68' },
   { color: '56, 189, 248', glow: '37, 99, 235' },
 ];
