@@ -18,6 +18,7 @@ import { AuthScreen } from './components/AuthScreen';
 import { PlaceRecord, ScrapeJob } from './shared/types';
 import { Menu, ChevronRight, Activity, Database, FileSpreadsheet } from 'lucide-react';
 import { AmbientBackground } from './components/AmbientBackground';
+import { HolographicGridOverlay } from './components/HolographicGridOverlay';
 
 import { createClient } from '@supabase/supabase-js';
 
@@ -525,6 +526,7 @@ export default function App() {
   return (
     <div className="app-shell min-h-screen bg-transparent text-slate-100 flex flex-col font-sans antialiased selection:bg-blue-600/30 selection:text-blue-200">
       <AmbientBackground />
+      <HolographicGridOverlay />
       {/* Sidebar Navigation */}
       <Sidebar
         currentTab={currentTab}
