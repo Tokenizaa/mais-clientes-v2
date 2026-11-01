@@ -1249,6 +1249,15 @@ async function executeScrapeJob(
   };
 
   try {
+    if (await store.isJobCancellationRequested(jobId, userId)) {
+      cancelled = true;
+      job.status = 'stopped';
+      job.status_message = 'Coleta interrompida antes de iniciar o navegador.';
+      job.current_step = 'Interrompida';
+      job.completed_at = new Date().toISOString();
+      await store.persistScrapeProgress(job, jobLease);
+      return;
+    }
     await audit('job_started', 'info', 'Coleta iniciada.', { segment, location });
     await updateProgress('Conectando ao navegador...');
     browser = await connectScraperBrowser(state.settings?.browserWsEndpoint);
