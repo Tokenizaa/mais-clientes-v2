@@ -13,6 +13,7 @@ export function calculateScrapeProgressPercent(job: ScrapeJob | null): number {
   const collected = Math.max(0, job.total_collected || 0);
   const achieved = Math.min(100, Math.round((collected / target) * 100));
 
-  if (job.status === 'completed' || collected >= target) return 100;
+  // 100% means the run has reached a confirmed terminal condition, not necessarily that the requested number of new records was saved.
+  if (job.status === 'completed' || job.completion_reason === 'target_reached' || job.completion_reason === 'feed_exhausted' || collected >= target) return 100;
   return Math.min(99, achieved);
 }
