@@ -210,6 +210,7 @@ export default function App() {
 
   // Results state
   const [places, setPlaces] = useState<PlaceRecord[]>([]);
+  const [liveScrapePlaces, setLiveScrapePlaces] = useState<PlaceRecord[]>([]);
   const [totalPlaces, setTotalPlaces] = useState<number>(0);
   const [selectedJobId, setSelectedJobId] = useState<string | undefined>(undefined);
   const [selectedPlaceIds, setSelectedPlaceIds] = useState<Set<string>>(new Set());
@@ -238,8 +239,9 @@ export default function App() {
   }, []);
 
   // Load places for table
-  const loadPlaces = useCallback(async (jobIdOverride?: string) => {
+  const loadPlaces = useCallback(async (jobIdOverride?: string): Promise<PlaceRecord[]> => {
     setIsLoadingPlaces(true);
+    let loadedPlaces: PlaceRecord[] = [];
     try {
       const offset = (currentPage - 1) * pageSize;
       const params = new URLSearchParams({
@@ -258,7 +260,8 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         const leads = data && data.data ? data.data : data;
-        setPlaces(Array.isArray(leads) ? leads : leads?.places ?? []);
+        loadedPlaces = Array.isArray(leads) ? leads : leads?.places ?? [];
+        setPlaces(loadedPlaces);
         setTotalPlaces(data && data.pagination ? data.pagination.total : data?.total ?? 0);
       }
     } catch (err) {
@@ -266,6 +269,7 @@ export default function App() {
     } finally {
       setIsLoadingPlaces(false);
     }
+    return loadedPlaces;
   }, [currentPage, pageSize, sortBy, sortOrder, selectedJobId, searchQuery, categoryFilter]);
 
   // Initial load - only load data if user is authenticated
@@ -316,7 +320,8 @@ export default function App() {
         setCurrentJob(updatedJob);
         setIsScraping(updatedJob.status === 'running');
         await loadHistory();
-        await loadPlaces(jobId);
+        const jobPlaces = await loadPlaces(jobId);
+        setLiveScrapePlaces(jobPlaces);
 
         // The backend owns worker continuation. The UI only polls persisted progress.
 
@@ -399,6 +404,7 @@ export default function App() {
       }
 
       setPlaces([]);
+      setLiveScrapePlaces([]);
       setTotalPlaces(0);
       setCurrentPage(1);
       setSelectedPlaceIds(new Set());
@@ -608,12 +614,12 @@ export default function App() {
               onGoToResults={() => setCurrentTab('results')}
               initialProjectName={preselectedProject}
               initialCategoryName={preselectedCategory}
-              scrapeResults={currentJob ? places.filter((place) => place.job_id === currentJob.id) : []}
+              scrapeResults={liveScrapePlaces}
               liveResults={
                 <ResultsScreen
                   compactCardsOnly
-                  places={places.filter((place) => place.job_id === currentJob?.id)}
-                  totalPlaces={places.filter((place) => place.job_id === currentJob?.id).length}
+                  places={liveScrapePlaces}
+                  totalPlaces={liveScrapePlaces.length}
                   jobs={jobs}
                   selectedJobId={currentJob?.id}
                   onSelectJobId={setSelectedJobId}
