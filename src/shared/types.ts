@@ -68,6 +68,8 @@ export interface PlaceRecord {
 
 export type JobStatus = 'running' | 'completed' | 'partial' | 'stopped' | 'failed';
 
+export type ScrapeCompletionReason = 'target_reached' | 'feed_exhausted' | 'user_stopped' | 'fatal_error' | 'feed_stagnation';
+
 export interface ScrapeJob {
   id: string;
   user_id: string;
@@ -81,6 +83,8 @@ export interface ScrapeJob {
   /** Set while the worker is finishing its current ficha after a stop request. */
   cancel_requested?: boolean;
   status_message: string;
+  /** Why the scraper stopped; stored in app_state for backwards-compatible persistence. */
+  completion_reason?: ScrapeCompletionReason;
   total_found: number;
   total_collected: number;
   total_duplicates: number;
