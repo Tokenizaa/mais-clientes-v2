@@ -1827,7 +1827,8 @@ export async function createApp() {
       }
 
       const user = resolveUserFromRequest(req);
-      const userId = user ? user.id : 'usr_default';
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+      const userId = user.id;
       const parsedLimit = Number.parseInt(String(limit ?? ''), 10);
       const numLimit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(100, parsedLimit)) : 20;
       const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -2019,8 +2020,9 @@ export async function createApp() {
 
   app.get('/api/v1/leads', (req: Request, res: Response) => {
     try {
-      const state = store.getState();
       const user = resolveUserFromRequest(req);
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+      const state = store.getState();
       const ownedJobIds = new Set(state.jobs.filter((job) => job.user_id === user?.id).map((job) => job.id));
       const { jobId, query, category, sortBy = 'collected_at', sortOrder = 'desc', offset = '0', limit = '25' } = req.query;
 
@@ -2089,9 +2091,10 @@ export async function createApp() {
 
   app.get('/api/v1/categories', (req: Request, res: Response) => {
     try {
-      const state = store.getState();
       const user = resolveUserFromRequest(req);
-      const userId = user ? user.id : 'usr_default';
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+      const state = store.getState();
+      const userId = user.id;
       const userCategories = state.categories.filter((item) => item.user_id === userId);
       const userJobs = state.jobs.filter((item) => item.user_id === userId);
       const userJobIds = new Set(userJobs.map((item) => item.id));
@@ -2116,7 +2119,8 @@ export async function createApp() {
         return res.status(400).json({ error: 'Nome da categoria é obrigatório.' });
       }
       const user = resolveUserFromRequest(req);
-      const userId = user ? user.id : 'usr_default';
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+      const userId = user.id;
       const state = store.getState();
       let project = projectId
         ? state.projects.find((item) => item.id === String(projectId) && item.user_id === userId)
@@ -2169,9 +2173,10 @@ export async function createApp() {
 
   app.delete('/api/v1/categories/:id', async (req: Request, res: Response) => {
     try {
-      const state = store.getState();
       const user = resolveUserFromRequest(req);
-      const userId = user ? user.id : 'usr_default';
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+      const state = store.getState();
+      const userId = user.id;
       const idx = state.categories.findIndex((c) => c.id === req.params.id && c.user_id === userId);
       if (idx === -1) return res.status(404).json({ error: 'Categoria não encontrada.' });
       const [removed] = state.categories.splice(idx, 1);
@@ -2190,9 +2195,10 @@ export async function createApp() {
 
   app.get('/api/v1/projects', (req: Request, res: Response) => {
     try {
-      const state = store.getState();
       const user = resolveUserFromRequest(req);
-      const userId = user ? user.id : 'usr_default';
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+      const state = store.getState();
+      const userId = user.id;
       const projects = state.projects.filter((item) => item.user_id === userId);
       return res.json({ data: projects, projects });
     } catch (err: any) {
@@ -2207,7 +2213,8 @@ export async function createApp() {
         return res.status(400).json({ error: 'Nome do projeto é obrigatório.' });
       }
       const user = resolveUserFromRequest(req);
-      const userId = user ? user.id : 'usr_default';
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+      const userId = user.id;
       const state = store.getState();
       const normalizedName = String(name).trim();
       const existing = state.projects.find((item) => item.user_id === userId && item.name.toLocaleLowerCase('pt-BR') === normalizedName.toLocaleLowerCase('pt-BR'));
@@ -2301,9 +2308,12 @@ export async function createApp() {
 
   app.get('/api/v1/field-coverage', (req: Request, res: Response) => {
     try {
+      const user = resolveUserFromRequest(req);
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
       const state = store.getState();
+      const ownedJobIds = new Set(state.jobs.filter((job) => job.user_id === user.id).map((job) => job.id));
       const { jobId } = req.query;
-      let targetPlaces = state.places;
+      let targetPlaces = state.places.filter((place) => ownedJobIds.has(place.job_id));
       if (jobId && typeof jobId === 'string' && jobId.trim()) {
         targetPlaces = targetPlaces.filter((p) => p.job_id === jobId.trim());
       }
@@ -2351,9 +2361,12 @@ export async function createApp() {
 
   app.post('/api/v1/export/csv', (req: Request, res: Response) => {
     try {
+      const user = resolveUserFromRequest(req);
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
       const { fields = [], filename, placeIds, jobId, query, category } = req.body;
       const state = store.getState();
-      let targetPlaces = state.places;
+      const ownedJobIds = new Set(state.jobs.filter((job) => job.user_id === user.id).map((job) => job.id));
+      let targetPlaces = state.places.filter((place) => ownedJobIds.has(place.job_id));
 
       if (Array.isArray(placeIds) && placeIds.length > 0) {
         const idSet = new Set(placeIds);
@@ -2376,7 +2389,6 @@ export async function createApp() {
         targetPlaces = targetPlaces.filter((p) => String(p.category || '').toLocaleLowerCase('pt-BR').includes(cat));
       }
 
-      const user = resolveUserFromRequest(req);
       const csvContent = buildCsvString(targetPlaces, fields as (keyof PlaceRecord)[]);
       const safeFilename = (filename || `mapscrape_export_${Date.now()}`).replace(/[^a-zA-Z0-9_\-]/g, '_');
 
@@ -2593,6 +2605,9 @@ export async function createApp() {
 
   app.post('/api/v1/scraper/settings', (req: Request, res: Response) => {
     try {
+      const user = resolveUserFromRequest(req);
+      if (!user) return res.status(401).json({ error: 'Autenticação necessária.' });
+      if (user.role !== 'admin') return res.status(403).json({ error: 'Acesso restrito a administradores.' });
       const { browserWsEndpoint, preferredEngine } = req.body;
       const state = store.getState();
       if (!state.settings) {
