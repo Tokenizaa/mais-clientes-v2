@@ -39,6 +39,7 @@ interface SearchScreenProps {
   initialProjectName?: string;
   initialCategoryName?: string;
   scrapeResults?: PlaceRecord[];
+  liveResults?: React.ReactNode;
 }
 
 export const SearchScreen: React.FC<SearchScreenProps> = ({
@@ -51,6 +52,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   initialProjectName,
   initialCategoryName,
   scrapeResults = [],
+  liveResults,
 }) => {
   const [segment, setSegment] = useState(initialCategoryName || '');
   const [projectName, setProjectName] = useState(initialProjectName || '');
@@ -626,7 +628,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           </div>
 
           {/* Apenas os cards dos estabelecimentos salvos nesta execução. */}
-          <ScrapeResultCards places={scrapeResults} />
+          {liveResults ?? <ScrapeResultCards places={scrapeResults} />}
         </>
       )}
 
