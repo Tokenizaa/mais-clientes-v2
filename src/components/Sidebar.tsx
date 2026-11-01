@@ -13,10 +13,12 @@ import {
   Database,
   Radio,
   FileSpreadsheet,
+  UserRound,
+  LogOut,
 } from 'lucide-react';
 import { ScrapeJob } from '../shared/types';
 
-export type ScreenTab = 'dashboard' | 'projects' | 'credentials' | 'search' | 'results' | 'export' | 'history' | 'logs';
+export type ScreenTab = 'dashboard' | 'projects' | 'credentials' | 'search' | 'results' | 'export' | 'history' | 'logs' | 'profile';
 
 interface SidebarProps {
   currentTab: ScreenTab;
@@ -26,6 +28,10 @@ interface SidebarProps {
   isScrapingActive: boolean;
   currentJob: ScrapeJob | null;
   onStopScrape?: () => void;
+  userName: string;
+  userEmail: string;
+  onProfileClick: () => void;
+  onLogout: () => void;
   isAdmin?: boolean;
   isOpenMobile: boolean;
   onCloseMobile: () => void;
@@ -39,6 +45,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isScrapingActive,
   currentJob,
   onStopScrape,
+  userName,
+  userEmail,
+  onProfileClick,
+  onLogout,
   isAdmin = false,
   isOpenMobile,
   onCloseMobile,
@@ -225,6 +235,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
             )}
           </div>
         )}
+
+        {/* Account controls */}
+        <div className="px-3 py-3 border-t border-[#152347]/80 space-y-2">
+          <button type="button" onClick={() => { onProfileClick(); onCloseMobile(); }} className={`w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors ${currentTab === 'profile' ? 'bg-blue-600/20 border border-blue-500/30' : 'hover:bg-[#0c1630] border border-transparent'}`}>
+            <div className="h-9 w-9 shrink-0 rounded-full border border-cyan-400/30 bg-cyan-400/10 flex items-center justify-center text-cyan-200 font-bold text-sm">{(userName.trim().charAt(0) || 'U').toUpperCase()}</div>
+            <div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-slate-100">{userName}</div><div className="truncate text-[10px] text-slate-400">{userEmail}</div><div className="mt-0.5 flex items-center gap-1 text-[10px] text-cyan-300"><UserRound className="h-3 w-3" />Meu perfil</div></div>
+          </button>
+          <button type="button" onClick={onLogout} className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium text-slate-400 hover:bg-red-500/10 hover:text-red-300 transition-colors"><LogOut className="h-4 w-4" />Sair da plataforma</button>
+        </div>
 
         {/* Bottom Leads Indicator Bar */}
         <div className="p-4 border-t border-[#152347]/80 bg-[#060c1c]">
