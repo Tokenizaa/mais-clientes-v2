@@ -824,6 +824,21 @@ class Store {
     }
   }
 
+  private async ensureRelationalUser(userId: string): Promise<void> {
+    if (!this.supabase) return;
+    const user = this.state.users.find((item) => item.id === userId);
+    if (!user) throw new Error(`Usuário ${userId} não encontrado no estado da aplicação.`);
+    const { error } = await this.supabase.from('app_users').upsert({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      password_hash: user.passwordHash,
+      role: user.role,
+      created_at: user.createdAt,
+    }, { onConflict: 'id' });
+    if (error) throw new Error(`Falha ao sincronizar usuário no Supabase: ${error.message}`);
+  }
+
   async persistScrapeProgress(job: ScrapeJob, lease?: { token: string; generation: number }): Promise<boolean> {
     job.heartbeat_at = new Date().toISOString();
     if (!this.supabase) {
@@ -842,6 +857,9 @@ class Store {
     for (const snapshotJob of snapshot.jobs) delete snapshotJob.candidate_urls;
     this.pendingWrite = this.pendingWrite.catch(() => undefined).then(async () => {
       const client = this.supabase!;
+      // scrape_jobs.user_id references app_users(id); synchronize the owner
+      // before writing the job so newly registered accounts satisfy the FK.
+      await this.ensureRelationalUser(job.user_id);
       if (lease) {
         const { data: renewed, error: leaseError } = await client.rpc('renew_scrape_job_lease', {
           p_job_id: job.id, p_user_id: job.user_id, p_lease_token: lease.token,
@@ -920,6 +938,22 @@ class Store {
     for (const snapshotJob of snapshot.jobs) delete snapshotJob.candidate_urls;
     this.pendingWrite = this.pendingWrite.catch(() => undefined).then(async () => {
       const client = this.supabase!;
+      // Keep the relational auth table aligned with the canonical app_state
+      // before syncing projects, categories, or jobs that reference its users.
+      if (snapshot.users.length) {
+        const { error: usersError } = await client.from('app_users').upsert(
+          snapshot.users.map((user) => ({
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            password_hash: user.passwordHash,
+            role: user.role,
+            created_at: user.createdAt,
+          })),
+          { onConflict: 'id' }
+        );
+        if (usersError) throw new Error(`Falha ao sincronizar usuários relacionais: ${usersError.message}`);
+      }
       const { error: stateError } = await client
         .from('app_state')
         .upsert({ id: 'main', state: snapshot, updated_at: new Date().toISOString() });
