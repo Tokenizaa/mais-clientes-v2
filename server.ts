@@ -1415,8 +1415,6 @@ async function executeScrapeJob(
     });
     await page.waitForSelector('div[role="feed"], a[href*="/maps/place/"]', { timeout: 15000 }).catch(() => {});
 
-    let anchor = normalizeMapsPlaceUrl(job.discovery_checkpoint?.last_processed_url || '');
-    let anchorFound = !anchor;
     let feedExhausted = false;
     let previousCount = 0;
     let stagnantRounds = 0;
@@ -1424,35 +1422,7 @@ async function executeScrapeJob(
     const locationFallback = parseSearchLocationFallback(location);
     const feedSelector = 'div[role="feed"]';
 
-    const rebuildFeedPage = async (): Promise<void> => {
-      const currentBrowser = browser as (Browser & { connected?: boolean; isConnected?: () => boolean }) | null;
-      const browserConnected = !!currentBrowser && (
-        typeof currentBrowser.isConnected === 'function'
-          ? currentBrowser.isConnected()
-          : currentBrowser.connected !== false
-      );
-      if (!browserConnected) {
-        await browser?.close().catch(() => {});
-        browser = await connectScraperBrowser(state.settings?.browserWsEndpoint);
-      }
-      await page.close().catch(() => {});
-      page = await browser!.newPage();
-      await page.setViewport({ width: 1280, height: 900 });
-      await page.setExtraHTTPHeaders({ 'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7' });
-      await page.goto('https://www.google.com/maps/search/' + encodeURIComponent(searchQuery), {
-        waitUntil: 'domcontentloaded', timeout: 45000,
-      });
-      await page.waitForSelector('div[role="feed"], a[href*="/maps/place/"]', { timeout: 20000 }).catch(() => {});
-      anchor = normalizeMapsPlaceUrl(job.discovery_checkpoint?.last_processed_url || anchor);
-      anchorFound = !anchor;
-      seenThisRun.clear();
-      previousCount = 0;
-      stagnantRounds = 0;
-    };
-
-    await audit('feed_scan_started', 'info', anchor ? 'Reconstruindo feed até o último checkpoint.' : 'Iniciando leitura sequencial do feed.', {
-      resume_url: anchor || null,
-    });
+    await audit('feed_scan_started', 'info', 'Iniciando leitura sequencial do feed.');
 
     while (!cancelled && !pauseReason && !leaseLost && job.total_collected < limit) {
       if (await store.isJobCancellationRequested(jobId, userId)) { cancelled = true; break; }
@@ -1466,16 +1436,10 @@ async function executeScrapeJob(
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error ?? 'Erro desconhecido');
-        if (!/detached frame|cannot find context|execution context.*destroyed|target closed|session closed/i.test(message)) throw error;
-        await audit('feed_frame_detached', 'warn', 'O Google Maps substituiu o frame do feed; reconstruindo a página e retomando pelo último checkpoint.', {
-          checkpoint: job.discovery_checkpoint?.last_processed_url || null,
+        await audit('feed_read_failed', 'error', 'Não foi possível continuar lendo o feed do Google Maps.', {
           error_message: message.slice(0, 500),
         });
-        await rebuildFeedPage();
-        await audit('feed_frame_recovered', 'info', 'Feed reconstruído; retomada posicionada no último resultado confirmado.', {
-          checkpoint: job.discovery_checkpoint?.last_processed_url || null,
-        });
-        continue;
+        throw error;
       }
       const normalizedLinks = links.map((url) => ({ url, key: normalizeMapsPlaceUrl(url) }))
         .filter((item) => item.key);
@@ -1485,16 +1449,6 @@ async function executeScrapeJob(
         if (seenThisRun.has(item.key)) continue;
         seenThisRun.add(item.key);
 
-        if (!anchorFound) {
-          if (item.key === anchor) {
-            anchorFound = true;
-            await audit('resume_anchor_found', 'info', 'Última ficha processada reencontrada; continuando pela próxima.', { url: item.key });
-          }
-          continue;
-        }
-
-        // The anchor itself is never processed twice.
-        if (anchor && item.key === anchor) continue;
         const sourceKey = extractSourcePlaceId(item.url) || item.key;
         let candidateId = '';
         let detailPage: Page | null = null;
@@ -1541,93 +1495,24 @@ async function executeScrapeJob(
           await updateProgress(`Salvo: ${place.name || 'Estabelecimento sem nome'} (${job.total_collected}/${limit})`);
         } catch (error: any) {
           const message = error instanceof Error ? error.message : String(error ?? 'Erro desconhecido');
-          const transientBrowserFailure = /timeout|timed out|navigation.*timeout|connection closed|target closed|detached frame|session closed|websocket|browser.*disconnect|protocol error|cannot find context/i.test(message);
-          let recovered = false;
+          const browserUnavailable = /connection closed|target closed|detached frame|session closed|websocket|browser.*disconnect|protocol error|cannot find context|execution context.*destroyed/i.test(message);
+          job.total_errors += 1;
+          await audit(browserUnavailable ? 'browser_disconnected' : 'place_extraction_failed', 'error', message, {
+            url: item.key,
+            retryable: false,
+            checkpoint_preserved: false,
+            error_name: error instanceof Error ? error.name : typeof error,
+            error_message: message.slice(0, 500),
+            error_stack: error instanceof Error ? error.stack?.split('\\n').slice(0, 6).join('\\n') : null,
+          });
+          console.error(`[Scraper] Falha na ficha ${item.key}:`, message);
 
-          // Uma falha transitória não deve encerrar a coleta sem uma tentativa de recuperação.
-          // A ficha atual permanece pendente até ser persistida e receber checkpoint.
-          if (transientBrowserFailure && !cancelled && !leaseLost) {
-            await audit('browser_recovery_started', 'warn', 'Tentando reconectar ao Chromium e repetir a ficha pendente.', {
-              url: item.key, retry: 1, checkpoint_preserved: true,
-            });
-            try {
-              await detailPage?.close().catch(() => {});
-              await browser?.close().catch(() => {});
-              browser = await connectScraperBrowser(state.settings?.browserWsEndpoint);
-              detailPage = await browser.newPage();
-              await detailPage.setViewport({ width: 1280, height: 900 });
-              await detailPage.setExtraHTTPHeaders({ 'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7' });
-              await detailPage.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
-              await new Promise((resolve) => setTimeout(resolve, 800));
-
-              const retriedPlace = await extractPlaceDetails(detailPage, jobId, item.url);
-              if (job.project_id) (retriedPlace as any).project_id = job.project_id;
-              if (job.category_id) (retriedPlace as any).category_id = job.category_id;
-              if (!retriedPlace.city && locationFallback.city) retriedPlace.city = locationFallback.city;
-              if (!retriedPlace.state && locationFallback.state) retriedPlace.state = locationFallback.state;
-
-              // A RPC decide duplicidade e persistência na mesma transação; não há SELECT prévio.
-              const result = await completeCandidate(
-                candidateId, sourceKey, item.key, 'saved', retriedPlace
-              );
-              if (result.outcome === 'saved' && !result.alreadyCompleted) state.places.push(retriedPlace);
-              await audit('candidate_recovery_processed', 'info', 'Ficha pendente reprocessada; preparando retomada do feed.', {
-                url: item.key, collected: job.total_collected, duplicates: job.total_duplicates,
-                original_error_name: error instanceof Error ? error.name : typeof error,
-                original_error_message: message.slice(0, 500),
-              });
-
-              // O browser e a página de pesquisa originais foram encerrados.
-              // Reconstrói o feed na nova sessão e reposiciona pelo checkpoint persistido.
-              page = await browser.newPage();
-              await page.setViewport({ width: 1280, height: 900 });
-              await page.setExtraHTTPHeaders({ 'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7' });
-              await page.goto('https://www.google.com/maps/search/' + encodeURIComponent(searchQuery), {
-                waitUntil: 'domcontentloaded', timeout: 45000,
-              });
-              await page.waitForSelector('div[role="feed"], a[href*="/maps/place/"]', { timeout: 20000 }).catch(() => {});
-              // A ficha atual foi processada e checkpointada durante a recuperação.
-              // Use-a como nova âncora; nunca procure uma âncora vazia ou obsoleta.
-              anchor = item.key;
-              anchorFound = false;
-              seenThisRun.clear();
-              previousCount = 0;
-              stagnantRounds = 0;
-              recovered = true;
-              await audit('browser_recovery_succeeded', 'info', 'Ficha processada e feed reconstruído; a coleta continuará pela ficha seguinte.', {
-                url: item.key, collected: job.total_collected, duplicates: job.total_duplicates,
-                original_error_name: error instanceof Error ? error.name : typeof error,
-                original_error_message: message.slice(0, 500),
-              });
-              await updateProgress(`Chromium reconectado; retomando após ${retriedPlace.name || 'a ficha processada'}...`);
-            } catch (retryError) {
-              const retryMessage = retryError instanceof Error ? retryError.message : String(retryError ?? 'Erro desconhecido');
-              await audit('browser_recovery_failed', 'error', retryMessage, {
-                url: item.key, retry: 1, checkpoint_preserved: true,
-                original_error_name: error instanceof Error ? error.name : typeof error,
-                original_error_message: message.slice(0, 500),
-                recovery_error_name: retryError instanceof Error ? retryError.name : typeof retryError,
-                recovery_error_message: retryMessage.slice(0, 500),
-              });
-            }
+          // Erro isolado descarta somente esta ficha. Navegador indisponível encerra o job.
+          if (browserUnavailable) {
+            pauseReason = 'O navegador perdeu a conexão; a coleta foi encerrada sem retomada automática.';
+            break;
           }
-
-          if (!recovered) {
-            job.total_errors += 1;
-            pauseReason = transientBrowserFailure
-              ? 'Não foi possível recuperar a conexão com o Chromium; ficha mantida pendente para retomada.'
-              : 'Falha na ficha; checkpoint preservado para nova tentativa.';
-            await audit(transientBrowserFailure ? 'browser_disconnected' : 'place_extraction_failed', 'error', message, {
-              url: item.key, retryable: true, checkpoint_preserved: true, ordinal: Number(job.candidate_cursor || 0) + 1,
-              error_name: error instanceof Error ? error.name : typeof error,
-              error_message: message.slice(0, 500),
-              error_stack: error instanceof Error ? error.stack?.split('\n').slice(0, 6).join('\n') : null,
-                          });
-            console.error(`[Scraper] Falha na ficha ${item.key}:`, message);
-          }
-          // O feed original pode ter sido encerrado. Encerrar este ciclo é seguro:
-          // o checkpoint aponta para a ficha concluída (se recuperada) ou para a anterior.
-          break;
+          continue;
         } finally {
           if (detailPage) await detailPage.close().catch(() => {});
         }
@@ -1694,19 +1579,13 @@ async function executeScrapeJob(
         break;
       }
       if (stagnantRounds >= 8) {
-        pauseReason = 'O feed não apresentou novos resultados após oito tentativas de avanço. A coleta foi pausada sem declarar esgotamento; pode ser retomada.';
-        await audit('feed_stagnation_paused', 'warn', pauseReason, {
+        pauseReason = 'O feed não apresentou novos resultados após oito tentativas de avanço.';
+        await audit('feed_stagnation_finished', 'warn', pauseReason, {
           stagnant_rounds: stagnantRounds,
           discovered_this_run: seenThisRun.size,
-          checkpoint: job.discovery_checkpoint?.last_processed_url || null,
         });
         break;
       }
-    }
-
-    if (anchor && !anchorFound) {
-      pauseReason = 'Não foi possível reencontrar a ficha do último checkpoint no feed. Nenhuma ficha foi pulada.';
-      await audit('resume_anchor_missing', 'error', pauseReason, { resume_url: anchor });
     }
 
     if (cancelled) {
@@ -1716,7 +1595,7 @@ async function executeScrapeJob(
     } else if (pauseReason) {
       job.status = job.total_collected > 0 || job.total_duplicates > 0 ? 'partial' : 'failed';
       job.status_message = pauseReason;
-      job.current_step = 'Pausada; próxima execução retoma da ficha pendente.';
+      job.current_step = 'Finalizada com falhas';
     } else if (job.total_collected >= limit) {
       job.status = 'completed';
       job.status_message = `Meta atingida: ${job.total_collected} novos contatos salvos.`;
@@ -1729,7 +1608,7 @@ async function executeScrapeJob(
     } else {
       job.status = 'partial';
       job.status_message = 'Coleta pausada sem confirmação de esgotamento do feed.';
-      job.current_step = 'Pausada; pode ser retomada.';
+      job.current_step = 'Finalizada parcialmente';
     }
     job.completed_at = new Date().toISOString();
     store.persist();
@@ -1745,13 +1624,13 @@ async function executeScrapeJob(
     const browserFailure = /connection closed|target closed|detached frame|session closed|websocket|browser.*disconnect|protocol error/i.test(message);
     job.status = job.total_collected > 0 ? 'partial' : 'failed';
     job.status_message = browserFailure
-      ? 'Conexão do navegador encerrada. A ficha pendente será retomada na próxima execução.'
+      ? 'Conexão do navegador encerrada. A coleta foi finalizada sem retomada automática.'
       : `Falha na coleta: ${message}`;
-    job.current_step = 'Execução pausada; checkpoint preservado';
+    job.current_step = 'Execução finalizada com falha';
     job.total_errors += 1;
     job.completed_at = new Date().toISOString();
     await audit(browserFailure ? 'browser_disconnected' : 'job_failed', 'error', message, {
-      retryable: true, checkpoint: job.discovery_checkpoint?.last_processed_url || null,
+      retryable: false,
     });
     console.error(`[Scraper] Falha geral no trabalho ${jobId}:`, message);
     store.persist();
