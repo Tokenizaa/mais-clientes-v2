@@ -35,3 +35,12 @@ Se o Google Maps substituir o frame do feed e o Puppeteer retornar `detached fra
 ## Estado do banco remoto
 
 A migration de persistência atômica está aplicada no projeto `xjfwpkkmhnbkgtkbaseh`. A migration experimental do consumidor independente foi revertida por uma migration posterior; suas funções, índice e colunas específicas foram removidos. Os candidatos históricos não foram apagados nem reclassificados.
+
+## Retomada da pesquisa e paginação infinita
+
+- Uma nova execução com o mesmo usuário, segmento, localização, projeto e categoria reutiliza a sessão não esgotada mais recente.
+- A retomada carrega o último URL confirmado e o ordinal da sessão. O feed é percorrido até reencontrar essa âncora; resultados anteriores são apenas usados para reposicionar a navegação, sem registrar candidatos, consultar duplicidade ou abrir fichas.
+- Sessões marcadas como esgotadas não são reutilizadas; uma nova pesquisa começa com sessão nova.
+- A paginação não depende apenas de uma pausa fixa. A cada rolagem, o processo verifica crescimento de `scrollHeight`, aumento/alteração dos links e a mensagem explícita de fim da lista.
+- Se a rolagem não trouxer novos resultados, são feitas novas tentativas limitadas. Ausência de crescimento não é tratada como fim da lista: o job pausa como parcial, preservando a âncora para retomada.
+- Eventos `feed_pagination_advanced` e `feed_pagination_waiting` registram a evidência de avanço ou ausência de avanço do feed.
