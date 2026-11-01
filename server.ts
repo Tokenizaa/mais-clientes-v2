@@ -1399,8 +1399,7 @@ async function executeScrapeJob(
 
   try {
     await audit('job_started', 'info', 'Coleta iniciada.', {
-      segment, location, limit, resume_url: job.discovery_checkpoint?.last_processed_url || null,
-      session_id: job.search_session_id || null,
+      segment, location, session_id: job.search_session_id || null,
     });
     await updateProgress('Conectando ao navegador...');
     browser = await connectScraperBrowser(state.settings?.browserWsEndpoint);
@@ -1500,7 +1499,6 @@ async function executeScrapeJob(
           await audit(browserUnavailable ? 'browser_disconnected' : 'place_extraction_failed', 'error', message, {
             url: item.key,
             retryable: false,
-            checkpoint_preserved: false,
             error_name: error instanceof Error ? error.name : typeof error,
             error_message: message.slice(0, 500),
             error_stack: error instanceof Error ? error.stack?.split('\\n').slice(0, 6).join('\\n') : null,
@@ -1560,11 +1558,11 @@ async function executeScrapeJob(
         || (afterScroll.lastHref !== '' && afterScroll.lastHref !== beforeScroll.lastHref);
       if (paginationAdvanced) {
         await audit('feed_pagination_advanced', 'debug', 'Rolagem infinita carregou novos resultados no feed.', {
-          before: beforeScroll, after: afterScroll, anchor_found: anchorFound,
+          before: beforeScroll, after: afterScroll,
         });
       } else {
         await audit('feed_pagination_waiting', 'debug', 'Rolagem executada; aguardando novos resultados ou confirmação explícita do fim do feed.', {
-          before: beforeScroll, after: afterScroll, anchor_found: anchorFound,
+          before: beforeScroll, after: afterScroll,
         });
       }
       const currentCount = seenThisRun.size;
@@ -1601,13 +1599,15 @@ async function executeScrapeJob(
       job.status_message = `Meta atingida: ${job.total_collected} novos contatos salvos.`;
       job.current_step = 'Meta atingida';
     } else if (feedExhausted) {
-      job.status = 'completed';
-      job.status_message = `Feed esgotado: ${job.total_collected} novos contatos salvos, ${job.total_duplicates} duplicados ignorados.`;
+      job.status = job.total_errors > 0 ? 'partial' : 'completed';
+      job.status_message = job.total_errors > 0
+        ? `Feed esgotado com ${job.total_errors} falha(s): ${job.total_collected} novos contatos salvos; ${job.total_duplicates} duplicados ignorados.`
+        : `Feed esgotado: ${job.total_collected} novos contatos salvos, ${job.total_duplicates} duplicados ignorados.`;
       job.discovery_checkpoint = { ...(job.discovery_checkpoint || {}), exhausted: true };
-      job.current_step = 'Feed esgotado';
+      job.current_step = job.total_errors > 0 ? 'Concluída com falhas' : 'Feed esgotado';
     } else {
       job.status = 'partial';
-      job.status_message = 'Coleta pausada sem confirmação de esgotamento do feed.';
+      job.status_message = 'Coleta finalizada sem confirmação de esgotamento do feed.';
       job.current_step = 'Finalizada parcialmente';
     }
     job.completed_at = new Date().toISOString();
@@ -1615,9 +1615,9 @@ async function executeScrapeJob(
     await store.persistScrapeProgress(job, undefined, sessionLease || undefined);
     await audit('job_finished', job.status === 'failed' ? 'error' : 'info', job.status_message, {
       status: job.status, collected: job.total_collected, duplicates: job.total_duplicates,
-      errors: job.total_errors, checkpoint: job.discovery_checkpoint?.last_processed_url || null,
-      stop_reason: cancelled ? 'user_cancelled' : pauseReason ? 'pause_reason' : job.total_collected >= limit ? 'target_reached' : feedExhausted ? 'feed_exhausted' : 'discovery_paused',
-      pause_reason: pauseReason || null, anchor_found: anchorFound, stagnant_rounds: stagnantRounds,
+      errors: job.total_errors,
+      stop_reason: cancelled ? 'user_cancelled' : pauseReason ? 'execution_error' : job.total_collected >= limit ? 'target_reached' : feedExhausted ? 'feed_exhausted' : 'feed_stagnation',
+      pause_reason: pauseReason || null, stagnant_rounds: stagnantRounds,
     });
   } catch (error: any) {
     const message = error instanceof Error ? error.message : String(error ?? 'Erro desconhecido');
