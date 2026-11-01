@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { AmbientBackground } from './AmbientBackground';
+import { HolographicGridOverlay } from './HolographicGridOverlay';
 import { MapPin, ArrowRight, LoaderCircle } from 'lucide-react';
 
 type User = { id: string; email: string; name: string; role: 'admin' | 'user' };
@@ -37,13 +38,14 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated }) => {
 
   return <div className="app-shell min-h-screen bg-transparent text-zinc-100">
     <AmbientBackground />
+    <HolographicGridOverlay />
     <main className="relative z-10 flex min-h-screen items-center justify-center bg-transparent px-4 py-10 text-zinc-100">
     <section className="w-full max-w-md">
       <div className="mb-8 flex items-center gap-3">
         <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-400"><MapPin className="h-5 w-5" /></div>
         <div><p className="text-lg font-semibold tracking-tight">MapScrape</p><p className="text-sm text-zinc-400">Plataforma de coleta e dados</p></div>
       </div>
-      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-2xl sm:p-8">
+      <div className="app-visual-panel rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-2xl sm:p-8">
         <div className="mb-6"><h1 className="text-2xl font-semibold tracking-tight">{mode === 'login' ? 'Acesse sua conta' : 'Crie sua conta'}</h1><p className="mt-2 text-sm leading-6 text-zinc-400">{mode === 'login' ? 'Entre para gerenciar projetos, pesquisas e resultados.' : 'Cadastre-se para usar a plataforma sem uma chave de API.'}</p></div>
         <form onSubmit={(event) => void submit(event)} className="space-y-4">
           {mode === 'register' && <label className="block text-sm font-medium text-zinc-300">Nome completo<input required minLength={2} maxLength={100} autoComplete="name" value={name} onChange={e => setName(e.target.value)} className="mt-1.5 block w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-zinc-100 outline-none focus:border-emerald-500" placeholder="Seu nome" /></label>}
