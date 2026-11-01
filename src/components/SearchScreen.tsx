@@ -160,7 +160,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
 
   const getRegionalQuickActions = () => {
     if (!currentJob) return [];
-    const match = currentJob.location.match(/^(?:(Zona Norte|Zona Sul|Zona Leste|Zona Oeste),\\s*)?(.+,\\s*[A-Z]{2})$/i);
+    const match = currentJob.location.match(/^(?:(Zona Norte|Zona Sul|Zona Leste|Zona Oeste),\s*)?(.+,\s*[A-Z]{2})$/i);
     if (!match) return [];
     const currentRegion = match[1]?.toLocaleLowerCase('pt-BR') || '';
     const baseLocation = match[2].trim();
