@@ -84,88 +84,153 @@
 }
 
 
-/* Restrained sci-fi ambience: visual depth stays behind the working surface. */
+
+
+/* === Cinematic control-room environment (adapted from Tokenizaa/sci-fi) === */
 .app-ambient {
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: -1;
   overflow: hidden;
   pointer-events: none;
-  background:
-    radial-gradient(ellipse at 18% 12%, rgb(17 73 112 / 15%), transparent 42%),
-    radial-gradient(ellipse at 84% 78%, rgb(8 104 91 / 10%), transparent 38%),
-    linear-gradient(145deg, #050a16 0%, #071226 54%, #050b18 100%);
+  isolation: isolate;
+  background: #02050e;
 }
-.app-ambient-canvas {
+.app-ambient-image {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  opacity: 0.62;
+  object-fit: cover;
+  object-position: center;
+  transform: scale(1.02);
+  filter: brightness(.62) contrast(1.14) saturate(.82);
+}
+.app-ambient-vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 42%, transparent 0%, rgb(3 7 18 / 48%) 58%, #02050f 100%);
+}
+.app-ambient-scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgb(2 6 23 / 78%) 0%, rgb(2 6 23 / 18%) 35%, rgb(2 6 23 / 42%) 72%, rgb(2 6 23 / 88%) 100%);
+}
+.app-ambient-scanlines {
+  position: absolute;
+  inset: 0;
+  opacity: .035;
+  background: linear-gradient(rgb(255 255 255 / 0%) 50%, rgb(0 0 0 / 60%) 50%);
+  background-size: 100% 4px;
 }
 .app-ambient-glow {
   position: absolute;
-  width: 34rem;
-  height: 34rem;
   border-radius: 9999px;
-  filter: blur(90px);
-  opacity: 0.12;
+  pointer-events: none;
+  filter: blur(105px);
+  mix-blend-mode: screen;
 }
-.app-ambient-glow-a {
-  top: -24rem;
-  left: 18%;
-  background: #0ea5e9;
+.app-ambient-glow-cyan {
+  width: min(56vw, 720px); height: 360px; top: -190px; left: 50%;
+  transform: translateX(-50%); background: rgb(0 220 255 / 25%);
 }
-.app-ambient-glow-b {
-  right: -22rem;
-  bottom: -25rem;
-  background: #10b981;
+.app-ambient-glow-magenta {
+  width: 580px; height: 580px; top: 18%; left: -310px;
+  background: rgb(255 0 127 / 17%); animation: ambient-drift 18s ease-in-out infinite;
+}
+.app-ambient-glow-green {
+  width: 520px; height: 520px; top: 42%; right: -290px;
+  background: rgb(0 255 102 / 17%); animation: ambient-drift 21s ease-in-out infinite reverse;
+}
+.app-ambient-glow-red {
+  width: 600px; height: 350px; bottom: -220px; left: 28%;
+  background: rgb(255 23 68 / 12%);
+}
+.app-ambient-edge {
+  position: absolute; left: 0; right: 0; pointer-events: none;
+}
+.app-ambient-edge-top {
+  top: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, rgb(0 240 255 / 55%), rgb(255 0 127 / 38%), transparent);
+  box-shadow: 0 0 18px rgb(0 240 255 / 22%);
+}
+.app-ambient-edge-bottom {
+  bottom: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, rgb(0 255 102 / 35%), transparent);
+}
+.app-ambient-canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%; opacity: .86;
 }
 
-/* Keep the app above the ambient layer. */
-.app-shell {
-  position: relative;
-  isolation: isolate;
-  min-height: 100vh;
-  background: transparent !important;
+/* Holographic grid, scan beam and peripheral framing. */
+.app-holographic-grid {
+  position: fixed; inset: 0; z-index: 0; overflow: hidden;
+  pointer-events: none; user-select: none;
 }
-.app-shell > .app-ambient {
-  z-index: -1;
+.app-holographic-grid-lines {
+  position: absolute; inset: 0; opacity: .032;
+  background-image: linear-gradient(to right, rgb(0 240 255 / 48%) 1px, transparent 1px), linear-gradient(to bottom, rgb(0 240 255 / 48%) 1px, transparent 1px);
+  background-size: 48px 48px;
 }
-.app-content {
-  position: relative;
+.app-holographic-grid-dots {
+  position: absolute; inset: 0; opacity: .025;
+  background-image: radial-gradient(circle at 1px 1px, rgb(0 255 102 / 70%) 1px, transparent 0);
+  background-size: 24px 24px;
+}
+.app-holographic-scan-beam {
+  position: absolute; top: -2px; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, rgb(0 240 255 / 22%), rgb(0 255 102 / 18%), transparent);
+  animation: holo-beam-scan 14s linear infinite;
+}
+.app-holographic-corner {
+  position: absolute; width: 24px; height: 24px; opacity: .38;
+  border-color: rgb(0 240 255 / 70%);
+}
+.app-holographic-corner-tl { top: 76px; left: 16px; border-top: 1px solid; border-left: 1px solid; }
+.app-holographic-corner-tr { top: 76px; right: 16px; border-top: 1px solid; border-right: 1px solid; }
+.app-holographic-corner-bl { bottom: 12px; left: 16px; border-bottom: 1px solid; border-left: 1px solid; }
+.app-holographic-corner-br { bottom: 12px; right: 16px; border-bottom: 1px solid; border-right: 1px solid; }
+
+@keyframes holo-beam-scan {
+  0% { transform: translateY(0); opacity: 0; }
+  8% { opacity: .7; }
+  92% { opacity: .55; }
+  100% { transform: translateY(100vh); opacity: 0; }
+}
+@keyframes ambient-drift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(18px, -22px, 0) scale(1.06); }
 }
 
-/* Subtle frosted surfaces only on primary content cards. */
+/* Explicit visual surfaces. Keep controls and nested utility elements untouched. */
 .app-content [class*="rounded-2xl"][class*="bg-[#0b1429]"] {
-  background: linear-gradient(145deg, rgb(13 27 51 / 82%), rgb(8 19 38 / 78%)) !important;
-  border-color: rgb(68 112 157 / 30%) !important;
-  box-shadow: 0 14px 38px rgb(0 0 0 / 20%), inset 0 1px 0 rgb(190 225 255 / 3%);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+  background: linear-gradient(145deg, rgb(5 11 26 / 91%), rgb(7 16 34 / 86%)) !important;
+  border-color: rgb(0 210 235 / 35%) !important;
+  box-shadow: 0 0 14px rgb(0 210 235 / 10%), 0 18px 46px rgb(0 0 0 / 38%), inset 0 0 18px rgb(0 210 235 / 4%), inset 0 1px 0 rgb(255 255 255 / 5%);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  transition: border-color 220ms ease, box-shadow 220ms ease, transform 220ms ease;
 }
 .app-content [class*="rounded-2xl"][class*="bg-[#0b1429]"]:hover {
-  border-color: rgb(75 180 190 / 36%) !important;
-  box-shadow: 0 16px 42px rgb(0 0 0 / 24%), 0 0 22px rgb(14 165 233 / 5%);
+  border-color: rgb(0 240 255 / 62%) !important;
+  box-shadow: 0 0 18px rgb(0 240 255 / 22%), 0 0 42px rgb(0 240 255 / 10%), 0 20px 48px rgb(0 0 0 / 42%), inset 0 0 22px rgb(0 240 255 / 7%);
 }
+.app-shell :where(.text-emerald-400, .text-emerald-300) { text-shadow: 0 0 12px rgb(0 255 102 / 20%); }
+.app-shell :where(.text-cyan-400, .text-cyan-300, .text-blue-400) { text-shadow: 0 0 12px rgb(0 210 255 / 18%); }
 
-/* Quiet green/cyan signal accents; red remains reserved for errors. */
-.app-shell :where(.text-emerald-400, .text-emerald-300) {
-  text-shadow: 0 0 12px rgb(52 211 153 / 18%);
+@media (max-width: 767px) {
+  .app-ambient-image { object-position: 52% center; filter: brightness(.52) contrast(1.1) saturate(.75); }
+  .app-ambient-glow { filter: blur(80px); }
+  .app-holographic-grid-lines { opacity: .018; }
+  .app-holographic-corner { opacity: .2; }
 }
-.app-shell :where(.text-red-400, .text-rose-400, .text-red-300) {
-  text-shadow: 0 0 10px rgb(248 113 113 / 14%);
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .app-shell *,
-  .app-shell *::before,
-  .app-shell *::after {
-    scroll-behavior: auto !important;
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
+  .app-ambient-glow, .app-holographic-scan-beam { animation: none !important; }
   .app-ambient-canvas { display: none; }
+  .app-shell *, .app-shell *::before, .app-shell *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
 }
