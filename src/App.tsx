@@ -652,8 +652,6 @@ export default function App() {
               onGoToResults={() => setCurrentTab('results')}
               initialProjectName={preselectedProject}
               initialCategoryName={preselectedCategory}
-              places={places}
-              totalPlaces={totalPlaces}
               scrapeResultsContent={
                 <ResultsScreen
                   places={places}
@@ -743,7 +741,7 @@ export default function App() {
         </main>
 
         {/* Minimal Footer */}
-        <footer className="border-t border-zinc-850/80 py-5 px-6 text-center text-xs text-zinc-400">
+        <footer className="border-t border-slate-800/80 py-5 px-6 text-center text-xs text-zinc-400">
           <p>MapScrape &mdash; Extração direta e transparente de fichas públicas do Google Maps com Puppeteer e SQLite.</p>
         </footer>
       </div>
