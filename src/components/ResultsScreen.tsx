@@ -207,7 +207,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
     } catch {}
   };
 
-  const missing = (val?: string) => (val && val.trim() ? val : <span className="text-zinc-600 italic">—</span>);
+  const missing = (val?: string) => (val && val.trim() ? val : <span className="text-slate-600 italic">—</span>);
 
   const getFirstPhotoUrl = (place: PlaceRecord): string | null => {
     if (place.logo_url && place.logo_url.startsWith('http')) return place.logo_url;
@@ -246,7 +246,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
   return (
     <div className="max-w-7xl mx-auto py-2 sm:py-6 space-y-6">
       {/* Header Bar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-zinc-850 pb-5">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-5">
         <div>
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/25 text-blue-300 text-xs font-semibold uppercase tracking-wider mb-2 font-mono">
             <Compass className="w-3.5 h-3.5 text-blue-400" />
@@ -309,18 +309,18 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
         </div>
 
         {showCoverageSection && coverage && coverage.totalRecords > 0 && (
-          <div className="mt-5 pt-4 border-t border-zinc-800 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-3">
+          <div className="mt-5 pt-4 border-t border-slate-800 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-3">
             {coverage.fields.map((field) => (
               <div key={field.key} className="min-w-0">
                 <div className="mb-1 flex items-baseline justify-between gap-2">
-                  <span className="truncate text-xs font-semibold text-zinc-300">{field.label}</span>
-                  <span className="shrink-0 text-xs font-mono font-medium text-zinc-400 tabular-nums">
+                  <span className="truncate text-xs font-semibold text-slate-300">{field.label}</span>
+                  <span className="shrink-0 text-xs font-mono font-medium text-slate-400 tabular-nums">
                     {field.populated}/{coverage.totalRecords} ({field.percentage}%)
                   </span>
                 </div>
-                <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
+                <div className="h-1.5 overflow-hidden rounded-full bg-slate-800">
                   <div
-                    className="h-full rounded-full bg-emerald-500 transition-all"
+                    className="h-full rounded-full bg-blue-500 transition-all"
                     style={{ width: `${field.percentage}%` }}
                   />
                 </div>
@@ -331,10 +331,10 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
       </div>
 
       {/* Filter and Control Bar */}
-      <div className="grid grid-cols-1 gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/90 p-4 sm:p-5 shadow-xl shadow-black/20 lg:grid-cols-[minmax(0,1fr)_auto_auto_auto]">
+      <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-800 bg-slate-900/90 p-4 sm:p-5 shadow-xl shadow-black/20 lg:grid-cols-[minmax(0,1fr)_auto_auto_auto]">
         {/* Search Input */}
         <div className="relative">
-          <Search className="absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-zinc-500" />
+          <Search className="absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500" />
           <input
             value={searchQuery}
             onChange={(e) => {
@@ -342,24 +342,24 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
               onPageChange(1);
             }}
             placeholder="Buscar por nome, categoria, bairro, endereço, telefone ou site..."
-            className="w-full rounded-xl border border-zinc-750 bg-zinc-950 py-3 pl-11 pr-4 text-sm sm:text-base text-zinc-100 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all font-medium placeholder:text-zinc-500"
+            className="w-full rounded-xl border border-slate-700 bg-slate-950 py-3 pl-11 pr-4 text-sm sm:text-base text-slate-100 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all font-medium placeholder:text-slate-500"
           />
         </div>
 
         {/* Search Job Selector */}
         <div className="flex items-center gap-2">
-          <Filter className="h-4 w-4 shrink-0 text-zinc-400" />
+          <Filter className="h-4 w-4 shrink-0 text-slate-400" />
           <select
             value={selectedJobId || ''}
             onChange={(e) => {
               onSelectJobId(e.target.value || undefined);
               onPageChange(1);
             }}
-            className="rounded-xl border border-zinc-750 bg-zinc-950 px-3.5 py-3 text-sm font-medium text-zinc-200 outline-none focus:border-emerald-500"
+            className="rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm font-medium text-slate-200 outline-none focus:border-blue-500"
           >
-            <option value="" className="bg-zinc-900 text-zinc-100">Todas as coletas ({jobs.length})</option>
+            <option value="" className="bg-slate-900 text-slate-100">Todas as coletas ({jobs.length})</option>
             {jobs.map((job) => (
-              <option key={job.id} value={job.id} className="bg-zinc-900 text-zinc-100">
+              <option key={job.id} value={job.id} className="bg-slate-900 text-slate-100">
                 {job.segment} · {job.location} ({job.total_collected})
               </option>
             ))}
@@ -368,12 +368,12 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
 
         {/* Persisted category filter */}
         <div className="flex items-center gap-2">
-          <Building2 className="h-4 w-4 shrink-0 text-zinc-400" />
+          <Building2 className="h-4 w-4 shrink-0 text-slate-400" />
           <select
             aria-label="Filtrar por categoria"
             value={selectedCategory}
             onChange={(e) => onCategoryChange(e.target.value)}
-            className="w-full rounded-xl border border-zinc-750 bg-zinc-950 px-3.5 py-3 text-sm font-medium text-zinc-200 outline-none focus:border-emerald-500"
+            className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm font-medium text-slate-200 outline-none focus:border-blue-500"
           >
             <option value="">Todas as categorias ({categories.length})</option>
             {categories.map((category, index) => {
@@ -388,14 +388,14 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
         </div>
 
         {/* View Mode Toggle (Cards vs Table) */}
-        <div className="flex items-center p-1 bg-zinc-950 rounded-xl border border-zinc-800">
+        <div className="flex items-center p-1 bg-slate-950 rounded-xl border border-slate-800">
           <button
             type="button"
             onClick={() => setViewMode('cards')}
             className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
               viewMode === 'cards'
-                ? 'bg-zinc-800 text-zinc-100 shadow-xs border border-zinc-700'
-                : 'text-zinc-400 hover:text-zinc-200'
+                ? 'bg-slate-800 text-slate-100 shadow-xs border border-slate-700'
+                : 'text-slate-400 hover:text-slate-200'
             }`}
           >
             <LayoutGrid className="w-4 h-4" />
@@ -406,8 +406,8 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             onClick={() => setViewMode('table')}
             className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
               viewMode === 'table'
-                ? 'bg-zinc-800 text-zinc-100 shadow-xs border border-zinc-700'
-                : 'text-zinc-400 hover:text-zinc-200'
+                ? 'bg-slate-800 text-slate-100 shadow-xs border border-slate-700'
+                : 'text-slate-400 hover:text-slate-200'
             }`}
           >
             <TableIcon className="w-4 h-4" />
@@ -417,16 +417,16 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
       </div>
 
       {/* Sorting and Select All Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-zinc-400 px-1">
+      <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-400 px-1">
         <div className="flex items-center gap-2.5">
-          <span className="font-semibold text-zinc-300">Ordenar por:</span>
+          <span className="font-semibold text-slate-300">Ordenar por:</span>
           <button
             type="button"
             onClick={() => onSortChange('name')}
             className={`px-3 py-1.5 rounded-lg border text-xs sm:text-sm font-medium transition-colors cursor-pointer ${
               sortBy === 'name'
-                ? 'bg-zinc-800 text-zinc-100 border-zinc-650'
-                : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:text-zinc-200'
+                ? 'bg-slate-800 text-slate-100 border-slate-600'
+                : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200'
             }`}
           >
             Nome {sortBy === 'name' && (sortOrder === 'asc' ? '↑' : '↓')}
@@ -436,8 +436,8 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             onClick={() => onSortChange('rating')}
             className={`px-3 py-1.5 rounded-lg border text-xs sm:text-sm font-medium transition-colors cursor-pointer ${
               sortBy === 'rating'
-                ? 'bg-zinc-800 text-zinc-100 border-zinc-650'
-                : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:text-zinc-200'
+                ? 'bg-slate-800 text-slate-100 border-slate-600'
+                : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200'
             }`}
           >
             Nota {sortBy === 'rating' && (sortOrder === 'asc' ? '↑' : '↓')}
@@ -447,8 +447,8 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             onClick={() => onSortChange('collected_at')}
             className={`px-3 py-1.5 rounded-lg border text-xs sm:text-sm font-medium transition-colors cursor-pointer ${
               sortBy === 'collected_at'
-                ? 'bg-zinc-800 text-zinc-100 border-zinc-650'
-                : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:text-zinc-200'
+                ? 'bg-slate-800 text-slate-100 border-slate-600'
+                : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200'
             }`}
           >
             Data {sortBy === 'collected_at' && (sortOrder === 'asc' ? '↑' : '↓')}
@@ -456,12 +456,12 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
         </div>
 
         <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2 cursor-pointer text-xs sm:text-sm font-medium text-zinc-300 hover:text-zinc-100">
+          <label className="flex items-center gap-2 cursor-pointer text-xs sm:text-sm font-medium text-slate-300 hover:text-slate-100">
             <input
               type="checkbox"
               checked={isAllSelected}
               onChange={() => onToggleSelectAll(currentIds)}
-              className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-emerald-500 focus:ring-emerald-500/30 cursor-pointer"
+              className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-blue-500 focus:ring-blue-500/30 cursor-pointer"
             />
             <span>Selecionar todos da página ({currentIds.length})</span>
           </label>
@@ -472,7 +472,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
               onPageSizeChange(Number(e.target.value));
               onPageChange(1);
             }}
-            className="rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1 text-xs sm:text-sm text-zinc-300 outline-none"
+            className="rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1 text-xs sm:text-sm text-slate-300 outline-none"
           >
             <option value={10}>10 / pág</option>
             <option value={25}>25 / pág</option>
@@ -484,15 +484,15 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
 
       {/* Main Content Area */}
       {isLoading ? (
-        <div className="p-16 text-center text-zinc-400">
-          <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+        <div className="p-16 text-center text-slate-400">
+          <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
           <p className="text-base font-medium">Carregando estabelecimentos...</p>
         </div>
       ) : places.length === 0 ? (
-        <div className="p-16 text-center rounded-2xl border border-dashed border-zinc-800 bg-zinc-900/50">
-          <Building2 className="w-12 h-12 text-zinc-600 mx-auto mb-4" />
-          <h3 className="text-xl font-bold text-zinc-200">Nenhum estabelecimento encontrado</h3>
-          <p className="mt-2 text-sm text-zinc-400 max-w-md mx-auto">
+        <div className="p-16 text-center rounded-2xl border border-dashed border-slate-800 bg-slate-900/50">
+          <Building2 className="w-12 h-12 text-slate-600 mx-auto mb-4" />
+          <h3 className="text-xl font-bold text-slate-200">Nenhum estabelecimento encontrado</h3>
+          <p className="mt-2 text-sm text-slate-400 max-w-md mx-auto">
             {searchQuery
               ? 'Nenhum resultado corresponde à sua busca. Tente palavras mais curtas.'
               : 'Execute uma nova coleta na tela "1. Pesquisar" para extrair fichas do Google Maps.'}
@@ -509,32 +509,32 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             return (
               <article
                 key={place.id}
-                className={`flex flex-col justify-between rounded-2xl border transition-all duration-150 overflow-hidden bg-zinc-900/90 shadow-lg shadow-black/30 ${
+                className={`flex flex-col justify-between rounded-2xl border transition-all duration-150 overflow-hidden bg-slate-900/90 shadow-lg shadow-black/30 ${
                   isSelected
-                    ? 'border-emerald-500 ring-2 ring-emerald-500/20'
-                    : 'border-zinc-800 hover:border-zinc-700'
+                    ? 'border-blue-500 ring-2 ring-blue-500/20'
+                    : 'border-slate-800 hover:border-slate-700'
                 }`}
               >
                 {/* Card Header Media */}
                 {photoUrl ? (
-                  <div className="relative h-44 w-full bg-zinc-950 overflow-hidden border-b border-zinc-800/80">
+                  <div className="relative h-44 w-full bg-slate-950 overflow-hidden border-b border-slate-800/80">
                     <img
                       src={photoUrl}
                       alt={place.name}
                       referrerPolicy="no-referrer"
                       className="w-full h-full object-cover opacity-90 hover:scale-105 transition-transform duration-300"
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/20 to-transparent" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent" />
 
                     {/* Top Row in Photo */}
                     <div className="absolute top-3 inset-x-3 flex items-center justify-between">
-                      <label className="flex items-center gap-2 p-1.5 rounded-lg bg-zinc-950/80 backdrop-blur-xs border border-zinc-800 cursor-pointer">
+                      <label className="flex items-center gap-2 p-1.5 rounded-lg bg-slate-950/80 backdrop-blur-xs border border-slate-800 cursor-pointer">
                         <input
                           type="checkbox"
                           aria-label={`Selecionar ${place.name}`}
                           checked={isSelected}
                           onChange={() => onToggleSelectPlace(place.id)}
-                          className="h-4 w-4 rounded border-zinc-700 text-emerald-500 focus:ring-emerald-500/30 cursor-pointer"
+                          className="h-4 w-4 rounded border-slate-700 text-blue-500 focus:ring-blue-500/30 cursor-pointer"
                         />
                       </label>
 
@@ -546,7 +546,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                           </span>
                         )}
                         {place.category && (
-                          <span className="px-2.5 py-1 rounded-md bg-zinc-950/80 text-zinc-300 border border-zinc-800 text-xs font-medium backdrop-blur-xs">
+                          <span className="px-2.5 py-1 rounded-md bg-slate-950/80 text-slate-300 border border-slate-800 text-xs font-medium backdrop-blur-xs">
                             {place.category}
                           </span>
                         )}
@@ -561,7 +561,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                         aria-label={`Selecionar ${place.name}`}
                         checked={isSelected}
                         onChange={() => onToggleSelectPlace(place.id)}
-                        className="h-4 w-4 rounded border-zinc-700 bg-zinc-950 text-emerald-500 focus:ring-emerald-500/30 cursor-pointer"
+                        className="h-4 w-4 rounded border-slate-700 bg-slate-950 text-blue-500 focus:ring-blue-500/30 cursor-pointer"
                       />
                     </label>
 
@@ -573,7 +573,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                         </span>
                       )}
                       {place.category && (
-                        <span className="px-2.5 py-1 rounded-md bg-zinc-800/80 text-zinc-300 border border-zinc-700/80 text-xs font-medium">
+                        <span className="px-2.5 py-1 rounded-md bg-slate-800/80 text-slate-300 border border-slate-700/80 text-xs font-medium">
                           {place.category}
                         </span>
                       )}
@@ -590,7 +590,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                       onClick={() => setSelectedPlace(place)}
                       className="text-left group cursor-pointer w-full"
                     >
-                      <h2 className="text-xl font-bold text-zinc-100 group-hover:text-emerald-400 transition-colors line-clamp-2 leading-snug">
+                      <h2 className="text-xl font-bold text-slate-100 group-hover:text-blue-400 transition-colors line-clamp-2 leading-snug">
                         {place.name || 'Estabelecimento sem nome'}
                       </h2>
                     </button>
@@ -599,23 +599,23 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                     <div className="mt-3 flex items-center gap-2">
                       <div className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/30">
                         <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
-                        <span className="font-bold text-sm text-zinc-100">{place.rating || '—'}</span>
+                        <span className="font-bold text-sm text-slate-100">{place.rating || '—'}</span>
                       </div>
-                      <span className="text-xs sm:text-sm text-zinc-400 font-medium">
+                      <span className="text-xs sm:text-sm text-slate-400 font-medium">
                         {place.review_count ? `${place.review_count} avaliações` : 'Sem avaliações'}
                       </span>
                       {place.price_range && (
-                        <span className="ml-auto text-xs font-semibold text-zinc-300 px-2 py-0.5 rounded bg-zinc-800 border border-zinc-750">
+                        <span className="ml-auto text-xs font-semibold text-slate-300 px-2 py-0.5 rounded bg-slate-800 border border-slate-700">
                           {place.price_range}
                         </span>
                       )}
                     </div>
 
                     {/* Contact & Address Lines */}
-                    <div className="mt-4 space-y-2.5 text-xs sm:text-sm text-zinc-300">
+                    <div className="mt-4 space-y-2.5 text-xs sm:text-sm text-slate-300">
                       {/* Endereço */}
                       <div className="flex items-start gap-2.5">
-                        <MapPin className="h-4 w-4 shrink-0 text-emerald-400 mt-0.5" />
+                        <MapPin className="h-4 w-4 shrink-0 text-blue-400 mt-0.5" />
                         <span className="line-clamp-2 leading-relaxed font-medium">
                           {missing(place.address)}
                         </span>
@@ -624,8 +624,8 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                       {/* Telefone */}
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2.5">
-                          <Phone className="h-4 w-4 shrink-0 text-zinc-400" />
-                          <span className="font-semibold text-zinc-100 font-mono">
+                          <Phone className="h-4 w-4 shrink-0 text-slate-400" />
+                          <span className="font-semibold text-slate-100 font-mono">
                             {missing(place.phone)}
                           </span>
                         </div>
@@ -633,11 +633,11 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                           <button
                             type="button"
                             onClick={() => copyToClipboard(place.phone, `phone_${place.id}`)}
-                            className="p-1 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 cursor-pointer transition-colors"
+                            className="p-1 rounded text-slate-400 hover:text-slate-100 hover:bg-slate-800 cursor-pointer transition-colors"
                             title="Copiar telefone"
                           >
                             {copiedId === `phone_${place.id}` ? (
-                              <Check className="w-3.5 h-3.5 text-emerald-400" />
+                              <Check className="w-3.5 h-3.5 text-blue-400" />
                             ) : (
                               <Copy className="w-3.5 h-3.5" />
                             )}
@@ -647,32 +647,32 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
 
                       {/* Site */}
                       <div className="flex items-center gap-2.5">
-                        <Globe className="h-4 w-4 shrink-0 text-zinc-400" />
+                        <Globe className="h-4 w-4 shrink-0 text-slate-400" />
                         {place.website ? (
                           <a
                             href={place.website}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-emerald-400 hover:underline truncate block font-medium"
+                            className="text-blue-400 hover:underline truncate block font-medium"
                           >
                             {place.website.replace(/^https?:\/\/(www\.)?/, '')}
                           </a>
                         ) : (
-                          <span className="text-zinc-500 italic">Site não informado</span>
+                          <span className="text-slate-500 italic">Site não informado</span>
                         )}
                       </div>
                     </div>
                   </div>
 
                   {/* Card Footer: Status & Links */}
-                  <div className="pt-3 border-t border-zinc-800 flex items-center justify-between gap-3">
+                  <div className="pt-3 border-t border-slate-800 flex items-center justify-between gap-3">
                     <span
                       className={`truncate rounded-md px-2.5 py-1 text-xs font-semibold border ${
                         /aberto/i.test(place.business_status)
-                          ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                          ? 'bg-blue-500/10 text-blue-300 border-blue-500/30'
                           : /fechado/i.test(place.business_status)
                           ? 'bg-rose-500/10 text-rose-300 border-rose-500/30'
-                          : 'bg-zinc-800 text-zinc-400 border-zinc-700'
+                          : 'bg-slate-800 text-slate-400 border-slate-700'
                       }`}
                     >
                       {missing(place.business_status)}
@@ -686,7 +686,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                           rel="noopener noreferrer"
                           aria-label="Abrir ficha do Google Maps"
                           title="Abrir ficha do Google Maps"
-                          className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 transition-colors"
+                          className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-slate-100 transition-colors"
                         >
                           <ExternalLink className="h-4 w-4" />
                         </a>
@@ -696,7 +696,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                           href={place.booking_url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="flex items-center gap-1 text-xs rounded-lg px-2.5 py-1.5 text-emerald-400 hover:bg-emerald-950/60 hover:text-emerald-300 border border-emerald-500/30 transition-colors"
+                          className="flex items-center gap-1 text-xs rounded-lg px-2.5 py-1.5 text-blue-400 hover:bg-blue-950/60 hover:text-blue-300 border border-blue-500/30 transition-colors"
                         >
                           <span>Agendar</span>
                           <ExternalLink className="w-3.5 h-3.5" />
@@ -705,7 +705,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                       <button
                         type="button"
                         onClick={() => setSelectedPlace(place)}
-                        className="px-3.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-100 text-xs font-semibold transition-colors cursor-pointer border border-zinc-700"
+                        className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-100 text-xs font-semibold transition-colors cursor-pointer border border-slate-700"
                       >
                         Ver detalhes
                       </button>
@@ -718,17 +718,17 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
         </div>
       ) : (
         /* ================= TABLE VIEW ================= */
-        <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl shadow-xl overflow-hidden">
+        <div className="bg-slate-900/90 border border-slate-800 rounded-2xl shadow-xl overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="border-b border-zinc-800 bg-zinc-950 text-xs font-bold text-zinc-400 uppercase tracking-wider">
+                <tr className="border-b border-slate-800 bg-slate-950 text-xs font-bold text-slate-400 uppercase tracking-wider">
                   <th className="py-3.5 px-4 w-12 text-center">
                     <input
                       type="checkbox"
                       checked={isAllSelected}
                       onChange={() => onToggleSelectAll(currentIds)}
-                      className="rounded border-zinc-700 bg-zinc-900 text-emerald-500 focus:ring-emerald-500/30 cursor-pointer"
+                      className="rounded border-slate-700 bg-slate-900 text-blue-500 focus:ring-blue-500/30 cursor-pointer"
                     />
                   </th>
                   <th className="py-3.5 px-4 font-bold">Estabelecimento</th>
@@ -742,7 +742,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                   <th className="py-3.5 px-4 text-center font-bold">Ficha Maps</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-800/80 text-sm text-zinc-300">
+              <tbody className="divide-y divide-slate-800/80 text-sm text-slate-300">
                 {places.map((place) => {
                   const isSelected = selectedPlaceIds.has(place.id);
                   const videos = getVideoUrls(place);
@@ -750,8 +750,8 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                   return (
                     <tr
                       key={place.id}
-                      className={`hover:bg-zinc-850/60 transition-colors ${
-                        isSelected ? 'bg-zinc-850/40' : ''
+                      className={`hover:bg-slate-800/60 transition-colors ${
+                        isSelected ? 'bg-slate-800/40' : ''
                       }`}
                     >
                       <td className="py-4 px-4 text-center">
@@ -759,38 +759,38 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                           type="checkbox"
                           checked={isSelected}
                           onChange={() => onToggleSelectPlace(place.id)}
-                          className="rounded border-zinc-700 bg-zinc-900 text-emerald-500 focus:ring-emerald-500/30 cursor-pointer"
+                          className="rounded border-slate-700 bg-slate-900 text-blue-500 focus:ring-blue-500/30 cursor-pointer"
                         />
                       </td>
-                      <td className="py-4 px-4 font-semibold text-zinc-100 max-w-[220px]">
+                      <td className="py-4 px-4 font-semibold text-slate-100 max-w-[220px]">
                         <button
                           type="button"
                           onClick={() => setSelectedPlace(place)}
-                          className="hover:text-emerald-400 hover:underline text-left"
+                          className="hover:text-blue-400 hover:underline text-left"
                         >
                           {place.name}
                         </button>
                       </td>
-                      <td className="py-4 px-4 max-w-[150px] truncate text-zinc-400">{missing(place.category)}</td>
+                      <td className="py-4 px-4 max-w-[150px] truncate text-slate-400">{missing(place.category)}</td>
                       <td className="py-4 px-4 text-center whitespace-nowrap">
                         {place.rating ? (
-                          <div className="inline-flex items-center gap-1 font-bold text-zinc-100">
+                          <div className="inline-flex items-center gap-1 font-bold text-slate-100">
                             <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
                             <span>{place.rating}</span>
                             {place.review_count && (
-                              <span className="text-zinc-500 font-normal text-xs font-mono">
+                              <span className="text-slate-500 font-normal text-xs font-mono">
                                 ({place.review_count})
                               </span>
                             )}
                           </div>
                         ) : (
-                          <span className="text-zinc-600">—</span>
+                          <span className="text-slate-600">—</span>
                         )}
                       </td>
                       <td className="py-4 px-4 max-w-[240px] truncate" title={place.address}>
                         {missing(place.address)}
                       </td>
-                      <td className="py-4 px-4 font-mono whitespace-nowrap font-medium text-zinc-200">
+                      <td className="py-4 px-4 font-mono whitespace-nowrap font-medium text-slate-200">
                         {missing(place.phone)}
                       </td>
                       <td className="py-4 px-4 max-w-[160px] truncate">
@@ -799,18 +799,18 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                             href={place.website}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-emerald-400 hover:underline"
+                            className="text-blue-400 hover:underline"
                           >
                             {place.website.replace(/^https?:\/\/(www\.)?/, '')}
                           </a>
                         ) : (
-                          <span className="text-zinc-600 italic">—</span>
+                          <span className="text-slate-600 italic">—</span>
                         )}
                       </td>
                       <td className="py-4 px-4 whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           {place.photos && (
-                            <span className="text-xs text-zinc-400 font-mono" title="Fotos disponíveis">
+                            <span className="text-xs text-slate-400 font-mono" title="Fotos disponíveis">
                               📷
                             </span>
                           )}
@@ -820,7 +820,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                             </span>
                           )}
                           {!place.photos && videos.length === 0 && (
-                            <span className="text-zinc-600">—</span>
+                            <span className="text-slate-600">—</span>
                           )}
                         </div>
                       </td>
@@ -828,8 +828,8 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                         <span
                           className={`px-2 py-0.5 rounded text-xs font-medium border ${
                             /aberto/i.test(place.business_status)
-                              ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
-                              : 'bg-zinc-800 text-zinc-400 border-zinc-700'
+                              ? 'bg-blue-500/10 text-blue-300 border-blue-500/30'
+                              : 'bg-slate-800 text-slate-400 border-slate-700'
                           }`}
                         >
                           {missing(place.business_status)}
@@ -841,13 +841,13 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                             href={place.maps_url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-zinc-300 hover:text-white font-medium px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 border border-zinc-700"
+                            className="inline-flex items-center gap-1 text-slate-300 hover:text-white font-medium px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700"
                           >
                             <span>Ficha</span>
                             <ExternalLink className="w-3.5 h-3.5" />
                           </a>
                         ) : (
-                          <span className="text-zinc-600">—</span>
+                          <span className="text-slate-600">—</span>
                         )}
                       </td>
                     </tr>
@@ -861,7 +861,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
 
       {/* Pagination Bar */}
       {totalPlaces > 0 && (
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-2xl border border-zinc-800 bg-zinc-900/90 px-6 py-4 text-sm font-medium text-zinc-400 shadow-xl">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-slate-900/90 px-6 py-4 text-sm font-medium text-slate-400 shadow-xl">
           <span>
             Mostrando {Math.min((currentPage - 1) * pageSize + 1, totalPlaces)}–{Math.min(currentPage * pageSize, totalPlaces)} de {totalPlaces.toLocaleString('pt-BR')} estabelecimentos
           </span>
@@ -869,17 +869,17 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             <button
               disabled={currentPage <= 1}
               onClick={() => onPageChange(currentPage - 1)}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-750 bg-zinc-950 px-4 py-2 text-zinc-200 font-semibold hover:bg-zinc-850 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-950 px-4 py-2 text-slate-200 font-semibold hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             >
               <ChevronLeft className="h-4 w-4" /> Anterior
             </button>
-            <span className="font-mono font-bold text-zinc-100 tabular-nums">
+            <span className="font-mono font-bold text-slate-100 tabular-nums">
               Página {currentPage} de {totalPages}
             </span>
             <button
               disabled={currentPage >= totalPages}
               onClick={() => onPageChange(currentPage + 1)}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-750 bg-zinc-950 px-4 py-2 text-zinc-200 font-semibold hover:bg-zinc-850 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-950 px-4 py-2 text-slate-200 font-semibold hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             >
               Próxima <ChevronRight className="h-4 w-4" />
             </button>
@@ -900,11 +900,11 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             role="dialog"
             aria-modal="true"
             aria-labelledby="lead-detail-title"
-            className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-zinc-900 border border-zinc-750 shadow-2xl text-zinc-100"
+            className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-slate-900 border border-slate-700 shadow-2xl text-slate-100"
           >
             {/* Modal Photo / Header */}
             {getFirstPhotoUrl(selectedPlace) && (
-              <div className="relative h-56 w-full bg-zinc-950 overflow-hidden border-b border-zinc-800">
+              <div className="relative h-56 w-full bg-slate-950 overflow-hidden border-b border-slate-800">
                 <img
                   src={getFirstPhotoUrl(selectedPlace)!}
                   alt={selectedPlace.name}
@@ -914,7 +914,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                 <button
                   onClick={() => setSelectedPlace(null)}
                   aria-label="Fechar detalhes"
-                  className="absolute top-4 right-4 rounded-full bg-zinc-950/80 border border-zinc-700 text-white p-2 hover:bg-zinc-900 transition-colors cursor-pointer"
+                  className="absolute top-4 right-4 rounded-full bg-slate-950/80 border border-slate-700 text-white p-2 hover:bg-slate-900 transition-colors cursor-pointer"
                 >
                   <X className="h-5 w-5" />
                 </button>
@@ -922,15 +922,15 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             )}
 
             {/* Modal Title Bar */}
-            <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-zinc-800 bg-zinc-900/95 backdrop-blur-md px-6 py-5">
+            <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-800 bg-slate-900/95 backdrop-blur-md px-6 py-5">
               <div className="min-w-0">
-                <span className="text-xs font-bold uppercase tracking-wider text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-md">
+                <span className="text-xs font-bold uppercase tracking-wider text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2.5 py-0.5 rounded-md">
                   Ficha Completa do Estabelecimento
                 </span>
-                <h2 id="lead-detail-title" className="mt-2 text-2xl font-bold tracking-tight text-zinc-100">
+                <h2 id="lead-detail-title" className="mt-2 text-2xl font-bold tracking-tight text-slate-100">
                   {missing(selectedPlace.name)}
                 </h2>
-                <p className="mt-1 text-sm font-medium text-zinc-400">
+                <p className="mt-1 text-sm font-medium text-slate-400">
                   {missing(selectedPlace.category)}
                 </p>
               </div>
@@ -938,7 +938,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                 <button
                   onClick={() => setSelectedPlace(null)}
                   aria-label="Fechar detalhes"
-                  className="rounded-xl p-2.5 text-zinc-400 hover:bg-zinc-800 hover:text-white cursor-pointer"
+                  className="rounded-xl p-2.5 text-slate-400 hover:bg-slate-800 hover:text-white cursor-pointer"
                 >
                   <X className="h-5 w-5" />
                 </button>
@@ -949,50 +949,50 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             <div className="px-6 py-6 space-y-6">
               {/* Highlight Metrics */}
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                <div className="rounded-xl bg-zinc-950 p-4 border border-zinc-800">
-                  <p className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Avaliação</p>
-                  <p className="mt-1 flex items-center gap-1.5 text-xl font-extrabold text-zinc-100">
+                <div className="rounded-xl bg-slate-950 p-4 border border-slate-800">
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Avaliação</p>
+                  <p className="mt-1 flex items-center gap-1.5 text-xl font-extrabold text-slate-100">
                     <Star className="h-5 w-5 fill-amber-400 text-amber-400" />
                     <span>{selectedPlace.rating || '—'}</span>
-                    <span className="text-xs font-normal text-zinc-500">
+                    <span className="text-xs font-normal text-slate-500">
                       {selectedPlace.review_count ? `(${selectedPlace.review_count})` : ''}
                     </span>
                   </p>
                 </div>
 
-                <div className="rounded-xl bg-zinc-950 p-4 border border-zinc-800">
-                  <p className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Status</p>
-                  <p className="mt-2 text-base font-bold text-zinc-200">
+                <div className="rounded-xl bg-slate-950 p-4 border border-slate-800">
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Status</p>
+                  <p className="mt-2 text-base font-bold text-slate-200">
                     {missing(selectedPlace.business_status)}
                   </p>
                 </div>
 
-                <div className="rounded-xl bg-zinc-950 p-4 border border-zinc-800 col-span-2 sm:col-span-1">
-                  <p className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Faixa de Preço</p>
-                  <p className="mt-2 text-base font-bold text-zinc-200">
+                <div className="rounded-xl bg-slate-950 p-4 border border-slate-800 col-span-2 sm:col-span-1">
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Faixa de Preço</p>
+                  <p className="mt-2 text-base font-bold text-slate-200">
                     {missing(selectedPlace.price_range)}
                   </p>
                 </div>
               </div>
 
               {/* All Detail Fields */}
-              <div className="divide-y divide-zinc-800/80 border border-zinc-800 rounded-2xl overflow-hidden bg-zinc-950/60">
+              <div className="divide-y divide-slate-800/80 border border-slate-800 rounded-2xl overflow-hidden bg-slate-950/60">
                 {detailFields.map(({ key, label }) => {
                   const value = String(selectedPlace[key] ?? '').trim();
                   return (
                     <div
                       key={key}
-                      className="grid grid-cols-1 sm:grid-cols-[180px_1fr] gap-2 p-3.5 sm:px-4 hover:bg-zinc-850/40 transition-colors"
+                      className="grid grid-cols-1 sm:grid-cols-[180px_1fr] gap-2 p-3.5 sm:px-4 hover:bg-slate-800/40 transition-colors"
                     >
-                      <dt className="text-xs sm:text-sm font-semibold text-zinc-400">{label}</dt>
-                      <dd className={`text-sm sm:text-base break-words ${value ? 'text-zinc-200 font-medium' : 'text-zinc-600 italic'}`}>
+                      <dt className="text-xs sm:text-sm font-semibold text-slate-400">{label}</dt>
+                      <dd className={`text-sm sm:text-base break-words ${value ? 'text-slate-200 font-medium' : 'text-slate-600 italic'}`}>
                         {value ? (
                           key === 'website' ? (
                             <a
                               href={value}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 text-emerald-400 hover:underline font-semibold"
+                              className="inline-flex items-center gap-1 text-blue-400 hover:underline font-semibold"
                             >
                               <span>{value}</span>
                               <ExternalLink className="h-3.5 w-3.5" />
@@ -1000,7 +1000,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                           ) : key === 'photos' && value.includes('http') ? (
                             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                               {value.split(' | ').filter((url) => url.startsWith('http')).map((url, uIdx) => (
-                                <a key={uIdx} href={url} target="_blank" rel="noopener noreferrer" className="group block aspect-[4/3] rounded-xl overflow-hidden border border-zinc-800 bg-zinc-900">
+                                <a key={uIdx} href={url} target="_blank" rel="noopener noreferrer" className="group block aspect-[4/3] rounded-xl overflow-hidden border border-slate-800 bg-slate-900">
                                   <img src={url} alt={`Foto do estabelecimento ${uIdx + 1}`} loading="lazy" referrerPolicy="no-referrer" className="h-full w-full object-cover group-hover:scale-105 transition-transform" />
                                 </a>
                               ))}
@@ -1010,24 +1010,24 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                               {value.split(' | ').map((vUrl, vIdx) => {
                                 const embedUrl = getVideoEmbedUrl(vUrl);
                                 return embedUrl ? (
-                                  <div key={vIdx} className="overflow-hidden rounded-xl border border-zinc-800 bg-black">
+                                  <div key={vIdx} className="overflow-hidden rounded-xl border border-slate-800 bg-black">
                                     <iframe src={embedUrl} title={`Vídeo do estabelecimento ${vIdx + 1}`} className="aspect-video w-full" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen />
                                   </div>
                                 ) : vUrl.startsWith('http') && /\.(mp4|webm|ogg)(?:$|[?#])/i.test(vUrl) ? (
-                                  <video key={vIdx} src={vUrl} controls preload="metadata" className="w-full rounded-xl border border-zinc-800 bg-black" />
+                                  <video key={vIdx} src={vUrl} controls preload="metadata" className="w-full rounded-xl border border-slate-800 bg-black" />
                                 ) : (
                                   <a href={selectedPlace.maps_url} target="_blank" rel="noopener noreferrer" key={vIdx} className="flex items-center gap-3 rounded-xl border border-indigo-500/30 bg-indigo-500/5 p-3 hover:bg-indigo-500/10">
                                     <PlayCircle className="h-8 w-8 shrink-0 text-indigo-400" />
                                     <div className="min-w-0">
-                                      <p className="text-sm font-semibold text-zinc-200">Reproduzir vídeo na ficha do Maps</p>
-                                      <p className="text-xs text-zinc-500 break-words">{vUrl.startsWith('http') ? vUrl : 'O Google Maps não expõe uma URL de vídeo direta; abrir a galeria original.'}</p>
+                                      <p className="text-sm font-semibold text-slate-200">Reproduzir vídeo na ficha do Maps</p>
+                                      <p className="text-xs text-slate-500 break-words">{vUrl.startsWith('http') ? vUrl : 'O Google Maps não expõe uma URL de vídeo direta; abrir a galeria original.'}</p>
                                     </div>
                                   </a>
                                 );
                               })}
                             </div>
                           ) : key === 'logo_url' && value.startsWith('http') ? (
-                            <a href={value} target="_blank" rel="noopener noreferrer" className="inline-flex rounded-xl border border-zinc-800 bg-zinc-900 p-2">
+                            <a href={value} target="_blank" rel="noopener noreferrer" className="inline-flex rounded-xl border border-slate-800 bg-slate-900 p-2">
                               <img src={value} alt={`Imagem de perfil de ${selectedPlace.name}`} loading="lazy" referrerPolicy="no-referrer" className="max-h-36 max-w-full rounded-lg object-contain" />
                             </a>
                           ) : key === 'reviews' ? (
@@ -1035,40 +1035,40 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                               const reviews = parseJsonField<Array<{id?:string;author?:string;author_avatar_url?:string;author_profile_url?:string;author_metadata?:string;rating?:string;date?:string;text?:string;owner_response?:string;media?:Array<{url:string;alt?:string;type?:string}>}>>(value, []);
                               return reviews.length ? (
                                 <div className="space-y-3">
-                                  <p className="text-xs text-zinc-500">{reviews.length} comentários capturados na ficha pública</p>
+                                  <p className="text-xs text-slate-500">{reviews.length} comentários capturados na ficha pública</p>
                                   {reviews.map((review, index) => (
-                                    <article key={review.id || index} className="rounded-xl border border-zinc-800 bg-zinc-900 p-3.5 space-y-2.5">
+                                    <article key={review.id || index} className="rounded-xl border border-slate-800 bg-slate-900 p-3.5 space-y-2.5">
                                       <div className="flex items-start gap-3">
                                         {review.author_avatar_url && <img src={review.author_avatar_url} alt="" className="h-9 w-9 rounded-full object-cover" loading="lazy" referrerPolicy="no-referrer" />}
                                         <div className="min-w-0 flex-1">
-                                          <p className="font-semibold text-zinc-100">{review.author || 'Autor não identificado'}</p>
-                                          <p className="text-xs text-zinc-500">{[review.author_metadata, review.date].filter(Boolean).join(' · ') || 'Data ou perfil não informado'}</p>
+                                          <p className="font-semibold text-slate-100">{review.author || 'Autor não identificado'}</p>
+                                          <p className="text-xs text-slate-500">{[review.author_metadata, review.date].filter(Boolean).join(' · ') || 'Data ou perfil não informado'}</p>
                                         </div>
                                         {review.rating && <span className="shrink-0 text-sm text-amber-300">{review.rating}</span>}
                                       </div>
-                                      {review.text && <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-200">{review.text}</p>}
-                                      {review.owner_response && <div className="rounded-lg border-l-2 border-emerald-500 bg-zinc-950 p-3"><p className="text-xs font-semibold text-emerald-300 mb-1">Resposta do proprietário</p><p className="whitespace-pre-wrap text-sm text-zinc-300">{review.owner_response}</p></div>}
-                                      {!!review.media?.length && <div className="grid grid-cols-3 gap-2">{review.media.map((item, mediaIndex) => item.type === 'video' ? <a key={mediaIndex} href={selectedPlace.maps_url} target="_blank" rel="noopener noreferrer" className="flex aspect-square flex-col items-center justify-center gap-2 rounded-lg bg-zinc-950 text-indigo-300"><PlayCircle className="h-8 w-8" /><span className="px-2 text-center text-xs">Abrir vídeo</span></a> : <a key={mediaIndex} href={item.url} target="_blank" rel="noopener noreferrer"><img src={item.url} alt={item.alt || 'Mídia da avaliação'} loading="lazy" className="aspect-square w-full rounded-lg object-cover" referrerPolicy="no-referrer" /></a>)}</div>}
-                                      {review.author_profile_url && <a href={review.author_profile_url} target="_blank" rel="noopener noreferrer" className="text-xs text-emerald-400 hover:underline">Abrir perfil público do autor</a>}
+                                      {review.text && <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-200">{review.text}</p>}
+                                      {review.owner_response && <div className="rounded-lg border-l-2 border-blue-500 bg-slate-950 p-3"><p className="text-xs font-semibold text-blue-300 mb-1">Resposta do proprietário</p><p className="whitespace-pre-wrap text-sm text-slate-300">{review.owner_response}</p></div>}
+                                      {!!review.media?.length && <div className="grid grid-cols-3 gap-2">{review.media.map((item, mediaIndex) => item.type === 'video' ? <a key={mediaIndex} href={selectedPlace.maps_url} target="_blank" rel="noopener noreferrer" className="flex aspect-square flex-col items-center justify-center gap-2 rounded-lg bg-slate-950 text-indigo-300"><PlayCircle className="h-8 w-8" /><span className="px-2 text-center text-xs">Abrir vídeo</span></a> : <a key={mediaIndex} href={item.url} target="_blank" rel="noopener noreferrer"><img src={item.url} alt={item.alt || 'Mídia da avaliação'} loading="lazy" className="aspect-square w-full rounded-lg object-cover" referrerPolicy="no-referrer" /></a>)}</div>}
+                                      {review.author_profile_url && <a href={review.author_profile_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-400 hover:underline">Abrir perfil público do autor</a>}
                                     </article>
                                   ))}
                                 </div>
-                              ) : <span className="text-zinc-500 italic">Nenhum comentário foi capturado; isso não significa que não existam.</span>;
+                              ) : <span className="text-slate-500 italic">Nenhum comentário foi capturado; isso não significa que não existam.</span>;
                             })()
                           ) : key === 'review_topics' ? (
                             (() => {
                               const topics = parseJsonField<Array<{label:string;count?:string}>>(value, []);
-                              return topics.length ? <div className="flex flex-wrap gap-2">{topics.map((topic, index) => <span key={index} className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-200">{topic.label}{topic.count ? ` · ${topic.count}` : ''}</span>)}</div> : <span className="text-zinc-500 italic">Nenhuma categoria de comentário capturada.</span>;
+                              return topics.length ? <div className="flex flex-wrap gap-2">{topics.map((topic, index) => <span key={index} className="rounded-full border border-blue-500/20 bg-blue-500/10 px-3 py-1.5 text-xs text-blue-200">{topic.label}{topic.count ? ` · ${topic.count}` : ''}</span>)}</div> : <span className="text-slate-500 italic">Nenhuma categoria de comentário capturada.</span>;
                             })()
                           ) : key === 'additional_attributes' ? (
                             (() => {
                               const attributes = parseJsonField<{about_text?:string;sections?:Array<{category:string;items:string[]}>;labeled_attributes?:Array<{label?:string;value?:string}>}>(value, {});
-                              return <div className="space-y-3">{!!attributes.sections?.length && <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{attributes.sections.map((section,index)=><section key={index} className="rounded-xl border border-zinc-800 bg-zinc-900 p-3"><h4 className="mb-2 text-sm font-semibold text-zinc-100">{section.category}</h4><ul className="space-y-1">{section.items.map((item,itemIndex)=><li key={itemIndex} className="text-sm text-zinc-300">{item}</li>)}</ul></section>)}</div>}{attributes.about_text && <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-300">{attributes.about_text}</p>}{!!attributes.labeled_attributes?.length && <div className="space-y-2">{attributes.labeled_attributes.map((item,index)=><div key={index} className="rounded-lg bg-zinc-900 px-3 py-2"><p className="text-xs text-zinc-500">{item.label || 'Atributo'}</p><p className="text-sm text-zinc-200">{item.value || '—'}</p></div>)}</div>}</div>;
+                              return <div className="space-y-3">{!!attributes.sections?.length && <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{attributes.sections.map((section,index)=><section key={index} className="rounded-xl border border-slate-800 bg-slate-900 p-3"><h4 className="mb-2 text-sm font-semibold text-slate-100">{section.category}</h4><ul className="space-y-1">{section.items.map((item,itemIndex)=><li key={itemIndex} className="text-sm text-slate-300">{item}</li>)}</ul></section>)}</div>}{attributes.about_text && <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-300">{attributes.about_text}</p>}{!!attributes.labeled_attributes?.length && <div className="space-y-2">{attributes.labeled_attributes.map((item,index)=><div key={index} className="rounded-lg bg-slate-900 px-3 py-2"><p className="text-xs text-slate-500">{item.label || 'Atributo'}</p><p className="text-sm text-slate-200">{item.value || '—'}</p></div>)}</div>}</div>;
                             })()
                           ) : key === 'media_items' ? (
                             (() => {
                               const items = parseJsonField<Array<{type:string;url:string;thumbnail_url?:string;title?:string}>>(value, []);
-                              return items.length ? <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">{items.map((item,index)=><div key={index} className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">{item.type === 'video' && item.url.startsWith('http') && /\.(mp4|webm|ogg)(?:$|[?#])/i.test(item.url) ? <video src={item.url} controls preload="metadata" poster={item.thumbnail_url || undefined} className="aspect-video w-full bg-black" /> : item.type === 'video' && item.url.startsWith('http') && getVideoEmbedUrl(item.url) ? <iframe src={getVideoEmbedUrl(item.url)!} title={item.title || `Vídeo ${index+1}`} className="aspect-video w-full" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen /> : item.type === 'video' ? <a href={selectedPlace.maps_url} target="_blank" rel="noopener noreferrer" className="relative flex aspect-video items-center justify-center bg-zinc-950 text-indigo-300"><PlayCircle className="h-12 w-12" /><span className="absolute inset-x-2 bottom-2 rounded bg-black/75 px-2 py-1 text-center text-xs">Abrir vídeo no Google Maps</span></a> : item.url.startsWith('http') ? <a href={item.url} target="_blank" rel="noopener noreferrer"><img src={item.url} alt={item.title || `Mídia ${index+1}`} loading="lazy" referrerPolicy="no-referrer" className="aspect-video w-full object-cover" /></a> : <div className="p-3 text-sm text-zinc-400">Mídia identificada, sem URL pública direta.</div>}</div>)}</div> : <span className="text-zinc-500 italic">Nenhuma mídia estruturada capturada.</span>;
+                              return items.length ? <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">{items.map((item,index)=><div key={index} className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900">{item.type === 'video' && item.url.startsWith('http') && /\.(mp4|webm|ogg)(?:$|[?#])/i.test(item.url) ? <video src={item.url} controls preload="metadata" poster={item.thumbnail_url || undefined} className="aspect-video w-full bg-black" /> : item.type === 'video' && item.url.startsWith('http') && getVideoEmbedUrl(item.url) ? <iframe src={getVideoEmbedUrl(item.url)!} title={item.title || `Vídeo ${index+1}`} className="aspect-video w-full" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen /> : item.type === 'video' ? <a href={selectedPlace.maps_url} target="_blank" rel="noopener noreferrer" className="relative flex aspect-video items-center justify-center bg-slate-950 text-indigo-300"><PlayCircle className="h-12 w-12" /><span className="absolute inset-x-2 bottom-2 rounded bg-black/75 px-2 py-1 text-center text-xs">Abrir vídeo no Google Maps</span></a> : item.url.startsWith('http') ? <a href={item.url} target="_blank" rel="noopener noreferrer"><img src={item.url} alt={item.title || `Mídia ${index+1}`} loading="lazy" referrerPolicy="no-referrer" className="aspect-video w-full object-cover" /></a> : <div className="p-3 text-sm text-slate-400">Mídia identificada, sem URL pública direta.</div>}</div>)}</div> : <span className="text-slate-500 italic">Nenhuma mídia estruturada capturada.</span>;
                             })()
                           ) : (
                             value
@@ -1082,21 +1082,21 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                 })}
 
                 {/* Google Maps External URL */}
-                <div className="grid grid-cols-1 sm:grid-cols-[180px_1fr] gap-2 p-3.5 sm:px-4 hover:bg-zinc-850/40 transition-colors">
-                  <dt className="text-xs sm:text-sm font-semibold text-zinc-400">Ficha Original no Maps</dt>
+                <div className="grid grid-cols-1 sm:grid-cols-[180px_1fr] gap-2 p-3.5 sm:px-4 hover:bg-slate-800/40 transition-colors">
+                  <dt className="text-xs sm:text-sm font-semibold text-slate-400">Ficha Original no Maps</dt>
                   <dd>
                     {selectedPlace.maps_url ? (
                       <a
                         href={selectedPlace.maps_url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-2 text-sm sm:text-base font-semibold text-emerald-400 hover:underline"
+                        className="inline-flex items-center gap-2 text-sm sm:text-base font-semibold text-blue-400 hover:underline"
                       >
                         <span>Abrir ficha no Google Maps</span>
                         <ExternalLink className="h-4 w-4" />
                       </a>
                     ) : (
-                      <span className="text-zinc-600 italic">URL não disponível</span>
+                      <span className="text-slate-600 italic">URL não disponível</span>
                     )}
                   </dd>
                 </div>
@@ -1104,20 +1104,20 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             </div>
 
             {/* Modal Sticky Footer */}
-            <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-3 border-t border-zinc-800 bg-zinc-900 px-6 py-4 rounded-b-3xl">
+            <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 bg-slate-900 px-6 py-4 rounded-b-3xl">
               <button
                 type="button"
                 onClick={() => void copyFullPlaceDetails()}
-                className="inline-flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 px-4 py-2.5 text-sm font-bold text-zinc-100 transition-colors cursor-pointer"
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 px-4 py-2.5 text-sm font-bold text-slate-100 transition-colors cursor-pointer"
               >
                 {copiedDetails ? (
                   <>
-                    <Check className="h-4 w-4 text-emerald-400" />
+                    <Check className="h-4 w-4 text-blue-400" />
                     <span>Copiado com sucesso!</span>
                   </>
                 ) : (
                   <>
-                    <Copy className="h-4 w-4 text-zinc-400" />
+                    <Copy className="h-4 w-4 text-slate-400" />
                     <span>Copiar todos os dados</span>
                   </>
                 )}
@@ -1129,8 +1129,8 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                   onClick={() => onToggleSelectPlace(selectedPlace.id)}
                   className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors cursor-pointer border ${
                     selectedPlaceIds.has(selectedPlace.id)
-                      ? 'border-emerald-500 bg-emerald-600 text-white'
-                      : 'border-zinc-700 bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
+                      ? 'border-blue-500 bg-blue-600 text-white'
+                      : 'border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700'
                   }`}
                 >
                   {selectedPlaceIds.has(selectedPlace.id) ? 'Desmarcar seleção' : 'Selecionar lead'}
@@ -1138,7 +1138,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                 <button
                   type="button"
                   onClick={() => setSelectedPlace(null)}
-                  className="rounded-xl bg-zinc-800 hover:bg-zinc-700 px-5 py-2.5 text-sm font-semibold text-zinc-300 transition-colors cursor-pointer border border-zinc-700"
+                  className="rounded-xl bg-slate-800 hover:bg-slate-700 px-5 py-2.5 text-sm font-semibold text-slate-300 transition-colors cursor-pointer border border-slate-700"
                 >
                   Fechar
                 </button>
