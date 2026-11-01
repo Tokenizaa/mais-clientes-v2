@@ -7,16 +7,12 @@ import {
   ArrowRight,
   ShieldCheck,
   Building2,
-  Phone,
-  Star,
-  MapPin,
-  Globe,
   Radio,
   Cpu,
   Layers,
   Sparkles,
 } from 'lucide-react';
-import { PlaceRecord, ScrapeJob } from '../shared/types';
+import { ScrapeJob } from '../shared/types';
 import { calculateScrapeProgressPercent } from '../shared/scrape-progress';
 
 interface ScrapeEvolutionHUDProps {
@@ -24,7 +20,6 @@ interface ScrapeEvolutionHUDProps {
   isScraping: boolean;
   onStopScrape: () => Promise<void>;
   onGoToResults: () => void;
-  recentPlaces?: PlaceRecord[];
 }
 
 export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
@@ -32,7 +27,6 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
   isScraping,
   onStopScrape,
   onGoToResults,
-  recentPlaces = [],
 }) => {
   if (!currentJob) return null;
 
@@ -48,15 +42,11 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (percent / 100) * circumference;
 
-  // Filter recent places belonging to this job
-  const jobPlaces = recentPlaces.filter((p) => p.job_id === currentJob.id);
-  const latestPlaces = jobPlaces.slice(0, 4);
-
   return (
     <div className="relative overflow-hidden rounded-2xl bg-gradient-to-b from-[#091a35] via-[#07152b] to-[#050e20] border border-blue-500/25 shadow-2xl shadow-blue-950/60 p-5 sm:p-7 space-y-6">
       {/* Background ambient glow effects */}
       <div className="absolute top-0 right-1/4 -mt-16 w-80 h-80 rounded-full bg-blue-600/10 blur-3xl pointer-events-none" />
-      <div className="absolute bottom-0 left-10 -mb-16 w-64 h-64 rounded-full bg-cyan-500/10 blur-3xl pointer-events-none" />
+      <div className="absolute bottom-0 left-10 -mb-16 w-64 h-64 rounded-full bg-blue-500/10 blur-3xl pointer-events-none" />
 
       {/* Top Banner & Status Bar */}
       <div className="relative flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-blue-800/55">
@@ -129,52 +119,6 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
         </div>
       </div>
 
-      {/* Live lead cards take visual priority, matching the Base de Leads card language */}
-      {latestPlaces.length > 0 && (
-        <div className="relative pt-2 space-y-4">
-          <div className="absolute -inset-x-4 -inset-y-3 rounded-3xl bg-cyan-500/[0.035] blur-2xl pointer-events-none" />
-          <div className="relative flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.95)] animate-pulse" />
-              <span className="text-xs font-bold uppercase tracking-[0.16em] text-cyan-100 font-mono">
-                Leads capturados ao vivo
-              </span>
-            </div>
-            <span className="text-xs text-cyan-300/80 font-mono">{jobPlaces.length} registros nesta sessão</span>
-          </div>
-          <div className="relative grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {latestPlaces.map((place) => (
-              <article key={place.id} className="group relative isolate overflow-hidden rounded-2xl border border-cyan-400/25 bg-gradient-to-br from-[#102b50]/95 via-[#091b35]/95 to-[#071326]/95 p-5 shadow-[0_12px_35px_rgba(0,0,0,0.38),0_0_22px_rgba(34,211,238,0.09)] transition-all duration-300 hover:-translate-y-1 hover:border-cyan-300/60 hover:shadow-[0_18px_42px_rgba(0,0,0,0.45),0_0_28px_rgba(34,211,238,0.18)]">
-                <div className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-cyan-400/10 blur-2xl transition-all group-hover:bg-cyan-300/20" />
-                <div className="relative flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <h4 className="line-clamp-2 text-base font-extrabold leading-snug text-white transition-colors group-hover:text-cyan-100">{place.name || 'Estabelecimento'}</h4>
-                    <p className="mt-1.5 truncate text-xs font-semibold text-sky-300">{place.category || currentJob.segment}</p>
-                  </div>
-                  {place.rating && <span className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-amber-300/30 bg-amber-400/10 px-2 py-1 text-xs font-bold text-amber-200 shadow-[0_0_12px_rgba(251,191,36,0.12)]"><Star className="h-3 w-3 fill-current" />{place.rating}</span>}
-                </div>
-                <div className="relative mt-4 space-y-2 border-t border-cyan-300/15 pt-3 text-xs">
-                  <div className={`flex items-center gap-2 ${place.phone ? 'text-emerald-200' : 'text-rose-300'}`}>
-                    <Phone className={`h-3.5 w-3.5 shrink-0 ${place.phone ? 'text-emerald-400' : 'text-rose-400'}`} />
-                    <span className="truncate">{place.phone || 'Telefone não disponível'}</span>
-                    <span className={`ml-auto h-1.5 w-1.5 shrink-0 rounded-full ${place.phone ? 'bg-emerald-400 shadow-[0_0_9px_rgba(52,211,153,0.95)]' : 'bg-rose-400 shadow-[0_0_9px_rgba(251,113,133,0.9)]'}`} />
-                  </div>
-                  <div className={`flex items-center gap-2 ${place.website ? 'text-emerald-200' : 'text-rose-300'}`}>
-                    {place.website ? <Globe className="h-3.5 w-3.5 shrink-0 text-emerald-400" /> : <MapPin className="h-3.5 w-3.5 shrink-0 text-rose-400" />}
-                    <span className="truncate">{place.website ? place.website.replace(/^https?:\/\/(www\.)?/, '') : place.address || currentJob.location}</span>
-                    <span className={`ml-auto h-1.5 w-1.5 shrink-0 rounded-full ${place.website ? 'bg-emerald-400 shadow-[0_0_9px_rgba(52,211,153,0.95)]' : 'bg-rose-400 shadow-[0_0_9px_rgba(251,113,133,0.9)]'}`} />
-                  </div>
-                </div>
-                <div className="relative mt-4 flex items-center justify-between border-t border-cyan-300/10 pt-3">
-                  <span className="text-[10px] font-mono uppercase tracking-widest text-cyan-300/60">Registro confirmado</span>
-                  <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-emerald-300 shadow-[0_0_12px_rgba(52,211,153,0.12)]">Salvo</span>
-                </div>
-              </article>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Main Radar Gauge & Dynamic Telemetry Center */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
         {/* Left: Circular Radar HUD */}
@@ -208,7 +152,7 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
                 cx="72"
                 cy="72"
                 r={radius}
-                className="stroke-sky-400 transition-all duration-700 ease-out"
+                className="stroke-blue-400 transition-all duration-700 ease-out"
                 strokeWidth="10"
                 strokeDasharray={circumference}
                 strokeDashoffset={strokeDashoffset}
@@ -233,7 +177,7 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
 
           <div className="text-center sm:text-left space-y-1.5 flex-1 min-w-0">
             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-950/80 border border-blue-700/40 text-[11px] font-medium text-blue-300">
-              <Cpu className="w-3 h-3 text-cyan-400" />
+              <Cpu className="w-3 h-3 text-blue-400" />
               <span>Chromium DOM Engine</span>
             </div>
             <div className="text-sm font-semibold text-slate-200 truncate">
@@ -259,7 +203,7 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
             </div>
             <div className="mt-2 w-full bg-slate-800 rounded-full h-1 overflow-hidden">
               <div
-                className="bg-gradient-to-r from-sky-500 to-cyan-400 h-full transition-all duration-500"
+                className="bg-gradient-to-r from-blue-500 to-blue-400 h-full transition-all duration-500"
                 style={{ width: `${percent}%` }}
               />
             </div>
@@ -269,9 +213,9 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
           <div className="p-3.5 rounded-xl bg-[#081a33]/90 border border-blue-800/55 relative overflow-hidden group">
             <div className="flex items-center justify-between text-slate-400 mb-1.5">
               <span className="text-[11px] font-medium uppercase tracking-wider">Duplicados</span>
-              <ShieldCheck className="w-4 h-4 text-cyan-400" />
+              <ShieldCheck className="w-4 h-4 text-blue-400" />
             </div>
-            <div className="text-2xl font-bold text-cyan-300 font-mono">
+            <div className="text-2xl font-bold text-blue-300 font-mono">
               {currentJob.total_duplicates}
             </div>
             <div className="text-[10px] text-slate-400 mt-2 truncate">
@@ -283,9 +227,9 @@ export const ScrapeEvolutionHUD: React.FC<ScrapeEvolutionHUDProps> = ({
           <div className="p-3.5 rounded-xl bg-[#081a33]/90 border border-blue-800/55 relative overflow-hidden group">
             <div className="flex items-center justify-between text-slate-400 mb-1.5">
               <span className="text-[11px] font-medium uppercase tracking-wider">Detectados</span>
-              <Building2 className="w-4 h-4 text-violet-400" />
+              <Building2 className="w-4 h-4 text-blue-400" />
             </div>
-            <div className="text-2xl font-bold text-violet-200 font-mono">
+            <div className="text-2xl font-bold text-blue-200 font-mono">
               {currentJob.total_found}
             </div>
             <div className="text-[10px] text-slate-400 mt-2 truncate">
