@@ -267,6 +267,33 @@ begin
     raise exception 'max attempts must be between 1 and 20';
   end if;
 
+  -- A worker that dies on its final attempt cannot leave a permanent
+  -- processing row after its lease expires.
+  with expired as (
+    update public.scrape_candidates
+       set status = 'failed',
+           last_error = coalesce(last_error, 'Worker lease expired after maximum attempts'),
+           processing_token = null,
+           processing_locked_until = null,
+           processing_worker_id = null,
+           next_attempt_at = null,
+           updated_at = now()
+     where status = 'processing'
+       and (processing_locked_until is null or processing_locked_until <= now())
+       and attempt_count >= p_max_attempts
+    returning job_id, user_id
+  ),
+  failed_counts as (
+    select job_id, user_id, count(*)::integer as total
+      from expired
+     group by job_id, user_id
+  )
+  update public.scrape_jobs j
+     set total_errors = j.total_errors + failed_counts.total,
+         heartbeat_at = now()
+    from failed_counts
+   where j.id = failed_counts.job_id and j.user_id = failed_counts.user_id;
+
   return query
   with next_candidate as (
     select c.id
